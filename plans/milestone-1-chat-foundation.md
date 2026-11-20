@@ -1,6 +1,6 @@
 # Milestone 1: chat template frontend on an extended backend
 
-Status: planned, nothing implemented. Written 2026-11-20. Work starts with phase P (preparation) and stops at the checkpoint that follows it; see section 8.
+Status: phase P (preparation) is done and the checkpoint is answered (2026-11-20). Nothing in the product is implemented yet. Phase 0 is next. Evidence for every "verified" claim below is in `plans/preparation-findings.md`.
 
 Goal: the Nuxt UI chat template's frontend (`../chat`, upstream `nuxt-ui-templates/chat` at `f00f2a6`) running in this repo on PostgreSQL and S3, with invite-gated GitHub signup, a platform-agnostic inference layer (OpenRouter or DeepSeek), model and upstream-provider selection, sampling parameters, usage accounting and quotas.
 
@@ -10,17 +10,22 @@ Goal: the Nuxt UI chat template's frontend (`../chat`, upstream `nuxt-ui-templat
 |---|---|
 | Identity | GitHub OAuth only. Logto is removed. |
 | Signup | `invite` (link required), `open` (any GitHub account) or `closed`, set by an admin. |
-| Admin bootstrap | GitHub logins listed in `NUXT_ADMIN_GITHUB_LOGINS` become admin on login and bypass the signup gate. |
-| Access control | Session cookie for authentication, user row loaded per request, `nuxt-authorization` abilities for every decision. See section 6. |
-| Anonymous use | None. The only anonymous read is a chat shared by public link. |
+| Admin bootstrap | Numeric GitHub ids listed in `NUXT_ADMIN_GITHUB_IDS` become admin on login and bypass the signup gate. Find an id with `curl -s https://api.github.com/users/<login> \| jq .id`. |
+| Access control | Session cookie for authentication, user row loaded per request, abilities for every decision. See section 6. |
+| Chat sharing | Like Google Docs: the owner, people the owner lists, or anyone with the link. Nobody else can read a chat, admins included. Shared access is read-only. |
+| Roles | Moderators list users and ban or unban users of lower role. Promote, demote, delete and everything else administrative is admin only. |
+| Profile | GitHub is the source of profile fields. Self-service profile editing is removed. |
+| Anonymous use | None, except reading a chat whose link access is on. |
 | Inference platform | One active platform per instance, chosen by env: `openrouter` or `deepseek`. All calls go through one adapter interface; rows record the platform so history survives a switch. |
 | Keys | One instance key, plus an optional per-user key (encrypted) that overrides it. |
 | Catalog | Live from the platform, filtered by an admin allowlist. An empty allowlist allows everything. |
 | Quota | Monthly USD budget per user: instance default, per-user override, `null` means unlimited. Requests on a user's own key are exempt. |
 | Multi-model | Schema-ready only (`message.parentId`, model and provider per message). The UI stays single-model. |
 | Dictation | Record, then transcribe. Neither platform streams recognition, so the template's live preview is dropped. |
-| Storage | NuxtHub blob with the S3 driver, private bucket. Files are served through an authenticated route and sent to models as bytes. |
-| Database | Migration `0000` is regenerated; nothing is deployed. |
+| Storage | S3, private bucket, storage object built at runtime so credentials stay out of the build. Local files in dev when no bucket is configured. |
+| Database | Migration `0000` is regenerated; nothing is deployed. Migrations apply automatically in dev. |
+| DeepSeek safety check | An admin setting, off by default, with a warning that explains what it does. |
+| DeepSeek PDFs | In this milestone, through DeepSeek's file parsing flow (upload, then reference by `file_id`). |
 | Language | English strings only. `@nuxtjs/i18n` stays installed and untouched. |
 | Demo tools | The chart tool is kept. The weather tool is dropped (it returns random data). |
 
@@ -28,14 +33,14 @@ Goal: the Nuxt UI chat template's frontend (`../chat`, upstream `nuxt-ui-templat
 
 ### Server code imports from `nuxt/server`
 
-Every handler in `server/api` and `server/routes` imports explicitly from `nuxt/server`, including `defineHandler`. The auto-imported names of the same spelling are h3's and take a different event; mixing them raises `NUXT_E8012`.
+Every handler in `server/api` and `server/routes` imports explicitly from `nuxt/server`, including `defineEventHandler`. The auto-imported names of the same spelling are h3's and take a different event; mixing them raises `NUXT_E8012`. `defineHandler` does not exist in `nuxt/server` 4.6.4.
 
 ```ts
-import { createError, defineHandler, getRouterParam, readValidatedBody } from 'nuxt/server'
+import { createError, defineEventHandler, getRouterParam, readValidatedBody } from 'nuxt/server'
 import { z } from 'zod'
 
-export default defineHandler(async (event) => {
-	const id = getRouterParam(event, 'id')!
+export default defineEventHandler(async (event) => {
+	const id = getRouterParam(event, 'id', { decode: true })
 	const body = await readValidatedBody(event, z.object({ title: z.string().trim().min(1).max(100) }))
 	if (!id) throw createError({ status: 404, statusText: 'Chat not found' })
 	return { id, ...body }
@@ -49,13 +54,13 @@ Differences from the h3 v1 code currently in this repo:
 | `createError({ statusCode, statusMessage })` | `createError({ status, statusText })` |
 | `sendRedirect(event, url)` sends | `return sendRedirect(event, url)` |
 | `setResponseHeader(event, k, v)` | `event.res.headers.set(k, v)` |
-| `getValidatedRouterParams(event, fn)` | `getRouterParam(event, name)` plus a zod parse |
+| `getValidatedRouterParams(event, fn)` | `getRouterParam(event, name, { decode: true })` plus a zod parse |
 | `readValidatedBody(event, schema.parse)` | `readValidatedBody(event, schema)` (Standard Schema) |
 | `H3Event` type | `RequestEvent` type |
 | `readMultipartFormData(event)` | `await event.req.formData()` (web standard) |
 | client abort | `event.req.signal` |
 
-A handler may return a `Response` or a `ReadableStream`, which is how the chat stream is returned.
+A handler may return a `Response` or a `ReadableStream`, which is how the chat stream is returned. `getRouterParam` returns percent-encoded values unless `{ decode: true }` is passed.
 
 Documented exceptions, because `nuxt/server` does not cover them:
 
@@ -67,7 +72,9 @@ The existing eleven handlers under `server/api/v1` and both files in `server/uti
 
 ### Other conventions
 
-- Database access: `import { db, schema } from 'hub:db'` (the NuxtHub 0.10 form the template uses), replacing `@nuxthub/db`.
+- Database access: `import { db, schema } from 'hub:db'`. It is an alias of `@nuxthub/db`, so this is one spelling, not a migration.
+- `numeric` columns come back from Postgres as strings. Budget and cost math converts them explicitly.
+- Authorization goes through the wrapper in `server/utils/core/authorize.ts` (section 6). Handlers never call `nuxt-authorization`'s own server `authorize`, `allows` or `denies`.
 - API prefix: `/api/v1`. OAuth lives at `/auth/github` as a server route.
 - Formatting: tabs, per `.editorconfig`. Ported template files are reformatted.
 - Package manager: bun. Tests: `bun test`, no framework.
@@ -79,28 +86,81 @@ The existing eleven handlers under `server/api/v1` and both files in `server/uti
 ```ts
 export interface InferencePlatform {
 	id: 'openrouter' | 'deepseek'
-	capabilities: { providerRouting: boolean }
+	capabilities: { providerRouting: boolean, safetyCheck: boolean, nativeTitle: boolean }
 	listModels(apiKey: string): Promise<CatalogModel[]>
 	listEndpoints?(apiKey: string, modelId: string): Promise<CatalogEndpoint[]>
 	/** Everything `streamText` needs for one turn. */
 	prepare(input: TurnInput): { model: LanguageModel, tools?: ToolSet, providerOptions?: ProviderOptions }
-	/** Tokens, cost and the upstream provider that served the turn. */
-	usage(result: TurnResult): TurnUsage
+	/** Turns a stored PDF into the part this platform accepts. */
+	attachPdf(input: { apiKey: string, file: StoredFile, bytes: Uint8Array }): Promise<FilePart>
+	/** Tokens, cost, the upstream provider that served the turn, and a title if the platform made one. */
+	usage(step: FinishStep): TurnUsage
 	transcribe(apiKey: string, wav: Blob): Promise<{ text: string, costUsd: number | null }>
 }
 ```
 
-`CatalogModel` is normalized: `id`, `name`, `vendor`, `contextLength`, `maxOutputTokens`, `inputModalities`, `supportedParameters`, `reasoningLevels`, `pricing` (USD per 1M tokens, optional).
+`TurnInput` carries `apiKey`, `model`, `providers`, `allowFallbacks`, sampling params, `reasoningLevel`, `webSearch`, `userId`, `firstTurn` and `safetyCheck`.
+
+`CatalogModel` is normalized:
+
+- `id`, `name`, `vendor`, `contextLength`, `maxOutputTokens`
+- `inputModalities`: `text`, `image`, `file` (`file` means PDFs are accepted)
+- `webSearch`: whether the search toggle applies to this model
+- `supportedParameters`
+- `reasoning: { mandatory, defaultEnabled } | null`, `reasoningLevels`, `defaultReasoningLevel`. Empty levels with a non-null `reasoning` means an on/off toggle only.
+- `pricing: { input, cacheRead?, output }` in USD per 1M tokens, optional
+
+`CatalogEndpoint`: `tag`, `name`, `quantization`, `status`, `uptime30m`, `uptime1d`, `contextLength`, `maxOutputTokens`, `pricing`.
 
 | Capability | OpenRouter | DeepSeek |
 |---|---|---|
-| AI SDK provider | `@openrouter/ai-sdk-provider` 3.1 (peer `ai ^7`) | `@ai-sdk/deepseek` 3.0 |
+| AI SDK provider | `@openrouter/ai-sdk-provider` 3.1 | `@ai-sdk/deepseek` 3.0, Chat Completions (`.chat()`), plus glue |
 | Catalog | `GET /api/v1/models` | `GET /models` |
-| Upstream providers | `GET /api/v1/models/:id/endpoints`, sent as `provider: { only, allow_fallbacks }` | none; the picker is hidden |
-| Cost | `providerMetadata.openrouter.usage.cost` with `usage: { include: true }` | tokens × price table below |
-| Web search | OpenRouter server tool | `deepseek_web_search` server tool |
-| Reasoning | `reasoning` provider option | `effort` levels from the catalog |
-| Dictation | STT endpoint, model from the `sttModel` setting | `POST /v1/tools/asr`: WAV or Ogg, 120 s and 8 MiB max |
+| Upstream providers | `GET /api/v1/models/:id/endpoints` | none; the picker is hidden |
+| Cost | reported per turn | tokens × price table below |
+| Web search | `openrouter:web_search` server tool | `deepseek_web_search` and `deepseek_read_url`, `deepseek-flash` only |
+| Reasoning | `reasoning` provider option | `thinking` and `reasoningEffort`; levels are `none` plus the model's `effort.supported_levels` |
+| Title | separate call with the `titleModel` setting | `title` flag on the first turn, free |
+| Images | models whose input modalities include `image` | `deepseek-flash` only |
+| PDF | inline, any model | upload to `/files`, reference by `file_id`, `deepseek-flash` only |
+| Dictation | `POST /api/v1/audio/transcriptions`, model from the `sttModel` setting | `POST /v1/tools/asr` |
+
+### OpenRouter specifics
+
+- Routing goes in `providerOptions.openrouter.provider` as `{ only, order, allow_fallbacks }`. The values are endpoint **tags** such as `deepinfra/fp4/flex`. A bare slug such as `deepinfra` does not match tier endpoints, so the exact tag the user picked is sent.
+- The picker shows `provider_name` and stores the tag. The provider that served a turn comes back as a display name in `providerMetadata.openrouter.provider`.
+- Cost is `providerMetadata.openrouter.usage.cost`, read from the `finish-step` part. No `usage: { include: true }`; OpenRouter always includes usage.
+- Web search is `openrouter.tools.webSearch({})`. The helper puts options at the top level while the docs nest them under `parameters`; when options are needed, pass `{ parameters: {...} }` with a cast.
+- `reasoning_details` stay on stored reasoning parts and are sent back on later turns.
+- PDFs are sent inline with the `file-parser` plugin set to `cloudflare-ai` (free). The default `mistral-ocr` is billed per page.
+- Speech-to-text models are listed only by `/models?output_modalities=transcription`. The response includes `usage.cost`.
+
+### DeepSeek specifics
+
+The glue is about 40 lines, prototyped in `scripts/spikes/deepseek/glue.ts` on branch `prep/spikes`:
+
+- A `fetch` wrapper on `createDeepSeek` adds the web tools, `title` and `safety_check` to the request body. The provider silently drops all of them when they are passed as options.
+- A `wrapLanguageModel` middleware reads the last raw chunk, turns its citations into `source` parts and puts its title in `providerMetadata.deepseek.title`.
+
+Rules that follow from DeepSeek's API:
+
+- Never use `deepSeek.tools.webSearch()`. It sends the Responses API's `web_search` tool, which only `deepseek-v4-pro` supports.
+- Reasoning must be sent back whenever tools are declared, otherwise DeepSeek returns 400. The chart tool is always declared, so stored reasoning parts are never stripped.
+- `userId` is passed on every turn. DeepSeek uses it to isolate content safety and caching per user.
+- DeepSeek ignores `temperature` and `top_p` while thinking, web search, the safety check or the title flag is on. The settings panel disables both controls in the first three cases and says why. The first turn always ignores them, because of the title flag.
+- An answer can end in a refusal after text has streamed. The UI then replaces it with a refusal notice, and the notice is what gets stored.
+- Speech to text takes at most 120 s and 8 MiB, so the server rejects longer clips before calling. Cost is `ceil(duration_ms / 1000)` seconds at the list price.
+
+**PDFs** follow DeepSeek's file parsing guide (<https://api-docs.deepseek.com/guides/document_parsing>):
+
+1. On first use, upload the PDF to `POST /files` with `purpose=text_recognition`. The `purpose` field must come before `file`. Parsing is billed once per page at upload.
+2. Cache the returned `file_id` in `providerFile`, keyed by our file, the platform and a hash of the API key. A `file_id` belongs to one DeepSeek account, so a user's own key gets its own upload.
+3. Reference it in chat as `{ "type": "file", "file_id": "…" }`.
+4. Delete the remote file when our file is deleted.
+
+`@ai-sdk/deepseek` drops PDF file parts, so step 3 needs help on our side. The provider does emit exactly that block for an image reference, so the adapter passes the `file_id` as a reference with an image media type. If a provider update breaks this, the `fetch` wrapper rewrites the body instead. The live check covers it.
+
+The upload response has no page count, so the parse cost is recorded as null. The ceiling is $0.225 per PDF (1,000 pages).
 
 ### DeepSeek prices
 
@@ -111,6 +171,7 @@ DeepSeek's `/models` carries no pricing and responses carry no cost, so the adap
 | `deepseek-flash` | 0.006 peak, 0.003 off-peak | 0.30 peak, 0.15 off-peak | 1.20 peak, 0.60 off-peak |
 | `deepseek-v4-pro` | 0.044 peak, 0.022 off-peak | 1.32 peak, 0.66 off-peak | 3.96 peak, 1.98 off-peak |
 
+- Cost per turn is `cacheReadTokens × hit + noCacheTokens × miss + outputTokens × output`. The provider maps DeepSeek's cache-hit count to `usage.inputTokenDetails.cacheReadTokens`.
 - Peak is 01:00–04:00 and 06:00–10:00 UTC, Monday to Friday. Chinese public holidays are off-peak; the adapter ignores them, which overcounts slightly and never undercounts.
 - Speech to text is 0.116 per hour of audio at list price.
 - Server-side search calls are billed as model tokens, so they need no separate line.
@@ -124,22 +185,25 @@ PostgreSQL through Drizzle `pgTable`, in `server/db/schema.ts`.
 |---|---|
 | `user` | `id` uuid, `githubId` unique, `username`, `name`, `email`, `avatarUrl`, `role`, ban fields, `monthlyBudgetUsd` numeric null |
 | `invite` | `codeHash` unique, `createdBy`, `maxUses`, `useCount`, `expiresAt`, `revokedAt` |
-| `setting` | `key` PK, `value` jsonb: `signupMode`, `defaultModel`, `defaultMonthlyBudgetUsd`, `titleModel`, `sttModel` |
+| `setting` | `key` PK, `value` jsonb: `signupMode`, `defaultModel`, `defaultMonthlyBudgetUsd`, `titleModel`, `sttModel`, `safetyCheck` |
 | `modelSetting` | PK (`platform`, `modelId`), `enabled`, `priceInput`, `priceCachedInput`, `priceOutput` (null means no override) |
-| `userApiKey` | PK (`userId`, `platform`), `ciphertext` |
-| `chat` | `id` uuid, `userId` FK cascade, `title`, `visibility`, `systemPrompt`, `params` jsonb |
+| `userApiKey` | PK (`userId`, `platform`), `ciphertext` (first byte is a key version) |
+| `chat` | `id` uuid, `userId` FK cascade, `title`, `visibility` (`private` or `public`), `systemPrompt`, `params` jsonb |
+| `chatShare` | PK (`chatId`, `userId`), both FK cascade |
 | `message` | `id` text, `seq` identity, `chatId` FK cascade, `parentId` self FK null, `role`, `parts` jsonb, `metadata` jsonb |
 | `vote` | PK (`chatId`, `messageId`), `isUpvoted` |
 | `file` | existing columns plus `chatId` uuid (no FK), `messageId` FK null, `mediaType`, `size` |
-| `usageEvent` | `userId`, `chatId` set null, `kind` (`chat`, `title`, `stt`), `platform`, `model`, `provider`, token counts, `costUsd`, `byok`, `createdAt` |
+| `providerFile` | PK (`fileId`, `platform`, `keyHash`), `remoteId` |
+| `usageEvent` | `userId`, `chatId` set null, `kind` (`chat`, `title`, `stt`, `parse`), `platform`, `model`, `provider`, token counts, `costUsd`, `byok`, `createdAt` |
 
 Reasons behind the shape:
 
 - `message.seq` orders messages. The template orders by a second-precision timestamp, so messages saved in the same second can swap.
 - `usageEvent` is append-only. Edit and regenerate delete message rows, so summing messages would refund spend.
 - `message.metadata` carries `platform`, `model`, `provider`, tokens and cost for display. It is the AI SDK `UIMessage.metadata` field, sent with `messageMetadata`.
+- `chat.visibility` is link access: `public` means anyone with the link. `chatShare` is the list of people. The two are independent, as in Google Docs.
 - `file.chatId` has no foreign key because the home page uploads before the chat row exists.
-- `chat.params`: `model`, `providers`, `allowFallbacks`, `temperature`, `topP`, `maxOutputTokens`, `reasoningEffort`, `webSearch`. One zod schema in `shared/` validates it on both sides.
+- `chat.params`: `model`, `providers`, `allowFallbacks`, `temperature`, `topP`, `maxOutputTokens`, `reasoningLevel`, `webSearch`. One zod schema in `shared/` validates it on both sides.
 
 ## 5. API surface
 
@@ -148,31 +212,50 @@ All under `/api/v1`, all requiring a user unless noted.
 | Route | Purpose |
 |---|---|
 | `GET /chats`, `POST /chats` | list own chats; create with the first message |
-| `GET /chats/:id` | read; allowed without login when the chat is public |
-| `PATCH /chats/:id` | title, visibility, system prompt, params (one route instead of the template's two) |
-| `DELETE /chats/:id` | delete the chat, its blobs and file rows |
-| `POST /chats/:id` | stream a turn (see below) |
-| `GET /chats/:id/votes`, `POST /chats/:id/votes` | as in the template |
+| `GET /chats/:id` | read; allowed for the owner, listed people, and anyone when link access is on |
+| `PATCH /chats/:id` | owner only: title, visibility, shared people, system prompt, params |
+| `DELETE /chats/:id` | owner only: delete the chat, its blobs, remote files and file rows |
+| `POST /chats/:id` | owner only: stream a turn (see below) |
+| `GET /chats/:id/votes`, `POST /chats/:id/votes` | owner only, as in the template |
+| `GET /users/search?q=` | find people to share with: `id`, `username`, `name`, `avatarUrl`; at least 2 characters, 10 results |
 | `GET /models` | catalog, allowlist applied, cached one hour |
 | `GET /models/endpoints?id=` | upstream providers for one model (ids contain slashes, so a query parameter) |
-| `PUT /files/:chatId`, `GET /files/:id`, `DELETE /files/:id` | upload, serve, delete |
+| `PUT /files/:chatId`, `GET /files/:id`, `DELETE /files/:id` | upload, serve, delete; reading follows the chat's access |
 | `POST /transcriptions` | WAV in, text out |
 | `GET /users/me`, `GET /me/usage`, `PUT /me/api-key`, `DELETE /me/api-key` | profile, month spend against budget, personal key |
 | `/users/**` | existing user management, migrated to `nuxt/server`, plus budget |
 | `/admin/invites`, `/admin/settings`, `/admin/models` | admin only |
 | `GET /auth/github` (server route) | OAuth callback and signup gate |
 
+`GET /users/search` shows every signed-in member the names of the other members. That is what sharing with listed people requires.
+
 ### One turn (`POST /chats/:id`)
 
 1. Require the user, load the chat by owner, validate the body.
-2. Check the model against the allowlisted catalog and the chosen providers against its endpoints.
+2. Check the model against the allowlisted catalog and the chosen provider tags against its endpoints.
 3. Resolve the key: the user's key for the active platform, else the instance key.
 4. On the instance key, compare this month's `usageEvent` sum with the budget. Over budget returns `402`.
-5. Apply the trigger. `submit-message` saves the new user message; an edit truncates after it; `regenerate-message` truncates from the target. Truncation deletes the attached blobs first.
-6. Build model messages from the database, swapping file parts for bytes from the blob store.
-7. Call `streamText` with the adapter's `prepare()` output, the system prompt, the chart tool and `event.req.signal`.
-8. Generate the title in parallel on the first turn and send it as a transient data part.
-9. On finish, insert the assistant message with metadata and one `usageEvent` row.
+5. Apply the trigger. `submit-message` saves the new user message; an edit truncates after it; `regenerate-message` truncates from the target, or from the last assistant message when no id is sent. Truncation deletes the attached blobs first.
+6. Build model messages from the database. Attachments are converted by media type (table below).
+7. Call `streamText` with the adapter's `prepare()` output, the system prompt, the chart tool and `event.req.signal`. Return it with `sendSources: true`, `messageMetadata` and a server `generateMessageId`.
+8. Title on the first turn: a parallel call on OpenRouter; the `title` flag on DeepSeek. If none arrives, use the start of the user message.
+9. On finish, insert the assistant message with metadata and one `usageEvent` row. Cost and provider come from the `finish-step` part, tokens from `finish`.
+
+Message ids are generated on the server and sent to the client, because an edit refers to a message by id. Without `generateMessageId` the stored assistant message has an empty id.
+
+Attachments by media type:
+
+| Type | OpenRouter | DeepSeek |
+|---|---|---|
+| Images | inline, when the model accepts images | inline, `deepseek-flash` only |
+| PDF | inline, any model | `attachPdf()`: upload once, reference by `file_id`, `deepseek-flash` only |
+| CSV and other text | decoded on the server, sent as text | decoded on the server, sent as text |
+
+Uploads:
+
+- Read with `event.req.formData()`, check with `ensureBlob()` (which answers 400), store with `blob.put()` under `<userId>/<chatId>/<uuid>.<ext>`. The original name lives only in the `file` row. `blob.handleUpload()` is not used: it stores the client's filename and turns rejections into 500.
+- Serve with `Cache-Control: private`, and `Content-Disposition: attachment` for anything that is not an allowed image or PDF type. Otherwise an uploaded HTML or SVG file would render on the app's own origin.
+- Delete blobs one at a time. The S3 driver's batch delete sends no `Content-MD5`, which AWS requires.
 
 Differences from the template, on purpose:
 
@@ -183,50 +266,63 @@ Differences from the template, on purpose:
 Known ceilings:
 
 - Two concurrent streams can overshoot a budget by one request.
-- An aborted stream may report no usage and is then recorded with a null cost. The upgrade path on OpenRouter is the generation lookup endpoint.
+- An aborted or failed stream may report no usage and is then recorded with a null cost.
+- On DeepSeek, pages read with `deepseek_read_url` are not carried into later turns, and search progress is not shown live.
 
 ## 6. Auth, signup and access control
 
 ### Signup flow
 
 1. `/invite/[code]` validates the code, stores it in the sealed session and redirects to `/auth/github`.
-2. `server/routes/auth/github.get.ts` uses `defineOAuthGitHubEventHandler` from `nuxt-auth-utils`.
-3. A known `githubId` logs in, unless banned.
-4. A new account is created when the login is in `NUXT_ADMIN_GITHUB_LOGINS`, signup is `open`, or the invite claim succeeds. The claim is one statement: `UPDATE invite SET useCount = useCount + 1 WHERE codeHash = ? AND useCount < maxUses AND not expired AND not revoked RETURNING id`.
+2. `server/routes/auth/github.get.ts` uses `defineOAuthGitHubEventHandler` from `nuxt-auth-utils`, which is built on `nuxt/server`.
+3. A known `githubId` logs in, unless banned. Profile fields are refreshed from GitHub.
+4. A new account is created when the GitHub id is in `NUXT_ADMIN_GITHUB_IDS`, signup is `open`, or the invite claim succeeds. The claim is one statement: `UPDATE invite SET useCount = useCount + 1 WHERE codeHash = ? AND useCount < maxUses AND not expired AND not revoked RETURNING id`.
 5. Otherwise the user lands on `/signin?error=signup_closed`.
 
-The session cookie carries `{ id, role, username, name, avatar }`. The server still reads role and ban state from the database on every request through the existing resolver.
+The session cookie carries `{ id, role, username, name, avatar }`. The server still reads role and ban state from the database on every request through the existing resolver. Production sets `NUXT_OAUTH_GITHUB_REDIRECT_URL`; without it the redirect URL is built from request headers.
 
 ### Access control
 
 Three layers, all enforced on the server:
 
 1. **Authentication.** The sealed session cookie from `nuxt-auth-utils`. The role inside the cookie only shows or hides UI.
-2. **Identity per request.** The existing resolver plugin loads the user row by session id, so a ban or role change applies on the next request.
-3. **Authorization.** `nuxt-authorization` abilities in `shared/abilities/`, the pattern `userAbilities.ts` already uses. A handler loads the resource, then calls `authorize(event, ability, resource)`. The client imports the same abilities only to hide controls.
+2. **Identity per request.** The existing resolver plugin loads the user row by session id, so a ban or role change applies on the next request. It returns `null` for a guest.
+3. **Authorization.** Abilities in `shared/abilities/`, defined with `nuxt-authorization`'s `defineAbility`, the pattern `userAbilities.ts` already uses. A handler loads the resource, then calls the wrapper: `authorize(event, ability, resource)` from `server/utils/core/authorize.ts`.
 
-Every ability starts with `satisfies(user)`, which rejects banned users. Abilities a guest may pass are declared with `allowGuest`. New files: `chatAbilities.ts`, `fileAbilities.ts`, `adminAbilities.ts`.
+The wrapper exists because the module's own server `authorize()` lets requests through when it should deny them. It swallows every error that is not its own, so an ability that throws passes. It also treats only `null` as a guest, while this repo's resolver returned `undefined`. The wrapper resolves the user, turns `undefined` into `null`, calls the non-swallowing `authorize` from `nuxt-authorization/utils`, and returns other errors as 500.
+
+Every ability starts with `satisfies(user)`, which rejects banned users. New files: `chatAbilities.ts`, `fileAbilities.ts`, `adminAbilities.ts`.
 
 | Actor | Allowed |
 |---|---|
-| Guest | read a public chat and the files attached to it; `/signin`; `/invite/[code]` |
-| User | own chats, messages, votes and files; the allowlisted catalog; own usage and API key |
+| Guest | read a chat whose link access is on, and its files; `/signin`; `/invite/[code]` |
+| User | own chats, messages, votes and files; read chats shared with them or by link; find people to share with; the allowlisted catalog; own usage and API key |
 | Moderator | list users; ban and unban users of lower role |
-| Admin | everything a moderator can; promote, demote and delete users; budgets; invites; signup mode; model allowlist and prices |
+| Admin | everything a moderator can; promote, demote and delete users; budgets; invites; signup mode; safety check; model allowlist and prices |
+
+Chat access, in order:
+
+1. The owner can do everything.
+2. A person in `chatShare` can read the chat and its files.
+3. When `visibility` is `public`, anyone with the link can read, signed in or not.
+4. Everyone else gets `404`, admins and moderators included.
 
 Rules:
 
-- A private chat and its files answer `404` to everyone but the owner. Admins get no access to other users' private chats.
+- Shared access is read-only: no sending, editing, voting, renaming or resharing.
+- The read ability is declared with `allowGuest: true` and returns `deny({ statusCode: 404 })` itself. Without `allowGuest`, a guest gets 403 before the ability runs.
 - A role action applies only to a target of strictly lower role, and never to oneself.
 - Three checks are policy rather than abilities and run on the server for every turn: the model allowlist, the provider list and the budget. The signup gate runs at account creation. Filtering in the client is cosmetic.
 - API keys never leave the server. `GET /users/me` reports only whether a personal key is set.
-- Mutations need the CSRF token. The stream and transcription routes are rate limited.
+- CSRF: `security.csrf` turns on `nuxt-csurf`, with `methodsToProtect` set to POST, PUT, PATCH and DELETE. The chat transport and uploads send the `csrf-token` header.
+- The stream and transcription routes are rate limited.
 
 Fixes to rules that exist today:
 
+- Every `authorize()` call in `useServerUsers.ts` moves to the wrapper.
 - `demoteUser` and `banUser` compare no roles, so a moderator can demote or ban an admin. Both get the strictly-lower rule.
 - `promoteUser` lets a moderator create moderators. Promote and demote become admin only.
-- `editUserHandler` strips protected fields with a denylist and accepts an unvalidated body, so new columns such as `githubId` and `monthlyBudgetUsd` would be self-editable. `PATCH /users/:id` becomes admin only with a zod allowlist (`role`, `monthlyBudgetUsd`). Profile fields come from GitHub at login, so self-edit is removed.
+- `editUserHandler` strips protected fields with a denylist and accepts an unvalidated body, so new columns such as `githubId` and `monthlyBudgetUsd` would be self-editable. `PATCH /users/:id` becomes admin only with a zod allowlist (`role`, `monthlyBudgetUsd`).
 - `banExpires` is stored but never read. `getBanned` in `shared/utils/roles.ts` treats an expired ban as lifted.
 - `app/plugins/authorization-resolver.ts` reads `useUserSession().user` instead of `useAuthSession().user`.
 
@@ -237,7 +333,7 @@ Known ceiling: a demoted admin keeps seeing admin navigation until the session r
 ### Ported from the template
 
 - `layouts/default.vue`, `pages/index.vue`, `pages/chat/[id].vue`, `middleware/transitions.global.ts`.
-- `components/`: `Navbar`, `UserMenu`, `ModalConfirm`, `ModalRename`, and under `chat/`: `Prompt`, `PromptMenu`, `ChatTitle`, `ChatVisibility`, `DictateButton`, `Indicator`, `SourceLink`, `Comark.ts`, `message/*`, `tool/Chart`, `tool/Sources`.
+- `components/`: `Navbar`, `UserMenu`, `ModalConfirm`, `ModalRename`, and under `chat/`: `Prompt`, `PromptMenu`, `ChatTitle`, `DictateButton`, `Indicator`, `SourceLink`, `Comark.ts`, `message/*`, `tool/Chart`, `tool/Sources`.
 - `composables/`: `useChats`, `useChatActions`, `useFileUpload`.
 - `utils/`: `ai.ts`, `tool.ts`, `url.ts`; `shared/utils/file.ts`, `shared/utils/tools/chart.ts`.
 - The template's CSS additions in `main.css`.
@@ -246,110 +342,115 @@ Known ceiling: a demoted admin keeps seeing admin navigation until the session r
 
 - `useModels` and `ModelSelect`: catalog from `/models`, search, vendor groups, price, context length, modalities.
 - `useChatSettings`: per-chat `params` saved with `PATCH /chats/:id` instead of cookies.
-- `useDictation`: keeps the microphone capture and level meter, collects samples, encodes 16 kHz mono 16-bit WAV on stop and posts it. `SAMPLE_RATE` and `MAX_DURATION` stay as constants; 120 s is 3.84 MB, under the 8 MiB limit.
-- `app/utils/tool.ts` `getSources()`: one case per platform's search result shape.
+- `ChatVisibility`: becomes the share dialog. It has a people picker backed by `/users/search`, the list of people with access, a link access switch and the copy-link button.
+- `useDictation`: keeps the microphone capture and level meter, collects samples, encodes 16 kHz mono 16-bit WAV on stop and posts it. `SAMPLE_RATE` and `MAX_DURATION` stay as constants. 120 s at 16 kHz is 3.84 MB; at 48 kHz it would be 11.5 MB, over DeepSeek's 8 MiB limit.
+- The chat transport: `prepareSendMessagesRequest` sends only the new message, the trigger and the message id, with the CSRF header. `regenerate` always passes the message id.
+- `app/utils/tool.ts` `getSources()`: sources arrive as `source-url` parts on both platforms.
 
 ### New
 
 - Provider picker beside the model picker: Auto or chosen providers, a fallback toggle, and price, quantization and uptime per endpoint. Rendered only when `capabilities.providerRouting` is true.
-- Chat settings panel: system prompt, temperature, top-p, max output tokens, reasoning effort. Each control appears only if the model lists the parameter.
-- Reply footer: model, provider, tokens, cost.
+- Chat settings panel: system prompt, temperature, top-p, max output tokens, reasoning level. Each control appears only if the model lists the parameter, and reasoning is a toggle when the model has no levels.
+- Attachment and web search controls follow the selected model's `inputModalities` and `webSearch`.
+- Reply footer: model, provider, tokens, cost. A refusal notice replaces a refused answer.
 - `/signin` with the GitHub button and `/invite/[code]`.
 - `/settings`: month usage against budget, personal API key.
 - `/admin/users`, `/admin/invites`, `/admin/models`, `/admin/settings`.
 
-### Removed from this repo
+The safety check switch on `/admin/settings` appears only when `capabilities.safetyCheck` is true. It is off by default and carries this warning:
 
-These are replaced by the port or made redundant by the session change. Veto any of them at the checkpoint in section 8.
+- DeepSeek reviews every message and every answer.
+- A flagged answer is replaced by a refusal, even after part of it has streamed.
+- Review tokens are billed as output tokens.
+- Temperature and top-p are ignored while it is on.
+- DeepSeek recommends turning it on for a service open to the public.
+
+### Removed from this repo
 
 - `server/api/v1/auth/logto.get.ts` and the Logto env vars.
 - `app/components/Layout/Header.vue` and `app/components/Logo.vue` (it points at a missing `/logo.png`).
 - `app/composables/core/useAuthSession.ts`, `useMe.ts` and both `session-prefetch` plugins. Template components call `useUserSession()` directly. `app/plugins/authorization-resolver.ts` is kept and rewired (section 6).
 - The two named middlewares, replaced by one global `auth` middleware.
-- `routeRules['/'].prerender`, since `/` becomes the signed-in chat home.
+- `routeRules['/'].prerender`. `/` becomes the signed-in chat home, and a prerendered page carries no CSRF token.
 - `@vercel/blob`.
 
 ## 8. Phases
 
-Phase P comes first and ends in a checkpoint: no later phase starts until you have answered it. After that, phases 2 and 3 are independent once phase 1 is done, and phases 7 and 8 are independent once phase 5 is done.
+Phase P is done. Phases 2 and 3 are independent once phase 1 is done, and phases 7 and 8 are independent once phase 5 is done.
 
 | # | Phase | Work | Done when |
 |---|---|---|---|
-| P | Preparation | Verify every assumption in section 10 on a throwaway branch; write `plans/preparation-findings.md` | every row in section 10 is confirmed, on its fallback, or reported blocked; **work stops for the checkpoint** |
-| 0 | Groundwork | Add `ai`, `@ai-sdk/vue`, `@openrouter/ai-sdk-provider`, `@ai-sdk/deepseek`, `@comark/vue`, `shiki`, `@shikijs/langs`, `@tanstack/charts`, `date-fns`, `aws4fetch`, `@nuxt/eslint`, `eslint`. Add `lint`, `db:generate`, `db:migrate` scripts. Configure the S3 blob driver, CSRF through `nuxt-security`, `runtimeConfig.inference`. Rewrite `.env.example` and the README. | `bun run lint` and `bun run typecheck` pass; CI is green |
-| 1 | Data and conventions | New schema, regenerated migration, existing handlers and utils moved to `nuxt/server` and `hub:db` | migration applies on PGlite and on a real Postgres; user routes still answer |
-| 2 | Auth and access control | GitHub handler, invite flow, admin bootstrap, global auth middleware, abilities and rule fixes from section 6, removals from section 7 | invite claim test passes; a second use of a single-use invite is refused; a moderator cannot ban or demote an admin |
-| 3 | Inference adapter | Both adapters, catalog cache, allowlist filter, key resolution and encryption, spike script | the spike streams one turn on each platform with routing, reasoning, web search and usage printed |
-| 4 | Chat backend | Routes in section 5 except files and transcription; ledger and quota | ordering, quota and truncation tests pass; a turn streams through `curl` |
+| P | Preparation | Done. See `plans/preparation-findings.md`. | The live checks in section 10 still wait for credentials |
+| 0 | Groundwork | Dependencies and scripts (below). Fix the four baseline typecheck errors. Configure CSRF, `runtimeConfig`, `applyMigrationsDuringDev: true` and the explicit Postgres driver for production builds. Rewrite `.env.example` and the README. | `bun run lint` and `bun run typecheck` pass; CI is green |
+| 1 | Data and conventions | New schema, regenerated migration, existing handlers and utils moved to `nuxt/server`, the authorization wrapper, the resolver returning `null` for guests | migration applies on PGlite and on a real Postgres; user routes still answer; a throwing ability answers 500, not 200 |
+| 2 | Auth and access control | GitHub handler, invite flow, admin bootstrap by id, global auth middleware, abilities and rule fixes from section 6, removals from section 7 | invite claim test passes; a second use of a single-use invite is refused; a moderator cannot ban or demote an admin |
+| 3 | Inference adapter | Both adapters, the DeepSeek glue, catalog cache, per-model capabilities, allowlist filter, key resolution and encryption | the adapter tests pass offline; with a key, one turn streams on that platform with routing, reasoning, web search and usage printed |
+| 4 | Chat backend | Routes in section 5 except files and transcription; sharing; ledger and quota | ordering, quota, truncation and chat access tests pass; a turn streams through `curl` |
 | 5 | Frontend port | Section 7 "Ported" on the new API | create, stream, edit, regenerate, vote, rename, delete and share work in the browser |
-| 6 | Extended chat UI | Model and provider pickers, settings panel, reply footer | changing provider changes `metadata.provider` on the next reply |
-| 7 | Files and dictation | File routes, bytes to the model, WAV dictation | an image reaches a vision model; a spoken sentence lands in the prompt on both platforms |
-| 8 | Admin and settings | Admin pages, `/settings` | an admin can invite, ban, set a budget, disable a model and switch signup mode from the UI |
+| 6 | Extended chat UI | Model and provider pickers, settings panel, reply footer, share dialog | changing provider changes `metadata.provider` on the next reply; a listed person can open a private chat and a stranger gets 404 |
+| 7 | Files and dictation | File routes, runtime S3 storage, attachments by media type, DeepSeek PDF upload flow, WAV dictation | an image and a PDF reach a model on each platform; a spoken sentence lands in the prompt on both |
+| 8 | Admin and settings | Admin pages, `/settings`, the safety check switch | an admin can invite, ban, set a budget, disable a model and switch signup mode from the UI |
 | 9 | Hardening | Rate limits on stream and transcription, CSP review, full smoke run per platform | smoke run passes on OpenRouter and on DeepSeek |
 
-Tests kept small and pure where possible: invite claim, quota sum, message ordering, truncation, DeepSeek cost (peak window and cache split), and each adapter's option mapping.
+Phase 0 dependencies:
 
-### Phase P: preparation
+- Add `ai`, `@ai-sdk/vue`, `@openrouter/ai-sdk-provider`, `@ai-sdk/deepseek`, `@comark/vue`, `shiki`, `@shikijs/langs`, `@tanstack/charts`, `date-fns`, `aws4fetch`.
+- Add as dev dependencies `@nuxt/eslint`, `eslint`, `@types/node`.
+- Remove `@vercel/blob`.
+- Add the `lint`, `db:generate` and `db:migrate` scripts.
 
-Purpose: test the assumptions this plan rests on before any product code exists.
+Tests kept small and pure where possible: invite claim, quota sum, message ordering, truncation, chat access (owner, listed, link, stranger, admin), the authorization wrapper, DeepSeek cost (peak window and cache split), and each adapter's option mapping.
 
-- **Where.** A throwaway branch, `prep/spikes`. Dependencies are installed and spike scripts live under `scripts/spikes/`. Only `plans/preparation-findings.md` comes back to the working branch.
-- **Baseline first.** `bun install`, `nuxt prepare`, typecheck and a dev boot of the untouched template. None of these has been run yet.
-- **Per assumption.** Result (confirmed, fallback taken, or blocked), the command and output that show it, and any change it forces on this plan.
-- **Credentials.** Rows in section 10 marked with a key need an OpenRouter key, a DeepSeek key, an S3 bucket or a GitHub OAuth app. Rows that need nothing run first. A row whose credential is missing is reported as blocked, not guessed.
-
-### Checkpoint
-
-After phase P, work stops. You get the findings, the plan changes they force, and these open decisions:
-
-1. The removals in section 7.
-2. Moderator scope: list, ban and unban only, with promote and demote moved to admins.
-3. Admins cannot read other users' private chats.
-4. Admin bootstrap by GitHub login or by numeric GitHub id. A login can be renamed and later registered by someone else, who would then become admin; the numeric id cannot.
-5. Self-service profile edit removed, with GitHub as the source of profile fields.
-
-Phase 0 starts only after you answer.
-
-## 9. Environment
+## 9. Environment and deploy
 
 ```bash
-DATABASE_URL=                     # unset in dev uses PGlite
-NUXT_APP_SECRET=                  # sessions and derived encryption key
+DATABASE_URL=                     # unset in dev uses PGlite; runtime only in production
+NUXT_APP_SECRET=                  # sessions and the derived encryption key
 NUXT_PUBLIC_SITE_URL=
 NUXT_PUBLIC_SITE_NAME=
 NUXT_OAUTH_GITHUB_CLIENT_ID=
 NUXT_OAUTH_GITHUB_CLIENT_SECRET=
-NUXT_ADMIN_GITHUB_LOGINS=         # comma-separated GitHub logins
+NUXT_OAUTH_GITHUB_REDIRECT_URL=   # set in production
+NUXT_ADMIN_GITHUB_IDS=            # comma-separated numeric GitHub ids
 NUXT_INFERENCE_PLATFORM=          # openrouter | deepseek
 NUXT_INFERENCE_API_KEY=           # instance key for the active platform
-S3_ACCESS_KEY_ID=
-S3_SECRET_ACCESS_KEY=
-S3_BUCKET=
-S3_REGION=
-S3_ENDPOINT=                      # for S3-compatible stores
+NUXT_S3_ACCESS_KEY_ID=
+NUXT_S3_SECRET_ACCESS_KEY=
+NUXT_S3_BUCKET=
+NUXT_S3_REGION=                   # required for AWS
+NUXT_S3_ENDPOINT=                 # for S3-compatible stores (path-style URLs)
 ```
 
-## 10. Assumptions verified in phase P
+- **App secret.** `NUXT_APP_SECRET` seals sessions and derives the key that encrypts personal API keys. `NUXT_SESSION_PASSWORD` is not used. Rotating the secret logs everyone out and makes stored personal keys unreadable. Set it in `.env` in dev as well; otherwise deleting `.nuxt` orphans encrypted keys in the dev database.
+- **Database.** If `DATABASE_URL` is present while building, NuxtHub writes it into the bundle. Production builds therefore set `hub.db.driver: 'postgres-js'` and get `DATABASE_URL` only at runtime.
+- **Migrations.** In dev they apply at boot. On a server, run `DATABASE_URL=… npx nuxt db migrate` before starting the new version. There is no runtime migration, and statements run without a transaction.
+- **S3.** The variables are `NUXT_S3_*`, read through `runtimeConfig`, not NuxtHub's `S3_*`. NuxtHub's auto-detected S3 driver would write the secret key into the bundle. A server util builds the storage at runtime from `@nuxthub/core/blob` and its S3 driver when a bucket is configured, and uses the local `hub:blob` otherwise.
+- **Cookies.** The session cookie is `Secure` by default, so anything other than localhost needs HTTPS.
 
-| # | Assumption | Needs | Fallback |
-|---|---|---|---|
-| 1 | The untouched template installs, typechecks and boots | nothing | fix it before anything else |
-| 2 | `hub:db` resolves in this repo in place of `@nuxthub/db` | nothing | keep `@nuxthub/db` |
-| 3 | PGlite applies the new migration (identity column, jsonb) | nothing | require `DATABASE_URL` in dev |
-| 4 | `nuxt-authorization`'s `authorize()` accepts the `nuxt/server` event, `allowGuest` works, and a denial can answer `404` | nothing | resolve the user and call the ability directly in the handler |
-| 5 | `nuxt-auth-utils` helpers (`getUserSession`, `setUserSession`, `defineOAuthGitHubEventHandler`) work with `nuxt/server` handlers | GitHub OAuth app for the full login | an h3 handler for the OAuth route only |
-| 6 | `nuxt-security` CSRF works with the installed h3 (the template pins h3 1.15.11 for `nuxt-csurf`) | nothing | add `nuxt-csurf` with the same pin |
-| 7 | `deriveSecret()` is usable from server utils for key encryption | nothing | a dedicated env secret |
-| 8 | `ai` v7 transport sends only the last message and the trigger (`prepareSendMessagesRequest`) | nothing | the template's two-call edit and regenerate flow |
-| 9 | `blob.handleUpload()` accepts the `nuxt/server` event (the template does this) | nothing | `event.req.formData()` plus `blob.put()` |
-| 10 | NuxtHub 0.10.12 S3 config keys, including a custom endpoint, and `blob.serve()` from a private bucket | S3 bucket | read the NuxtHub blob docs for the installed version; proxy bytes manually |
-| 11 | Which endpoint field OpenRouter's `provider.only` expects (`tag` or provider slug), and that `metadata` reports the provider that served the turn | OpenRouter key | map from the endpoints response |
-| 12 | OpenRouter web search tool spelling and result shape through the AI SDK provider | OpenRouter key | the web plugin through `extraBody` |
-| 13 | `@ai-sdk/deepseek` exposes the server web search tool and effort levels | DeepSeek key | `@ai-sdk/openai-compatible` with pass-through body fields |
-| 14 | DeepSeek usage reports cache-hit tokens through the AI SDK | DeepSeek key | bill all input at the cache-miss price |
-| 15 | Browser-encoded 16 kHz WAV is accepted by both speech-to-text endpoints, and whether OpenRouter reports its cost | both keys | Ogg Opus from `MediaRecorder`; a null cost for dictation |
-| 16 | PDF and CSV handling per platform | both keys | gate attachment types by `inputModalities`; images only where unsupported |
+## 10. Preparation results
+
+All 16 assumptions were checked; details and evidence are in `plans/preparation-findings.md`. Their consequences are folded into the sections above.
+
+These live checks still need credentials. Each runs from the `prep/spikes` worktree (`../model-chat-studio-prep`):
+
+| Credential | Checks | Command |
+|---|---|---|
+| OpenRouter key | routing by tag, web search, speech to text, PDF, CSV | `OPENROUTER_API_KEY=… bun scripts/spikes/openrouter/live.ts` |
+| DeepSeek key | glue, cache tokens, title, chart tool beside web tools | `DEEPSEEK_API_KEY=… AI_SDK_LOG_WARNINGS=false bun scripts/spikes/deepseek/glue.ts --live` |
+| DeepSeek key | catalog, speech to text, file upload | `DEEPSEEK_API_KEY=… bun scripts/spikes/deepseek/rest.ts --live` |
+| S3 bucket | put, get, list, private access, batch delete | `S3_ACCESS_KEY_ID=… S3_SECRET_ACCESS_KEY=… S3_BUCKET=… S3_REGION=… [S3_ENDPOINT=…] bun scripts/spikes/nuxt/s3-live.ts` |
+| GitHub OAuth app | full login | callback `http://localhost:3101/api/_spike/session/github`; steps in `scripts/spikes/reports/prep-nuxt.md` |
+
+One answer changes the design: DeepSeek's docs are ambiguous on whether a function tool can be declared together with the web tools, `title` and `safety_check`. If it cannot, the chart tool is left out of DeepSeek turns that use web search.
 
 ## 11. Out of scope
 
-Side-by-side multi-model UI, branching UI, read-aloud, image generation, export and import, more than one platform active at once, cleanup of uploads that were never attached to a message, translations.
+- Side-by-side multi-model UI and branching UI.
+- A "Shared with me" list, and edit access for shared people.
+- Read-aloud and image generation.
+- Export and import.
+- More than one platform active at once.
+- Figures inside PDFs on DeepSeek (`rich_layout_recognition`), and Word or PowerPoint uploads.
+- Live search progress and carried-over page reads on DeepSeek.
+- Cleanup of uploads that were never attached to a message.
+- Translations.
