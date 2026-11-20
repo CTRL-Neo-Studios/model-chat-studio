@@ -406,7 +406,7 @@ Phase P is done. Phases 2 and 3 are independent once phase 1 is done, and phases
 | 0 | Groundwork | Done. Dependencies and scripts (below), the four baseline typecheck errors, ESLint, CSRF, the production database driver guard, `.env.example`, README. | `bun run lint` and `bun run typecheck` pass |
 | 1 | Data and conventions | Done. New schema, regenerated migration `0000_init`, `applyMigrationsDuringDev: true`, handlers and utils on `nuxt/server` and `hub:db`, the authorization wrapper and its test, the resolver returning `null` for guests, Logto removed, user lookups by non-UUID ids find nobody | migration applied on PGlite and on a throwaway Postgres 16; user routes answer as before; a throwing ability answers 500 |
 | 2 | Auth and access control | Done. GitHub handler, invite flow and admin invites API, first-user admin, global auth middleware, role rules from section 6, removals from section 7, sign-in page and a signed-in placeholder home | signup, invite and role-rule tests pass; one admin out of 20 simultaneous first signups on Postgres; sign-in, error, sign-out and redirects checked in the browser |
-| 3 | Inference adapter | Done. Both adapters, the DeepSeek glue, platform and key settings, catalog cache, per-model capabilities, allowlist, key resolution and encryption, `scripts/inference-smoke.ts` | offline tests pass for option mapping, usage and cost, catalog, encryption, platform switch and allowlist; the live parts (key check, catalog, endpoints) answered through the routes; **a streamed turn waits for a key** |
+| 3 | Inference adapter | Done. Both adapters, the DeepSeek glue, platform and key settings, catalog cache, per-model capabilities, allowlist, key resolution and encryption, `scripts/inference-smoke.ts` | offline tests pass for option mapping, usage and cost, catalog, encryption, platform switch and allowlist; live turns streamed on both platforms (2026-11-20, results in section 10) |
 | 4 | Chat backend | Routes in section 5 except files and transcription; sharing; ledger and quota | ordering, quota, truncation and chat access tests pass; a turn streams through `curl` |
 | 5 | Frontend port | Section 7 "Ported" on the new API | create, stream, edit, regenerate, vote, rename, delete and share work in the browser |
 | 6 | Extended chat UI | Model and provider pickers, settings panel, reply footer, share dialog | changing provider changes `metadata.provider` on the next reply; a listed person can open a private chat and a stranger gets 404 |
@@ -451,13 +451,20 @@ BLOB_READ_WRITE_TOKEN=            # Vercel Blob instead of S3; also needs @verce
 
 All 16 assumptions were checked; details and evidence are in `plans/preparation-findings.md`. Their consequences are folded into the sections above.
 
-These live checks still need credentials.
+Live turns, run by the user on 2026-11-20 with `bun scripts/inference-smoke.ts`:
+
+| Platform | Model | Result |
+|---|---|---|
+| OpenRouter | `deepseek/deepseek-chat`, routed to `deepinfra/fp4/flex` | Key accepted, 444 models, 3 endpoints. Served by `DeepInfra` as routed, 5 citations, $0.0082 reported. Tokens alone come to about $0.0013, so web search is most of the cost. Sending a reasoning level to a model without reasoning did not fail. |
+| DeepSeek | `deepseek-flash` | Key accepted, 2 models. Thinking at `low`, 1 citation, title generated (`Nuxt 3.17 release additions`), 18,432 of 26,370 input tokens from cache, $0.00217 computed at off-peak prices. The figure checks out by hand. |
+
+Both answers named an old Nuxt release as the latest (3.9 and 3.17, while 4.6 is current), even with citations. That is answer quality from the models and search engines, not the adapters; the script now prints the source URLs so it can be judged.
+
+These live checks are still open.
 
 | Credential | Checks | Command |
 |---|---|---|
-| OpenRouter key | key check, catalog, endpoints, a routed turn with reasoning and web search, usage and cost | `OPENROUTER_API_KEY=… bun scripts/inference-smoke.ts` (this repo) |
-| DeepSeek key | the same, plus the glue: title, citations, cache tokens | `DEEPSEEK_API_KEY=… bun scripts/inference-smoke.ts` |
-| Both keys | history from OpenRouter replayed on DeepSeek | both variables in one run of the same script |
+| Both keys | history from OpenRouter replayed on DeepSeek; whether DeepSeek accepts the chart function tool beside its web tools (the script now declares one on every turn) | `OPENROUTER_API_KEY=… DEEPSEEK_API_KEY=… bun scripts/inference-smoke.ts` |
 | OpenRouter key | speech to text, PDF, CSV | `OPENROUTER_API_KEY=… bun scripts/spikes/openrouter/live.ts` (in `../model-chat-studio-prep`) |
 | DeepSeek key | chart tool beside web tools, speech to text, file upload | `glue.ts --live` and `rest.ts --live` in `../model-chat-studio-prep/scripts/spikes/deepseek/` |
 | S3 bucket | put, get, list, private access, batch delete | `S3_ACCESS_KEY_ID=… S3_SECRET_ACCESS_KEY=… S3_BUCKET=… S3_REGION=… [S3_ENDPOINT=…] bun scripts/spikes/nuxt/s3-live.ts` (in `../model-chat-studio-prep`) |
