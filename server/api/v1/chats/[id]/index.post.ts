@@ -1,0 +1,168 @@
+import { createError, defineEventHandler, getRouterParam, readValidatedBody } from 'nuxt/server'
+import { convertToModelMessages, createUIMessageStreamResponse, generateId, generateText, isStepCount, smoothStream, streamText, toUIMessageStream, type TextStreamPart, type ToolSet, type UIMessage } from 'ai'
+import { db, schema } from 'hub:db'
+import { and, eq, isNull } from 'drizzle-orm'
+import { chatAbilities } from '#shared/abilities/chatAbilities'
+import type { MessageMetadata } from '#shared/utils/chat'
+import { chartTool } from '#shared/utils/tools/chart'
+import { authorize } from '#server/utils/core/authorize'
+import { getSetting } from '#server/utils/core/settings'
+import { useServerAuth } from '#server/utils/core/useServerAuth'
+import { applyTurnTrigger, findChat, listChatMessages, monthlyBudgetStatus, turnRequestSchema } from '#server/utils/chat/turns'
+import { getCatalog, getEndpoints, getPriceOverride, useInference } from '#server/utils/inference'
+import type { FinishedStep, Pricing } from '#server/utils/inference/types'
+
+const INSTRUCTIONS = `You are a knowledgeable and helpful AI assistant. Give clear, accurate, well-structured answers.
+
+Formatting:
+- Never use Markdown headings (#, ##, ...) or underlined headings (=== or ---). Use **bold text** for section labels.
+- Start with the content, never with a heading.
+
+Quality:
+- Be concise yet complete, with examples when they help.
+- Break complex topics into digestible parts.
+- When you use web search, cite your sources.`
+
+const TITLE_INSTRUCTIONS = `Write a title for a chat that starts with the user's message below.
+- Under 30 characters, summarizing the message
+- Plain text: no quotes, colons, punctuation or Markdown`
+
+const REFUSAL = 'This answer was withheld by the content safety check.'
+
+/** The start of the first user message, for when no title was generated. */
+function fallbackTitle(text: string): string {
+	const clean = text.replace(/\s+/g, ' ').trim()
+	return clean.length > 60 ? `${clean.slice(0, 59)}…` : clean || 'New chat'
+}
+
+/** Streams one answer. The client sends only the new message (or the regenerate target), never the history. */
+export default defineEventHandler(async (event) => {
+	const user = await useServerAuth().requireUser(event)
+	const chat = await findChat(db, getRouterParam(event, 'id', { decode: true }))
+	await authorize(event, chatAbilities().manageChat, chat)
+	const request = await readValidatedBody(event, turnRequestSchema)
+	const chatId = chat!.id
+
+	const inference = await useInference(db, user.id)
+	if (!inference) throw createError({ status: 503, statusText: 'No model platform is configured yet. An admin can set one up in the settings.' })
+	const { platform, apiKey, byok, config } = inference
+
+	// Policy checks: the allowlist, the provider list and the budget.
+	const params = chat!.params ?? {}
+	const catalog = await getCatalog(db, inference)
+	const chosen = catalog.find(model => model.id === params.model)
+	// A model that is no longer offered (or another platform's) falls back to the default, without its model-specific settings.
+	const model = chosen ?? catalog.find(model => model.id === config.defaultModel)
+	if (!model) throw createError({ status: 400, statusText: 'This chat\'s model is not available. Pick another model.' })
+
+	const providers = chosen && platform.capabilities.providerRouting && params.providers?.length ? params.providers : undefined
+	if (providers) {
+		const tags = (await getEndpoints(inference, model.id)).map(endpoint => endpoint.tag)
+		if (providers.some(tag => !tags.includes(tag))) throw createError({ status: 400, statusText: 'A chosen provider does not serve this model' })
+	}
+	const levels = model.reasoning ? [...model.reasoningLevels, 'none', 'on'] : []
+	const reasoningLevel = chosen && params.reasoningLevel && levels.includes(params.reasoningLevel) ? params.reasoningLevel : undefined
+
+	if (!byok) {
+		const { spentUsd, budgetUsd } = await monthlyBudgetStatus(db, user)
+		if (budgetUsd !== null && spentUsd >= budgetUsd) {
+			throw createError({ status: 402, statusText: 'You have used this month\'s budget. Add your own API key in the settings to keep chatting.' })
+		}
+	}
+
+	const parentId = await applyTurnTrigger(db, chatId, request)
+	const history = await listChatMessages(db, chatId) as UIMessage<MessageMetadata>[]
+	const firstText = history.find(message => message.role === 'user')?.parts.map(part => part.type === 'text' ? part.text : '').join(' ') ?? ''
+
+	const safetyCheck = await getSetting(db, 'safetyCheck')
+	const firstTurn = !chat!.title
+	/** Appends one row to the spend ledger and returns the usage. */
+	const recordUsage = async (kind: 'chat' | 'title', modelId: string, steps: FinishedStep[], price: Pricing | null = null) => {
+		const usage = platform.usage({ model: modelId, steps, price })
+		await db.insert(schema.usageEvent).values({
+			userId: user.id, chatId, kind, platform: platform.id, model: modelId, byok,
+			provider: usage.provider, inputTokens: usage.inputTokens, cachedInputTokens: usage.cachedInputTokens,
+			outputTokens: usage.outputTokens, reasoningTokens: usage.reasoningTokens, costUsd: usage.costUsd,
+		})
+		return usage
+	}
+
+	// On platforms without a native title, a separate call runs alongside the answer.
+	const titleModel = firstTurn && !platform.capabilities.nativeTitle ? config.titleModel : undefined
+	const titlePromise = titleModel
+		? (async () => {
+				const prepared = platform.prepare({ apiKey, model: titleModel, userId: user.id, firstTurn: false, safetyCheck })
+				const result = await generateText({ model: prepared.model, providerOptions: prepared.providerOptions, instructions: TITLE_INSTRUCTIONS, prompt: firstText })
+				await recordUsage('title', titleModel, result.steps)
+				return result.text.trim() || undefined
+			})().catch((error) => {
+				console.error('[chat] title generation failed', error)
+				return undefined
+			})
+		: Promise.resolve(undefined)
+
+	const prepared = platform.prepare({
+		...params, apiKey, model: model.id, providers, reasoningLevel,
+		webSearch: !!params.webSearch && model.webSearch,
+		userId: user.id, firstTurn, safetyCheck,
+	})
+	const tools: ToolSet = { ...prepared.tools, chart: chartTool }
+	const price = await getPriceOverride(db, platform.id, model.id)
+
+	const result = streamText({
+		...prepared,
+		tools,
+		instructions: chat!.systemPrompt ? `${INSTRUCTIONS}\n\n${chat!.systemPrompt}` : INSTRUCTIONS,
+		messages: await convertToModelMessages(history, { tools }),
+		stopWhen: isStepCount(5),
+		abortSignal: event.req.signal,
+		experimental_transform: smoothStream(),
+	})
+
+	// Usage is summed over finished steps, so an aborted turn still records what it used.
+	const steps: FinishedStep[] = []
+	const stream = result.stream.pipeThrough(new TransformStream<TextStreamPart<ToolSet>, TextStreamPart<ToolSet>>({
+		transform(part, controller) {
+			if (part.type === 'finish-step') steps.push(part)
+			controller.enqueue(part)
+		},
+	}))
+	const metadata = (finishReason?: string): MessageMetadata => {
+		const { title: _, ...usage } = platform.usage({ model: model.id, steps, price })
+		return { platform: platform.id, model: model.id, ...usage, ...(finishReason === 'content-filter' && { refused: true }) }
+	}
+
+	return createUIMessageStreamResponse({
+		stream: toUIMessageStream({
+			stream,
+			tools,
+			sendSources: true,
+			generateMessageId: generateId,
+			messageMetadata: ({ part }) => part.type === 'start'
+				? { platform: platform.id, model: model.id }
+				: part.type === 'finish' ? metadata(part.finishReason) : undefined,
+			onError: (error) => {
+				console.error('[chat] turn failed', error)
+				return 'The model could not answer. Try again.'
+			},
+			// Runs before the response closes, so a client that refreshes on finish sees the title.
+			onEnd: async ({ responseMessage, finishReason }) => {
+				try {
+					const usage = await recordUsage('chat', model.id, steps, price)
+					const stored = metadata(finishReason)
+					const parts = stored.refused ? [{ type: 'text' as const, text: REFUSAL }] : responseMessage.parts
+					if (parts.length) {
+						await db.insert(schema.message).values({ id: responseMessage.id, chatId, parentId, role: 'assistant', parts, metadata: stored })
+					}
+					if (firstTurn) {
+						const title = (await titlePromise) ?? usage.title ?? fallbackTitle(firstText)
+						await db.update(schema.chat).set({ title }).where(and(eq(schema.chat.id, chatId), isNull(schema.chat.title)))
+					}
+				}
+				catch (error) {
+					console.error('[chat] saving the turn failed', error)
+				}
+			},
+		}),
+	})
+})

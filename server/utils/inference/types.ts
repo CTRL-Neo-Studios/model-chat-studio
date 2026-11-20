@@ -1,3 +1,4 @@
+import type { SharedV4ProviderOptions } from '@ai-sdk/provider'
 import type { LanguageModel, LanguageModelUsage, ProviderMetadata, ToolSet } from 'ai'
 import type { ChatParams } from '../../../shared/utils/chat'
 import type { InferencePlatformId } from '../core/settings'
@@ -57,7 +58,7 @@ export interface TurnInput extends Omit<ChatParams, 'model'> {
 export interface PreparedTurn {
 	model: LanguageModel
 	tools: ToolSet
-	providerOptions: Record<string, Record<string, unknown>>
+	providerOptions: SharedV4ProviderOptions
 	temperature?: number
 	topP?: number
 	maxOutputTokens?: number

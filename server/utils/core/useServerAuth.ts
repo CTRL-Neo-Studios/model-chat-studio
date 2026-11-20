@@ -48,7 +48,8 @@ export function useServerAuth() {
 	) {
 		const user = await getDbUserFromSession(event);
 
-		if (!user || (opts && !satisfies(user, opts))) {
+		// Without options this still rejects a banned user.
+		if (!user || !satisfies(user, opts)) {
 			throw createError({ status: 403, statusText: "Unauthorized" });
 		}
 

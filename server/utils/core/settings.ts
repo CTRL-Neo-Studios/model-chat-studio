@@ -22,6 +22,8 @@ export type PlatformConfig = z.infer<typeof platformConfigSchema>
 const settingSchemas = {
 	signupMode: z.enum(['invite', 'open', 'closed']).catch('invite'),
 	safetyCheck: z.boolean().catch(false),
+	/** USD per member per month on the instance key; `null` is unlimited. A member's own budget wins. */
+	defaultMonthlyBudgetUsd: z.number().nonnegative().nullable().catch(null),
 	inferencePlatform: z.enum(tables.inferencePlatforms).nullable().catch(null),
 	'inference.openrouter': platformConfigSchema.catch({}),
 	'inference.deepseek': platformConfigSchema.catch({}),
@@ -55,6 +57,7 @@ export async function adminSettingsView(db: Db) {
 	return {
 		signupMode: await getSetting(db, 'signupMode'),
 		safetyCheck: await getSetting(db, 'safetyCheck'),
+		defaultMonthlyBudgetUsd: await getSetting(db, 'defaultMonthlyBudgetUsd'),
 		inferencePlatform: await getSetting(db, 'inferencePlatform'),
 		platforms,
 	}

@@ -225,10 +225,10 @@ All under `/api/v1`, all requiring a user unless noted.
 
 | Route | Purpose |
 |---|---|
-| `GET /chats`, `POST /chats` | list own chats; create with the first message |
-| `GET /chats/:id` | read; allowed for the owner, listed people, and anyone when link access is on |
-| `PATCH /chats/:id` | owner only: title, visibility, shared people, system prompt, params |
-| `DELETE /chats/:id` | owner only: delete the chat, its blobs, remote files and file rows |
+| `GET /chats`, `POST /chats` | list own chats; create with `{ id, message, params? }` (the client picks the chat UUID, as in the template) |
+| `GET /chats/:id` | read, with messages ordered by `seq` and `isOwner`; allowed for the owner, listed people, and anyone when link access is on. Only the owner gets `sharedWith` (people). |
+| `PATCH /chats/:id` | owner only: `title`, `visibility`, `sharedWith` (user ids; replaces the list), `systemPrompt`, `params` |
+| `DELETE /chats/:id` | owner only: delete the chat; from phase 7 also its blobs, remote files and file rows |
 | `POST /chats/:id` | owner only: stream a turn (see below) |
 | `GET /chats/:id/votes`, `POST /chats/:id/votes` | owner only, as in the template |
 | `GET /users/search?q=` | find people to share with: `id`, `username`, `name`, `avatarUrl`; at least 2 characters, 10 results |
@@ -239,23 +239,25 @@ All under `/api/v1`, all requiring a user unless noted.
 | `GET /users/me`, `GET /me/usage`, `PUT /me/api-key`, `DELETE /me/api-key?platform=` | profile (with `apiKeys`: the platforms that have a personal key), month spend against budget, personal key (checked before saving) |
 | `/users/**` | existing user management, migrated to `nuxt/server`, plus budget |
 | `GET /admin/invites`, `POST /admin/invites`, `DELETE /admin/invites/:id` | admin only. Create takes `maxUses` (default 1) and `expiresInDays` (default 7, `null` never expires) and returns the link once; only a hash of the code is stored. Delete revokes. |
-| `GET /admin/settings`, `PATCH /admin/settings` | admin only: `signupMode`, `safetyCheck`, `inferencePlatform`, and per platform `apiKey` (write-only; reported as `hasKey`), `defaultModel`, `titleModel`, `sttModel`. Absent fields are left alone, `null` clears. |
-| `/admin/models` | admin only |
+| `GET /admin/settings`, `PATCH /admin/settings` | admin only: `signupMode`, `safetyCheck`, `defaultMonthlyBudgetUsd` (`null` is unlimited), `inferencePlatform`, and per platform `apiKey` (write-only; reported as `hasKey`), `defaultModel`, `titleModel`, `sttModel`. Absent fields are left alone, `null` clears. |
+| `GET /admin/models`, `PATCH /admin/models` | admin only: the active platform's full catalog with `enabled` and `priceOverride`; PATCH upserts one model's `{ platform, modelId, enabled?, priceInput?, priceCachedInput?, priceOutput? }` |
 | `GET /auth/github` (server route) | OAuth callback and signup gate |
 
 `GET /users/search` shows every signed-in member the names of the other members. That is what sharing with listed people requires.
 
 ### One turn (`POST /chats/:id`)
 
+The body is `{ trigger: 'submit-message', message }` or `{ trigger: 'regenerate-message', messageId? }`. Submitting a message whose id already exists in the chat is an edit.
+
 1. Require the user, load the chat by owner, validate the body.
-2. Check the model against the allowlisted catalog and the chosen provider tags against its endpoints.
+2. Check the model against the allowlisted catalog and the chosen provider tags against its endpoints. A stored model that is not offered falls back to the platform's default model, without its provider and reasoning settings.
 3. Resolve the platform and key: the active platform from settings, then the user's key for it, else the instance key. With no platform or key configured, answer `503` with a clear message.
 4. On the instance key, compare this month's `usageEvent` sum with the budget. Over budget returns `402`.
-5. Apply the trigger. `submit-message` saves the new user message; an edit truncates after it; `regenerate-message` truncates from the target, or from the last assistant message when no id is sent. Truncation deletes the attached blobs first.
+5. Apply the trigger in one transaction (`applyTurnTrigger`). A new message is saved. An edit replaces the message's parts and deletes everything after it. `regenerate-message` deletes the target answer and everything after it, or everything after a target user message; without a target it starts from the last message. From phase 7, truncation deletes the attached blobs first.
 6. Build model messages from the database. Attachments are converted by media type (table below).
-7. Call `streamText` with the adapter's `prepare()` output, the system prompt, the chart tool and `event.req.signal`. Return it with `sendSources: true`, `messageMetadata` and a server `generateMessageId`.
-8. Title on the first turn: a parallel call on OpenRouter; the `title` flag on DeepSeek. If none arrives, use the start of the user message.
-9. On finish, insert the assistant message with metadata and one `usageEvent` row. Cost and provider come from the `finish-step` part, tokens from `finish`.
+7. Call `streamText` with the adapter's `prepare()` output, the default instructions plus the chat's system prompt, the chart tool and `event.req.signal`. Return it with `sendSources: true`, `messageMetadata` (platform and model on `start`, usage on `finish`) and a server `generateMessageId`.
+8. Title on the first turn: a parallel call with `titleModel` on OpenRouter (skipped when unset); the `title` flag on DeepSeek. If none arrives, use the start of the first user message.
+9. In `onEnd`, which runs before the response closes: one `usageEvent` row, then the assistant message with metadata, then the title. Usage is summed over the `finish-step` parts seen, so an aborted turn records what it used. A `content-filter` finish stores a refusal notice with `metadata.refused`.
 
 Message ids are generated on the server and sent to the client, because an edit refers to a message by id. Without `generateMessageId` the stored assistant message has an empty id.
 
@@ -345,6 +347,7 @@ Fixes to rules that exist today:
 - Done in phase 1: `PATCH /users/:id` is admin only with a strict zod allowlist (`role`, `monthlyBudgetUsd`); the old denylist and unvalidated body are gone.
 - Done in phase 2: an expired ban no longer counts. A new ban also clears any old expiry; before, a ban without an expiry kept the previous one and could be void from the start.
 - Done in phase 2: `app/plugins/authorization-resolver.ts` reads `useUserSession().user`.
+- Done in phase 4: `requireUser` rejects a banned user even without role options. Before, only routes that went through an ability did, so a member banned mid-session could still list models or manage their API key.
 
 Known ceilings:
 
@@ -407,10 +410,10 @@ Phase P is done. Phases 2 and 3 are independent once phase 1 is done, and phases
 | 1 | Data and conventions | Done. New schema, regenerated migration `0000_init`, `applyMigrationsDuringDev: true`, handlers and utils on `nuxt/server` and `hub:db`, the authorization wrapper and its test, the resolver returning `null` for guests, Logto removed, user lookups by non-UUID ids find nobody | migration applied on PGlite and on a throwaway Postgres 16; user routes answer as before; a throwing ability answers 500 |
 | 2 | Auth and access control | Done. GitHub handler, invite flow and admin invites API, first-user admin, global auth middleware, role rules from section 6, removals from section 7, sign-in page and a signed-in placeholder home | signup, invite and role-rule tests pass; one admin out of 20 simultaneous first signups on Postgres; sign-in, error, sign-out and redirects checked in the browser |
 | 3 | Inference adapter | Done. Both adapters, the DeepSeek glue, platform and key settings, catalog cache, per-model capabilities, allowlist, key resolution and encryption, `scripts/inference-smoke.ts` | offline tests pass for option mapping, usage and cost, catalog, encryption, platform switch and allowlist; live turns streamed on both platforms (2026-11-20, results in section 10) |
-| 4 | Chat backend | Routes in section 5 except files and transcription; sharing; ledger and quota | ordering, quota, truncation and chat access tests pass; a turn streams through `curl` |
+| 4 | Chat backend | Done. Chat, vote, share, search, usage and admin model routes; the turn route with policy checks, ledger, titles and truncation; `chatAbilities.ts` | ordering, quota, truncation and chat access tests pass (`test/chat.test.ts`); turns streamed through `curl` against fixture upstreams on both platforms (below) |
 | 5 | Frontend port | Section 7 "Ported" on the new API | create, stream, edit, regenerate, vote, rename, delete and share work in the browser |
 | 6 | Extended chat UI | Model and provider pickers, settings panel, reply footer, share dialog | changing provider changes `metadata.provider` on the next reply; a listed person can open a private chat and a stranger gets 404 |
-| 7 | Files and dictation | File routes on `hub:blob`, attachments by media type, DeepSeek PDF upload flow, WAV dictation | an image and a PDF reach a model on each platform; a spoken sentence lands in the prompt on both |
+| 7 | Files and dictation | File routes on `hub:blob`, attachments by media type, DeepSeek PDF upload flow, WAV dictation; file parts in `userMessageSchema` (text only until then); deleting blobs, remote files and file rows on chat delete and on truncation | an image and a PDF reach a model on each platform; a spoken sentence lands in the prompt on both |
 | 8 | Admin and settings | Admin pages, `/settings`, the platform switch and keys, the safety check switch | an admin can invite, ban, set a budget, disable a model, switch signup mode and switch platform from the UI |
 | 9 | Hardening | Rate limits on stream and transcription, CSP review, full smoke run per platform | smoke run passes on OpenRouter and on DeepSeek |
 

@@ -18,6 +18,7 @@ const platformPatch = z.object({
 const bodySchema = z.object({
 	signupMode: z.enum(['invite', 'open', 'closed']),
 	safetyCheck: z.boolean(),
+	defaultMonthlyBudgetUsd: z.number().nonnegative().nullable(),
 	inferencePlatform: z.enum(['openrouter', 'deepseek']).nullable(),
 	platforms: z.object({ openrouter: platformPatch, deepseek: platformPatch }).partial().strict(),
 }).partial().strict()
@@ -51,6 +52,7 @@ export default defineEventHandler(async (event) => {
 	await db.transaction(async (tx) => {
 		if (body.signupMode !== undefined) await setSetting(tx, 'signupMode', body.signupMode)
 		if (body.safetyCheck !== undefined) await setSetting(tx, 'safetyCheck', body.safetyCheck)
+		if (body.defaultMonthlyBudgetUsd !== undefined) await setSetting(tx, 'defaultMonthlyBudgetUsd', body.defaultMonthlyBudgetUsd)
 		if (body.inferencePlatform !== undefined) await setSetting(tx, 'inferencePlatform', body.inferencePlatform)
 		for (const [id, config] of Object.entries(configs) as [InferencePlatformId, PlatformConfig][]) {
 			await setSetting(tx, `inference.${id}`, config)

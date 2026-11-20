@@ -28,4 +28,6 @@ export interface MessageMetadata {
 	reasoningTokens?: number
 	/** `null` when the platform reported no cost and no price is known. */
 	costUsd?: number | null
+	/** The safety check withheld the answer; the stored text is a notice. */
+	refused?: boolean
 }

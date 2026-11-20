@@ -5,7 +5,7 @@ import { openSecret } from '../core/secrets'
 import { type Db, getSetting, type InferencePlatformId, type PlatformConfig } from '../core/settings'
 import { deepseekPlatform } from './deepseek'
 import { openrouterPlatform } from './openrouter'
-import type { CatalogEndpoint, CatalogModel, InferencePlatform } from './types'
+import type { CatalogEndpoint, CatalogModel, InferencePlatform, Pricing } from './types'
 
 export const platformAdapters: Record<InferencePlatformId, InferencePlatform> = {
 	openrouter: openrouterPlatform,
@@ -55,16 +55,28 @@ function cached<T>(cache: Map<string, CacheEntry<T>>, key: string, ttlMs: number
 	return value
 }
 
-/** The platform's models, cached for an hour, narrowed to the admin allowlist when it has entries. */
-export async function getCatalog(db: Db, inference: ActiveInference): Promise<CatalogModel[]> {
+/** Every model the platform offers, cached for an hour; the admin allowlist is not applied. */
+export async function getFullCatalog(inference: ActiveInference): Promise<CatalogModel[]> {
 	const { platform, apiKey } = inference
-	const models = await cached(catalogCache, platform.id, 60 * 60_000, () => platform.listModels(apiKey))
+	return await cached(catalogCache, platform.id, 60 * 60_000, () => platform.listModels(apiKey))
+}
 
+/** The platform's models, narrowed to the admin allowlist when it has entries. */
+export async function getCatalog(db: Db, inference: ActiveInference): Promise<CatalogModel[]> {
+	const models = await getFullCatalog(inference)
 	const allowed = await db.select({ modelId: tables.modelSetting.modelId }).from(tables.modelSetting)
-		.where(and(eq(tables.modelSetting.platform, platform.id), eq(tables.modelSetting.enabled, true)))
+		.where(and(eq(tables.modelSetting.platform, inference.platform.id), eq(tables.modelSetting.enabled, true)))
 	if (!allowed.length) return models
 	const ids = new Set(allowed.map(row => row.modelId))
 	return models.filter(model => ids.has(model.id))
+}
+
+/** The admin's price for a model, when input and output prices are both set. */
+export async function getPriceOverride(db: Db, platformId: InferencePlatformId, modelId: string): Promise<Pricing | null> {
+	const [row] = await db.select().from(tables.modelSetting)
+		.where(and(eq(tables.modelSetting.platform, platformId), eq(tables.modelSetting.modelId, modelId)))
+	if (row?.priceInput == null || row.priceOutput == null) return null
+	return { input: row.priceInput, cacheRead: row.priceCachedInput ?? undefined, output: row.priceOutput }
 }
 
 /** Upstream providers for one model, cached for ten minutes. Empty on platforms without routing. */
