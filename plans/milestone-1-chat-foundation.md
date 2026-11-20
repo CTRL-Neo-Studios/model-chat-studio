@@ -458,18 +458,34 @@ Live turns, run by the user on 2026-11-20 with `bun scripts/inference-smoke.ts`:
 | OpenRouter | `deepseek/deepseek-chat`, routed to `deepinfra/fp4/flex` | Key accepted, 444 models, 3 endpoints. Served by `DeepInfra` as routed, 5 citations, $0.0082 reported. Tokens alone come to about $0.0013, so web search is most of the cost. Sending a reasoning level to a model without reasoning did not fail. |
 | DeepSeek | `deepseek-flash` | Key accepted, 2 models. Thinking at `low`, 1 citation, title generated (`Nuxt 3.17 release additions`), 18,432 of 26,370 input tokens from cache, $0.00217 computed at off-peak prices. The figure checks out by hand. |
 
-Both answers named an old Nuxt release as the latest (3.9 and 3.17, while 4.6 is current), even with citations. That is answer quality from the models and search engines, not the adapters; the script now prints the source URLs so it can be judged.
+Both answers named an old Nuxt release as the latest (3.9 and 3.17, while 4.6 is current), even with citations. That is answer quality from the models and search engines, not the adapters.
 
-These live checks are still open.
+The second run, with both keys, continued the OpenRouter conversation on DeepSeek, with the chart tool declared on every turn:
+
+- **Function tool beside DeepSeek's web tools: accepted, no 400.** This settles the open design question: the chart tool stays on every DeepSeek turn.
+- **History from OpenRouter replayed on DeepSeek: accepted.** The OpenRouter model (`deepseek/deepseek-chat`) had no reasoning, so no reasoning parts crossed over.
+- **No title on the second turn**, as intended: the title flag is only sent on a chat's first turn.
+- **Search engines differ.** OpenRouter's search cited five pages about Nuxt 3.9, the stale answer came straight from them. DeepSeek answered Nuxt 4.6, correctly, but returned no citation this time (one in the first run).
+
+Third and fourth runs, with `deepseek/deepseek-v4.1-flash` on OpenRouter (routed to `baidu/fp8`) at reasoning level `low`, in both orders:
+
+- **DeepSeek → OpenRouter: works.** DeepSeek's turn had 486 reasoning tokens, 2 citations and a title (`Nuxt 4.6 release`). OpenRouter accepted that history, reasoning parts included, and answered correctly with 15 citations.
+- **OpenRouter → DeepSeek: accepted, but the DeepSeek turn stopped early.** It wrote "I need to verify this rather than rely on memory — let me search." and ended after 96 output tokens. Its 1,535 input tokens mean no search results came back. There was no error part. No reasoning crossed over: OpenRouter counted 89 reasoning tokens but streamed no reasoning text from that endpoint.
+- **Cost:** OpenRouter turns with web search ran $0.014–0.022, against about $0.0028 for the tokens alone. Search is the bulk of the cost.
+- **Duplicate citations:** OpenRouter repeats URLs (`https://nuxt.com/blog` three times in one turn). The template's `Sources` component keys by URL, so phase 5 dedupes sources by URL.
+
+A fifth run, forward order again, reproduced it: DeepSeek finished with `stop`, no warnings, about 1,500 input tokens (no search), and wrote that it had no web access in this conversation, retracting the OpenRouter answer.
+
+Search does run on DeepSeek turns that continue a conversation: in the second run, continuing an OpenRouter `deepseek-chat` conversation, DeepSeek searched (23,463 input tokens) and answered correctly. The failing runs differ in that the OpenRouter turn came from a reasoning model. An offline check of the glue with a replayed OpenRouter reasoning part shows the request still carries `deepseek_web_search` and `deepseek_read_url`, so the tools are not being dropped on our side. The script now logs every chat request's shape (tools, thinking, and each message's role and fields, never text), so the next forward run shows exactly what DeepSeek received. Until explained, treat a DeepSeek turn after an OpenRouter reasoning turn as possibly unsearched.
+
+These live checks are still open; none of them blocks phase 4, but the first row should run before phase 5 ships DeepSeek to users.
 
 | Credential | Checks | Command |
 |---|---|---|
-| Both keys | history from OpenRouter replayed on DeepSeek; whether DeepSeek accepts the chart function tool beside its web tools (the script now declares one on every turn) | `OPENROUTER_API_KEY=… DEEPSEEK_API_KEY=… bun scripts/inference-smoke.ts` |
+| Both keys | why DeepSeek does not search when continuing an OpenRouter reasoning-model conversation | `OPENROUTER_API_KEY=… DEEPSEEK_API_KEY=… bun scripts/inference-smoke.ts` (forward order; the `request:` lines show what was sent) |
 | OpenRouter key | speech to text, PDF, CSV | `OPENROUTER_API_KEY=… bun scripts/spikes/openrouter/live.ts` (in `../model-chat-studio-prep`) |
-| DeepSeek key | chart tool beside web tools, speech to text, file upload | `glue.ts --live` and `rest.ts --live` in `../model-chat-studio-prep/scripts/spikes/deepseek/` |
+| DeepSeek key | speech to text, file upload | `rest.ts --live` in `../model-chat-studio-prep/scripts/spikes/deepseek/` |
 | S3 bucket | put, get, list, private access, batch delete | `S3_ACCESS_KEY_ID=… S3_SECRET_ACCESS_KEY=… S3_BUCKET=… S3_REGION=… [S3_ENDPOINT=…] bun scripts/spikes/nuxt/s3-live.ts` (in `../model-chat-studio-prep`) |
-
-One answer changes the design: DeepSeek's docs are ambiguous on whether a function tool can be declared together with the web tools, `title` and `safety_check`. If it cannot, the chart tool is left out of DeepSeek turns that use web search.
 
 ## 11. Out of scope
 
