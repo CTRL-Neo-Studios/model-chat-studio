@@ -1,0 +1,1 @@
+ALTER TABLE "modelSetting" ALTER COLUMN "enabled" SET DEFAULT false;

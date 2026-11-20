@@ -7,5 +7,9 @@ export function adminAbilities() {
 		manageInvites: defineAbility((user: User) => {
 			return satisfies(user, { minRole: 'admin' })
 		}),
+
+		manageSettings: defineAbility((user: User) => {
+			return satisfies(user, { minRole: 'admin' })
+		}),
 	}
 }

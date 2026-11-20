@@ -1,14 +1,6 @@
-import { expect, mock, test } from 'bun:test'
+import { expect, test } from 'bun:test'
 import { defineAbility, deny } from 'nuxt-authorization/utils'
-
-// `nuxt/server` only loads inside a Nuxt server build; the wrapper needs nothing from it but `createError`.
-mock.module('nuxt/server', () => ({
-	createError: ({ status, statusText }: { status: number, statusText: string }) =>
-		Object.assign(new Error(statusText), { status }),
-}))
-
-// Dynamic: a static import is hoisted above `mock.module` and would load the real `nuxt/server`.
-const { authorize } = await import('../server/utils/core/authorize')
+import { authorize } from '../server/utils/core/authorize'
 
 type TestUser = { id: string }
 

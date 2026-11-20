@@ -1,14 +1,11 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { and, eq, gt, isNull, lt, or, sql } from 'drizzle-orm'
-import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
-import { z } from 'zod'
 // Relative, not `hub:db`, so this module also loads in `bun test`.
 import * as tables from '../../db/schema'
+import { type Db, getSetting } from './settings'
 
-type Db = PgDatabase<PgQueryResultHKT, typeof tables>
 type DbUser = typeof tables.user.$inferSelect
 
-export type SignupMode = 'invite' | 'open' | 'closed'
 export type SignInError = 'signup_closed' | 'invite_required' | 'invite_invalid'
 export type SignInResult = { user: DbUser } | { error: SignInError }
 
@@ -21,12 +18,10 @@ export interface GitHubProfile {
 	avatar_url?: string | null
 }
 
-const { invite, setting, user } = tables
+const { invite, user } = tables
 
 // Any constant works; it only has to be the same in every process that signs people up.
 const SIGNUP_LOCK = 72_154_610
-
-const signupModeSchema = z.enum(['invite', 'open', 'closed']).catch('invite')
 
 /** A new invite code. Only its hash is stored; the code itself is shown once. */
 export function newInviteCode(): string {
@@ -49,12 +44,6 @@ function usableInvite(code: string) {
 export async function isInviteUsable(db: Db, code: string): Promise<boolean> {
 	const [row] = await db.select({ id: invite.id }).from(invite).where(usableInvite(code)).limit(1)
 	return !!row
-}
-
-/** Defaults to `invite` when unset or invalid. */
-export async function getSignupMode(db: Db): Promise<SignupMode> {
-	const [row] = await db.select({ value: setting.value }).from(setting).where(eq(setting.key, 'signupMode')).limit(1)
-	return signupModeSchema.parse(row?.value)
 }
 
 /**
@@ -87,7 +76,7 @@ export async function signInWithGitHub(db: Db, profile: GitHubProfile, inviteCod
 
 		const [anyone] = await tx.select({ id: user.id }).from(user).limit(1)
 		if (anyone) {
-			const mode = await getSignupMode(tx)
+			const mode = await getSetting(tx, 'signupMode')
 			if (mode === 'closed') return { error: 'signup_closed' as const }
 			if (mode === 'invite') {
 				if (!inviteCode) return { error: 'invite_required' as const }

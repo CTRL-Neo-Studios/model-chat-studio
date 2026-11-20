@@ -1,19 +1,13 @@
 import { beforeEach, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
-import { PGlite } from '@electric-sql/pglite'
-import { drizzle, type PgliteDatabase } from 'drizzle-orm/pglite'
 import { eq } from 'drizzle-orm'
 import * as schema from '../server/db/schema'
 import { hashInviteCode, signInWithGitHub, type GitHubProfile, type SignInResult } from '../server/utils/core/signup'
+import { createTestDb, type TestDb } from './db'
 
-const migration = readFileSync(new URL('../server/db/migrations/postgresql/0000_init.sql', import.meta.url), 'utf8')
-
-let db: PgliteDatabase<typeof schema>
+let db: TestDb
 
 beforeEach(async () => {
-	const client = new PGlite()
-	await client.exec(migration)
-	db = drizzle(client, { schema })
+	db = await createTestDb()
 })
 
 const github = (id: number): GitHubProfile => ({ id, login: `user${id}`, name: `User ${id}`, avatar_url: `https://avatars.example/${id}` })

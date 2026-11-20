@@ -75,7 +75,8 @@ export const setting = pgTable("setting", {
 export const modelSetting = pgTable("modelSetting", {
 	platform: text({ enum: inferencePlatforms }).notNull(),
 	modelId: text().notNull(),
-	enabled: boolean().notNull().default(true),
+	/** Allowlist membership. Off by default, so a row that only overrides prices allowlists nothing. */
+	enabled: boolean().notNull().default(false),
 	/** USD per 1M tokens; `null` means no override. */
 	priceInput: usd(),
 	priceCachedInput: usd(),

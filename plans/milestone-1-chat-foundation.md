@@ -1,6 +1,6 @@
 # Milestone 1: chat template frontend on an extended backend
 
-Status: phases P (preparation) and 0–2 (groundwork, data and conventions, auth and access control) are done (2026-11-20). Phase 3 is next. Evidence for every "verified" claim below is in `plans/preparation-findings.md`.
+Status: phases P (preparation) and 0–3 (groundwork, data and conventions, auth and access control, inference adapter) are done (2026-11-20), except the live checks in section 10, which wait for API keys. Phase 4 is next. Evidence for every "verified" claim below is in `plans/preparation-findings.md`.
 
 Goal: the Nuxt UI chat template's frontend (`../chat`, upstream `nuxt-ui-templates/chat` at `f00f2a6`) running in this repo on PostgreSQL and S3, with invite-gated GitHub signup, a platform-agnostic inference layer (OpenRouter or DeepSeek), model and upstream-provider selection, sampling parameters, usage accounting and quotas.
 
@@ -77,30 +77,33 @@ The existing eleven handlers under `server/api/v1` and both files in `server/uti
 - Authorization goes through the wrapper in `server/utils/core/authorize.ts` (section 6). Nitro auto-imports it under the name `authorize` and it shadows nuxt-authorization's server `authorize` (the build logs "Duplicated imports"), so even a bare `authorize(...)` gets the wrapper. Handlers never call the module's `allows` or `denies` on the server.
 - API prefix: `/api/v1`. OAuth lives at `/auth/github` as a server route.
 - Formatting: tabs, per `.editorconfig`. Ported template files are reformatted.
-- Package manager: bun. Tests: `bun run test` (`bun test`), files in `test/`, no framework. Tests run outside Nuxt: `bunfig.toml` preloads `test/setup.ts`, which provides the auto-imports shared code relies on (`createRoleChecker`), and the root `tsconfig.json` maps `#shared` and `#server` for them. Database tests run on an in-memory PGlite with the real migration.
+- Package manager: bun. Tests: `bun run test` (`bun test`), files in `test/`, no framework. Tests run outside Nuxt: `bunfig.toml` preloads `test/setup.ts`, which provides the auto-imports shared code relies on (`createRoleChecker`) and a stand-in `nuxt/server` (`createError`, `deriveSecret`); the root `tsconfig.json` maps `#shared` and `#server`. Database tests use `test/db.ts`: an in-memory PGlite with every migration applied. Network tests replace `globalThis.fetch` and feed synthetic streams from `test/fixtures/sse.ts`.
 - Table and column names are camelCase, as in the existing schema (`chatShare`, `"userId"`).
 
 ## 3. Inference layer
 
-`server/utils/inference/` holds `types.ts`, `openrouter.ts`, `deepseek.ts` and `index.ts`. `useInference()` reads the active platform and its instance key from the `setting` table and returns that adapter.
+`server/utils/inference/` holds `types.ts`, `openrouter.ts`, `deepseek.ts`, `usage.ts` and `index.ts`. `useInference(db, userId)` reads the active platform and its config from the `setting` table and returns the adapter with the key to use: the user's own key for that platform, else the instance key. It returns `null` until both a platform and a key exist.
 
 ```ts
 export interface InferencePlatform {
 	id: 'openrouter' | 'deepseek'
 	capabilities: { providerRouting: boolean, safetyCheck: boolean, nativeTitle: boolean }
+	/** False for a key the platform rejects; throws when it cannot be reached. */
+	checkKey(apiKey: string): Promise<boolean>
 	listModels(apiKey: string): Promise<CatalogModel[]>
 	listEndpoints?(apiKey: string, modelId: string): Promise<CatalogEndpoint[]>
-	/** Everything `streamText` needs for one turn. */
-	prepare(input: TurnInput): { model: LanguageModel, tools?: ToolSet, providerOptions?: ProviderOptions }
-	/** Turns a stored PDF into the part this platform accepts. */
-	attachPdf(input: { apiKey: string, file: StoredFile, bytes: Uint8Array }): Promise<FilePart>
-	/** Tokens, cost, the upstream provider that served the turn, and a title if the platform made one. */
-	usage(step: FinishStep): TurnUsage
-	transcribe(apiKey: string, wav: Blob): Promise<{ text: string, costUsd: number | null }>
+	/** Spread into `streamText`: model, platform tools, provider options, sampling settings. */
+	prepare(input: TurnInput): PreparedTurn
+	/** Summed over every step of a turn: tokens, cost, the provider that served it, and a title if the platform made one. */
+	usage(input: { model: string, steps: FinishedStep[], price?: Pricing | null, at?: Date }): TurnUsage
 }
 ```
 
-`TurnInput` carries `apiKey`, `model`, `providers`, `allowFallbacks`, sampling params, `reasoningLevel`, `webSearch`, `userId`, `firstTurn` and `safetyCheck`.
+`attachPdf` and `transcribe` join the interface in phase 7, where files and dictation are built and checked end to end.
+
+`TurnInput` carries `apiKey`, `model`, `providers`, `allowFallbacks`, sampling params, `reasoningLevel`, `webSearch`, `userId`, `firstTurn` and `safetyCheck`. `reasoningLevel` is `none` (off), `on` (on at the model's default effort, for toggle-only models), or one of the model's `reasoningLevels`; unset leaves the model's default.
+
+The catalog is cached in memory for an hour per platform, endpoints for ten minutes per model; failed requests are not cached. The allowlist is the `modelSetting` rows with `enabled = true` for the platform; with none, every model is allowed.
 
 `CatalogModel` is normalized:
 
@@ -132,9 +135,9 @@ The active platform and each platform's instance key are admin settings, not env
 
 - **Per-platform data.** `defaultModel`, `titleModel`, `sttModel` and the instance key are stored per platform. `modelSetting`, `userApiKey` and `providerFile` are already keyed by platform. Switching back restores everything.
 - **Existing chats** keep their history. If a chat's stored model does not exist on the new platform, the picker and the next turn use that platform's default model.
-- **Saving a key** checks it by listing models, so a wrong key is rejected at once.
+- **Saving a key** checks it first: OpenRouter's `GET /api/v1/key`, DeepSeek's `GET /models`. A rejected key answers 400 and changes nothing, including other fields in the same request.
 - **Nothing configured yet.** Until a platform and key are set, sending is disabled with a notice, and admins get a link to the settings page.
-- **Not yet verified:** replaying history written by one platform to the other (reasoning parts and provider metadata). It is checked in phase 3 with both keys.
+- **Not yet verified:** replaying history written by one platform to the other (reasoning parts and provider metadata). `scripts/inference-smoke.ts` does it when both keys are set.
 
 ### OpenRouter specifics
 
@@ -197,7 +200,7 @@ PostgreSQL through Drizzle `pgTable`, in `server/db/schema.ts`.
 | `user` | `id` uuid, `githubId` bigint unique, `username`, `name`, `email` (nullable: GitHub may hide it), `avatarUrl`, `role`, ban fields, `monthlyBudgetUsd` numeric null |
 | `invite` | `codeHash` unique, `createdBy`, `maxUses`, `useCount`, `expiresAt`, `revokedAt` |
 | `setting` | `key` PK, `value` jsonb: `signupMode`, `defaultMonthlyBudgetUsd`, `safetyCheck`, `inferencePlatform`, and per platform `apiKey` (ciphertext), `defaultModel`, `titleModel`, `sttModel` |
-| `modelSetting` | PK (`platform`, `modelId`), `enabled`, `priceInput`, `priceCachedInput`, `priceOutput` (null means no override) |
+| `modelSetting` | PK (`platform`, `modelId`), `enabled` (allowlist membership, default false so a price-only row allowlists nothing; migration `0001`), `priceInput`, `priceCachedInput`, `priceOutput` (null means no override) |
 | `userApiKey` | PK (`userId`, `platform`), `ciphertext` (first byte is a key version) |
 | `chat` | `id` uuid, `userId` FK cascade, `title`, `visibility` (`private` or `public`), `systemPrompt`, `params` jsonb |
 | `chatShare` | PK (`chatId`, `userId`), both FK cascade |
@@ -229,14 +232,15 @@ All under `/api/v1`, all requiring a user unless noted.
 | `POST /chats/:id` | owner only: stream a turn (see below) |
 | `GET /chats/:id/votes`, `POST /chats/:id/votes` | owner only, as in the template |
 | `GET /users/search?q=` | find people to share with: `id`, `username`, `name`, `avatarUrl`; at least 2 characters, 10 results |
-| `GET /models` | catalog, allowlist applied, cached one hour |
-| `GET /models/endpoints?id=` | upstream providers for one model (ids contain slashes, so a query parameter) |
+| `GET /models` | `{ platform: { id, capabilities } \| null, defaultModel, models }`: the allowlisted catalog, cached one hour |
+| `GET /models/endpoints?id=` | upstream providers for one allowlisted model (ids contain slashes, so a query parameter) |
 | `PUT /files/:chatId`, `GET /files/:id`, `DELETE /files/:id` | upload, serve, delete; reading follows the chat's access |
 | `POST /transcriptions` | WAV in, text out |
-| `GET /users/me`, `GET /me/usage`, `PUT /me/api-key`, `DELETE /me/api-key` | profile, month spend against budget, personal key |
+| `GET /users/me`, `GET /me/usage`, `PUT /me/api-key`, `DELETE /me/api-key?platform=` | profile (with `apiKeys`: the platforms that have a personal key), month spend against budget, personal key (checked before saving) |
 | `/users/**` | existing user management, migrated to `nuxt/server`, plus budget |
 | `GET /admin/invites`, `POST /admin/invites`, `DELETE /admin/invites/:id` | admin only. Create takes `maxUses` (default 1) and `expiresInDays` (default 7, `null` never expires) and returns the link once; only a hash of the code is stored. Delete revokes. |
-| `/admin/settings`, `/admin/models` | admin only; settings include the active platform and its key, which is write-only |
+| `GET /admin/settings`, `PATCH /admin/settings` | admin only: `signupMode`, `safetyCheck`, `inferencePlatform`, and per platform `apiKey` (write-only; reported as `hasKey`), `defaultModel`, `titleModel`, `sttModel`. Absent fields are left alone, `null` clears. |
+| `/admin/models` | admin only |
 | `GET /auth/github` (server route) | OAuth callback and signup gate |
 
 `GET /users/search` shows every signed-in member the names of the other members. That is what sharing with listed people requires.
@@ -402,7 +406,7 @@ Phase P is done. Phases 2 and 3 are independent once phase 1 is done, and phases
 | 0 | Groundwork | Done. Dependencies and scripts (below), the four baseline typecheck errors, ESLint, CSRF, the production database driver guard, `.env.example`, README. | `bun run lint` and `bun run typecheck` pass |
 | 1 | Data and conventions | Done. New schema, regenerated migration `0000_init`, `applyMigrationsDuringDev: true`, handlers and utils on `nuxt/server` and `hub:db`, the authorization wrapper and its test, the resolver returning `null` for guests, Logto removed, user lookups by non-UUID ids find nobody | migration applied on PGlite and on a throwaway Postgres 16; user routes answer as before; a throwing ability answers 500 |
 | 2 | Auth and access control | Done. GitHub handler, invite flow and admin invites API, first-user admin, global auth middleware, role rules from section 6, removals from section 7, sign-in page and a signed-in placeholder home | signup, invite and role-rule tests pass; one admin out of 20 simultaneous first signups on Postgres; sign-in, error, sign-out and redirects checked in the browser |
-| 3 | Inference adapter | Both adapters, the DeepSeek glue, platform and key settings, catalog cache, per-model capabilities, allowlist filter, key resolution and encryption | the adapter tests pass offline; with a key, one turn streams on that platform with routing, reasoning, web search and usage printed; switching platform changes the catalog |
+| 3 | Inference adapter | Done. Both adapters, the DeepSeek glue, platform and key settings, catalog cache, per-model capabilities, allowlist, key resolution and encryption, `scripts/inference-smoke.ts` | offline tests pass for option mapping, usage and cost, catalog, encryption, platform switch and allowlist; the live parts (key check, catalog, endpoints) answered through the routes; **a streamed turn waits for a key** |
 | 4 | Chat backend | Routes in section 5 except files and transcription; sharing; ledger and quota | ordering, quota, truncation and chat access tests pass; a turn streams through `curl` |
 | 5 | Frontend port | Section 7 "Ported" on the new API | create, stream, edit, regenerate, vote, rename, delete and share work in the browser |
 | 6 | Extended chat UI | Model and provider pickers, settings panel, reply footer, share dialog | changing provider changes `metadata.provider` on the next reply; a listed person can open a private chat and a stranger gets 404 |
@@ -447,15 +451,16 @@ BLOB_READ_WRITE_TOKEN=            # Vercel Blob instead of S3; also needs @verce
 
 All 16 assumptions were checked; details and evidence are in `plans/preparation-findings.md`. Their consequences are folded into the sections above.
 
-These live checks still need credentials. Each runs from the `prep/spikes` worktree (`../model-chat-studio-prep`):
+These live checks still need credentials.
 
 | Credential | Checks | Command |
 |---|---|---|
-| OpenRouter key | routing by tag, web search, speech to text, PDF, CSV | `OPENROUTER_API_KEY=… bun scripts/spikes/openrouter/live.ts` |
-| DeepSeek key | glue, cache tokens, title, chart tool beside web tools | `DEEPSEEK_API_KEY=… AI_SDK_LOG_WARNINGS=false bun scripts/spikes/deepseek/glue.ts --live` |
-| DeepSeek key | catalog, speech to text, file upload | `DEEPSEEK_API_KEY=… bun scripts/spikes/deepseek/rest.ts --live` |
-| S3 bucket | put, get, list, private access, batch delete | `S3_ACCESS_KEY_ID=… S3_SECRET_ACCESS_KEY=… S3_BUCKET=… S3_REGION=… [S3_ENDPOINT=…] bun scripts/spikes/nuxt/s3-live.ts` |
-| GitHub OAuth app | full login | callback `http://localhost:3101/api/_spike/session/github`; steps in `scripts/spikes/reports/prep-nuxt.md` |
+| OpenRouter key | key check, catalog, endpoints, a routed turn with reasoning and web search, usage and cost | `OPENROUTER_API_KEY=… bun scripts/inference-smoke.ts` (this repo) |
+| DeepSeek key | the same, plus the glue: title, citations, cache tokens | `DEEPSEEK_API_KEY=… bun scripts/inference-smoke.ts` |
+| Both keys | history from OpenRouter replayed on DeepSeek | both variables in one run of the same script |
+| OpenRouter key | speech to text, PDF, CSV | `OPENROUTER_API_KEY=… bun scripts/spikes/openrouter/live.ts` (in `../model-chat-studio-prep`) |
+| DeepSeek key | chart tool beside web tools, speech to text, file upload | `glue.ts --live` and `rest.ts --live` in `../model-chat-studio-prep/scripts/spikes/deepseek/` |
+| S3 bucket | put, get, list, private access, batch delete | `S3_ACCESS_KEY_ID=… S3_SECRET_ACCESS_KEY=… S3_BUCKET=… S3_REGION=… [S3_ENDPOINT=…] bun scripts/spikes/nuxt/s3-live.ts` (in `../model-chat-studio-prep`) |
 
 One answer changes the design: DeepSeek's docs are ambiguous on whether a function tool can be declared together with the web tools, `title` and `safety_check`. If it cannot, the chart tool is left out of DeepSeek turns that use web search.
 
