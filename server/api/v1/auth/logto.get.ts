@@ -1,5 +1,6 @@
 import { db, schema } from "@nuxthub/db";
 import { eq, or } from 'drizzle-orm'
+import { sendRedirect } from 'nuxt/server'
 
 export default defineOAuthOidcEventHandler({
 	config: {

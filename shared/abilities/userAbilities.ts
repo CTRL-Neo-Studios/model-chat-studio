@@ -1,4 +1,4 @@
-import type {User, UserInsert} from "#shared/types/db";
+import type {User} from "#shared/types/db";
 import {satisfies} from "#shared/utils/roles";
 
 export function userAbilities() {

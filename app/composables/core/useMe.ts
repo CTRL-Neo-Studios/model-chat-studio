@@ -22,9 +22,10 @@ export function useMe() {
 		const id = unref(userId);
 		if (!id) throw new Error("Not authenticated");
 
+		const { csrf, headerName } = useCsrf()
 		return $fetch<User>(`/api/v1/users/${id}`, {
 			method: "patch",
-			headers: useRequestHeaders(),
+			headers: { ...useRequestHeaders(), [headerName]: csrf ?? '' },
 			body: values,
 		});
 	}

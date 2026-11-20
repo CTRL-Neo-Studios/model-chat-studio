@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {useServerUsers} from "#server/utils/core/useServerUsers";
-import {UserInsert} from "#shared/types/db";
+import type {UserInsert} from "#shared/types/db";
 
 const routeParamsSchema = z.object({
 	userId: z.coerce.string()

@@ -192,6 +192,12 @@ The answers are folded into `plans/milestone-1-chat-foundation.md`.
 
 On answer 9: the workaround named in the original question is on the AI SDK side, not DeepSeek's. DeepSeek's documented flow is used as written. `@ai-sdk/deepseek` drops PDF parts, so the adapter passes the `file_id` through the provider's image-reference path, which emits exactly DeepSeek's `{ "type": "file", "file_id": … }` block.
 
+## Changes after the checkpoint (2026-11-20)
+
+- **Admin bootstrap.** Answer 4 is replaced: the first person to sign up becomes admin. Numeric GitHub ids were too awkward to look up.
+- **Inference platform.** The active platform and its instance key are admin settings in the dashboard, swappable there, instead of environment variables.
+- **OAuth redirect URL.** `NUXT_OAUTH_GITHUB_REDIRECT_URL` is optional, not required. The callback URL is built from the request, and GitHub rejects one that does not match the OAuth app, so the header finding in "Findings that affect security" has little practical effect. The variable only matters behind a proxy that does not pass the public host and protocol through.
+
 ## Leftovers in the prep worktree
 
 - Spike routes, a spike table and migration `0001_spike` live only on `prep/spikes`.

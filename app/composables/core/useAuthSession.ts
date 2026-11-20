@@ -10,7 +10,7 @@ import type { User } from "#shared/types/db";
  * Full User record is available by fetching from the DB via API routes.
  */
 export function useAuthSession() {
-	const { user: sessionUser, session, fetch, clear, loggedIn, ready } = useUserSession();
+	const { session, fetch, clear, loggedIn, ready } = useUserSession();
 
 	// Cast the nuxt-auth-utils User (augmented in app/types/auth.d.ts) to the full DB User type.
 	// The cookie only stores id/role/emailVerified; other fields will be undefined on the client.
@@ -30,9 +30,10 @@ export function useAuthSession() {
 	}
 
 	async function signOut(reloadWindow: boolean = true) {
+		const { csrf, headerName } = useCsrf()
 		await requestFetch("/api/v1/auth/logout", {
 			method: 'post',
-			headers: requestHeaders,
+			headers: { ...requestHeaders, [headerName]: csrf ?? '' },
 		});
 		userState.value = null
 		await clear();

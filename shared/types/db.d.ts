@@ -5,7 +5,7 @@ import type {
 	InferInsertModel,
 	InferSelectModel
 } from "drizzle-orm";
-import { schema } from "@nuxthub/db"
+import type { schema } from "@nuxthub/db"
 
 type Schema = typeof schema;
 type TSchema = ExtractTablesWithRelations<Schema>;

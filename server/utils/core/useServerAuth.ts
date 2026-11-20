@@ -1,7 +1,7 @@
-import { type EventHandlerRequest, H3Event } from "h3";
+import type { EventHandlerRequest, H3Event } from "h3";
 import { db as $db, schema } from '@nuxthub/db'
 import { eq } from 'drizzle-orm'
-import { RoleCheckOptions } from "@type32/nuxt-cs-utils";
+import type { RoleCheckOptions } from "@type32/nuxt-cs-utils";
 import type { UserRole, User } from "#shared/types/db";
 import {satisfies} from "#shared/utils/roles";
 
@@ -28,7 +28,6 @@ export function useServerAuth() {
 	 * Does NOT throw — callers that need a guaranteed user should use `requireUser`.
 	 */
 	async function getUser(event: H3Event<EventHandlerRequest>): Promise<User | undefined> {
-		const session = await getRawSession(event);
 		return await getDbUserFromSession(event);
 	}
 

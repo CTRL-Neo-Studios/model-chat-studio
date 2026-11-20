@@ -1,4 +1,4 @@
-import {bigserial, boolean, pgTable, primaryKey, text, timestamp, uuid, varchar} from "drizzle-orm/pg-core";
+import {boolean, pgTable, text, timestamp, uuid} from "drizzle-orm/pg-core";
 import {relations} from "drizzle-orm";
 
 const createdUpdatedAtColumns = {

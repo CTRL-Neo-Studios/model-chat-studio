@@ -1,64 +1,57 @@
-# Nuxt Starter Template
+# Model Chat Studio
 
-[![Nuxt UI](https://img.shields.io/badge/Made%20with-Nuxt%20UI-00DC82?logo=nuxt&labelColor=020420)](https://ui.nuxt.com)
+A self-hosted AI chat for a small group of people. One instance serves its members, who sign in with GitHub by invitation or open signup, and chat with models from OpenRouter or DeepSeek.
 
-Use this template to get started with [Nuxt UI](https://ui.nuxt.com) quickly.
+The frontend is based on the [Nuxt UI chat template](https://github.com/nuxt-ui-templates/chat). The backend runs on PostgreSQL and S3-compatible storage.
 
-- [Live demo](https://starter-template.nuxt.dev/)
-- [Documentation](https://ui.nuxt.com/docs/getting-started/installation/nuxt)
+> Work in progress. The plan and its current phase are in [`plans/milestone-1-chat-foundation.md`](plans/milestone-1-chat-foundation.md).
 
-<a href="https://starter-template.nuxt.dev/" target="_blank">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://ui.nuxt.com/assets/templates/nuxt/starter-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="https://ui.nuxt.com/assets/templates/nuxt/starter-light.png">
-    <img alt="Nuxt Starter Template" src="https://ui.nuxt.com/assets/templates/nuxt/starter-light.png" width="830" height="466">
-  </picture>
-</a>
+## Stack
 
-> The starter template for Vue is on https://github.com/nuxt-ui-templates/starter-vue.
-
-## Quick Start
-
-```bash [Terminal]
-npm create nuxt@latest -- -t ui
-```
-
-## Deploy your own
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-name=starter&repository-url=https%3A%2F%2Fgithub.com%2Fnuxt-ui-templates%2Fstarter&demo-image=https%3A%2F%2Fui.nuxt.com%2Fassets%2Ftemplates%2Fnuxt%2Fstarter-dark.png&demo-url=https%3A%2F%2Fstarter-template.nuxt.dev%2F&demo-title=Nuxt%20Starter%20Template&demo-description=A%20minimal%20template%20to%20get%20started%20with%20Nuxt%20UI.)
+- [Nuxt 4](https://nuxt.com) and [Nuxt UI](https://ui.nuxt.com)
+- [NuxtHub](https://hub.nuxt.com) for PostgreSQL (Drizzle ORM) and file storage
+- [nuxt-auth-utils](https://github.com/atinux/nuxt-auth-utils) for GitHub OAuth and sessions
+- [AI SDK](https://ai-sdk.dev) with the OpenRouter and DeepSeek providers
 
 ## Setup
 
-Make sure to install the dependencies:
+Install dependencies with [Bun](https://bun.sh):
 
 ```bash
-pnpm install
+bun install
 ```
 
-## Development Server
+Copy `.env.example` to `.env.dev` and fill it in. Every variable is described in that file. With `DATABASE_URL` and the storage variables unset, development uses a local PGlite database and local files under `.data/`.
 
-Start the development server on `http://localhost:3000`:
+The first person to sign up becomes the admin, so sign up yourself before sharing the address. The inference platform (OpenRouter or DeepSeek) and its API key are then set in the admin dashboard.
+
+## Development
 
 ```bash
-pnpm dev
+bun run dev          # http://localhost:3000, reads .env.dev
+bun run lint
+bun run typecheck
+```
+
+## Database
+
+```bash
+bun run db:generate  # create a migration from server/db/schema.ts
+bun run db:migrate   # apply pending migrations, reads .env.dev
 ```
 
 ## Production
 
-Build the application for production:
+Copy `.env.example` to `.env.prod`, then:
 
 ```bash
-pnpm build
+bun run build        # reads .env.prod
+bun run preview      # serves the build locally
 ```
 
-Locally preview production build:
+Two things to know before deploying:
 
-```bash
-pnpm preview
-```
+- **The build output contains secrets.** The storage driver and its credentials are fixed when the app is built, and a `DATABASE_URL` present at build time is written into the bundle too. Treat `.output/` as secret and do not publish it or an image built from it.
+- **Migrations do not run on their own.** Apply them with `DATABASE_URL=… bunx nuxt db migrate` before starting a new version.
 
-Check out the [deployment documentation](https://nuxt.com/docs/getting-started/deployment) for more information.
-
-## Renovate integration
-
-Install [Renovate GitHub app](https://github.com/apps/renovate/installations/select_target) on your repository and you are good to go.
+The session cookie is `Secure`, so anything other than `localhost` needs HTTPS.

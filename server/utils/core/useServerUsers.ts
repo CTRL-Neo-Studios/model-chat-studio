@@ -1,6 +1,6 @@
 import { db, schema } from "@nuxthub/db"
 import {useServerAuth} from "#server/utils/core/useServerAuth";
-import {H3Event} from "h3";
+import type {H3Event} from "h3";
 import {eq} from "drizzle-orm";
 import {userAbilities} from "#shared/abilities/userAbilities";
 import type { User, UserInsert } from "#shared/types/db"

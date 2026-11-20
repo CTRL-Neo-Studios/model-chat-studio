@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { DropdownMenuItem, NavigationMenuItem } from "@nuxt/ui";
+import type { NavigationMenuItem } from "@nuxt/ui";
 import { useAuthSession } from "~/composables/core/useAuthSession";
 import Logo from "~/components/Logo.vue";
 const $as = useAuthSession();
@@ -11,26 +11,6 @@ const navigationItems = ref<NavigationMenuItem[]>([
 		to: "/about",
 	},
 ]);
-
-const userDropdownMenuItems: DropdownMenuItem[][] = [
-	[
-		{
-			label: "Dashboard",
-			icon: "i-lucide-layout-dashboard",
-			to: "/dashboard",
-		},
-	],
-	[
-		{
-			label: "Sign Out",
-			icon: "i-lucide-log-out",
-			async onSelect() {
-				await $as.clear();
-			},
-			color: "error",
-		},
-	],
-];
 </script>
 
 <template>

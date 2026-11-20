@@ -1,4 +1,4 @@
-import { defineNuxtPlugin, useRequestEvent, useUserSession } from '#imports'
+import { defineNuxtPlugin, useRequestEvent } from '#imports'
 import { useAuthSession } from '~/composables/core/useAuthSession'
 
 export default defineNuxtPlugin({

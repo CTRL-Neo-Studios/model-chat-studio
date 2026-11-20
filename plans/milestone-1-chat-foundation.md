@@ -1,6 +1,6 @@
 # Milestone 1: chat template frontend on an extended backend
 
-Status: phase P (preparation) is done and the checkpoint is answered (2026-11-20). Nothing in the product is implemented yet. Phase 0 is next. Evidence for every "verified" claim below is in `plans/preparation-findings.md`.
+Status: phase P (preparation) and phase 0 (groundwork) are done (2026-11-20). Phase 1 is next. Evidence for every "verified" claim below is in `plans/preparation-findings.md`.
 
 Goal: the Nuxt UI chat template's frontend (`../chat`, upstream `nuxt-ui-templates/chat` at `f00f2a6`) running in this repo on PostgreSQL and S3, with invite-gated GitHub signup, a platform-agnostic inference layer (OpenRouter or DeepSeek), model and upstream-provider selection, sampling parameters, usage accounting and quotas.
 
@@ -10,20 +10,20 @@ Goal: the Nuxt UI chat template's frontend (`../chat`, upstream `nuxt-ui-templat
 |---|---|
 | Identity | GitHub OAuth only. Logto is removed. |
 | Signup | `invite` (link required), `open` (any GitHub account) or `closed`, set by an admin. |
-| Admin bootstrap | Numeric GitHub ids listed in `NUXT_ADMIN_GITHUB_IDS` become admin on login and bypass the signup gate. Find an id with `curl -s https://api.github.com/users/<login> \| jq .id`. |
+| Admin bootstrap | The first person to sign up becomes admin and bypasses the signup gate. Everyone after that is a normal user and goes through the gate. |
 | Access control | Session cookie for authentication, user row loaded per request, abilities for every decision. See section 6. |
 | Chat sharing | Like Google Docs: the owner, people the owner lists, or anyone with the link. Nobody else can read a chat, admins included. Shared access is read-only. |
 | Roles | Moderators list users and ban or unban users of lower role. Promote, demote, delete and everything else administrative is admin only. |
 | Profile | GitHub is the source of profile fields. Self-service profile editing is removed. |
 | Anonymous use | None, except reading a chat whose link access is on. |
-| Inference platform | One active platform per instance, chosen by env: `openrouter` or `deepseek`. All calls go through one adapter interface; rows record the platform so history survives a switch. |
-| Keys | One instance key, plus an optional per-user key (encrypted) that overrides it. |
+| Inference platform | One active platform at a time, `openrouter` or `deepseek`, chosen by an admin in the dashboard and swappable there. All calls go through one adapter interface; rows record the platform so history survives a switch. |
+| Keys | One instance key per platform, entered by an admin in the dashboard and stored encrypted. An optional per-user key (encrypted) overrides it. |
 | Catalog | Live from the platform, filtered by an admin allowlist. An empty allowlist allows everything. |
 | Quota | Monthly USD budget per user: instance default, per-user override, `null` means unlimited. Requests on a user's own key are exempt. |
 | Multi-model | Schema-ready only (`message.parentId`, model and provider per message). The UI stays single-model. |
 | Dictation | Record, then transcribe. Neither platform streams recognition, so the template's live preview is dropped. |
-| Storage | S3, private bucket, storage object built at runtime so credentials stay out of the build. Local files in dev when no bucket is configured. |
-| Database | Migration `0000` is regenerated; nothing is deployed. Migrations apply automatically in dev. |
+| Storage | NuxtHub's own blob drivers, chosen at build time from the environment: S3 (`S3_*`), Vercel Blob as an optional backend, local files otherwise. The bucket is private. |
+| Database | Migration `0000` is regenerated; nothing is deployed. Migrations apply automatically in dev from phase 1 on. |
 | DeepSeek safety check | An admin setting, off by default, with a warning that explains what it does. |
 | DeepSeek PDFs | In this milestone, through DeepSeek's file parsing flow (upload, then reference by `file_id`). |
 | Language | English strings only. `@nuxtjs/i18n` stays installed and untouched. |
@@ -81,7 +81,7 @@ The existing eleven handlers under `server/api/v1` and both files in `server/uti
 
 ## 3. Inference layer
 
-`server/utils/inference/` holds `types.ts`, `openrouter.ts`, `deepseek.ts` and `index.ts`. `useInference()` returns the adapter named by `runtimeConfig.inference.platform`.
+`server/utils/inference/` holds `types.ts`, `openrouter.ts`, `deepseek.ts` and `index.ts`. `useInference()` reads the active platform and its instance key from the `setting` table and returns that adapter.
 
 ```ts
 export interface InferencePlatform {
@@ -124,6 +124,16 @@ export interface InferencePlatform {
 | Images | models whose input modalities include `image` | `deepseek-flash` only |
 | PDF | inline, any model | upload to `/files`, reference by `file_id`, `deepseek-flash` only |
 | Dictation | `POST /api/v1/audio/transcriptions`, model from the `sttModel` setting | `POST /v1/tools/asr` |
+
+### Switching platforms
+
+The active platform and each platform's instance key are admin settings, not environment variables. Keys are encrypted the same way as personal keys and are never sent back to the browser.
+
+- **Per-platform data.** `defaultModel`, `titleModel`, `sttModel` and the instance key are stored per platform. `modelSetting`, `userApiKey` and `providerFile` are already keyed by platform. Switching back restores everything.
+- **Existing chats** keep their history. If a chat's stored model does not exist on the new platform, the picker and the next turn use that platform's default model.
+- **Saving a key** checks it by listing models, so a wrong key is rejected at once.
+- **Nothing configured yet.** Until a platform and key are set, sending is disabled with a notice, and admins get a link to the settings page.
+- **Not yet verified:** replaying history written by one platform to the other (reasoning parts and provider metadata). It is checked in phase 3 with both keys.
 
 ### OpenRouter specifics
 
@@ -185,7 +195,7 @@ PostgreSQL through Drizzle `pgTable`, in `server/db/schema.ts`.
 |---|---|
 | `user` | `id` uuid, `githubId` unique, `username`, `name`, `email`, `avatarUrl`, `role`, ban fields, `monthlyBudgetUsd` numeric null |
 | `invite` | `codeHash` unique, `createdBy`, `maxUses`, `useCount`, `expiresAt`, `revokedAt` |
-| `setting` | `key` PK, `value` jsonb: `signupMode`, `defaultModel`, `defaultMonthlyBudgetUsd`, `titleModel`, `sttModel`, `safetyCheck` |
+| `setting` | `key` PK, `value` jsonb: `signupMode`, `defaultMonthlyBudgetUsd`, `safetyCheck`, `inferencePlatform`, and per platform `apiKey` (ciphertext), `defaultModel`, `titleModel`, `sttModel` |
 | `modelSetting` | PK (`platform`, `modelId`), `enabled`, `priceInput`, `priceCachedInput`, `priceOutput` (null means no override) |
 | `userApiKey` | PK (`userId`, `platform`), `ciphertext` (first byte is a key version) |
 | `chat` | `id` uuid, `userId` FK cascade, `title`, `visibility` (`private` or `public`), `systemPrompt`, `params` jsonb |
@@ -224,7 +234,7 @@ All under `/api/v1`, all requiring a user unless noted.
 | `POST /transcriptions` | WAV in, text out |
 | `GET /users/me`, `GET /me/usage`, `PUT /me/api-key`, `DELETE /me/api-key` | profile, month spend against budget, personal key |
 | `/users/**` | existing user management, migrated to `nuxt/server`, plus budget |
-| `/admin/invites`, `/admin/settings`, `/admin/models` | admin only |
+| `/admin/invites`, `/admin/settings`, `/admin/models` | admin only; settings include the active platform and its key, which is write-only |
 | `GET /auth/github` (server route) | OAuth callback and signup gate |
 
 `GET /users/search` shows every signed-in member the names of the other members. That is what sharing with listed people requires.
@@ -233,7 +243,7 @@ All under `/api/v1`, all requiring a user unless noted.
 
 1. Require the user, load the chat by owner, validate the body.
 2. Check the model against the allowlisted catalog and the chosen provider tags against its endpoints.
-3. Resolve the key: the user's key for the active platform, else the instance key.
+3. Resolve the platform and key: the active platform from settings, then the user's key for it, else the instance key. With no platform or key configured, answer `503` with a clear message.
 4. On the instance key, compare this month's `usageEvent` sum with the budget. Over budget returns `402`.
 5. Apply the trigger. `submit-message` saves the new user message; an edit truncates after it; `regenerate-message` truncates from the target, or from the last assistant message when no id is sent. Truncation deletes the attached blobs first.
 6. Build model messages from the database. Attachments are converted by media type (table below).
@@ -276,10 +286,12 @@ Known ceilings:
 1. `/invite/[code]` validates the code, stores it in the sealed session and redirects to `/auth/github`.
 2. `server/routes/auth/github.get.ts` uses `defineOAuthGitHubEventHandler` from `nuxt-auth-utils`, which is built on `nuxt/server`.
 3. A known `githubId` logs in, unless banned. Profile fields are refreshed from GitHub.
-4. A new account is created when the GitHub id is in `NUXT_ADMIN_GITHUB_IDS`, signup is `open`, or the invite claim succeeds. The claim is one statement: `UPDATE invite SET useCount = useCount + 1 WHERE codeHash = ? AND useCount < maxUses AND not expired AND not revoked RETURNING id`.
+4. A new account is created when no user exists yet, signup is `open`, or the invite claim succeeds. The first account gets the admin role. The check and the insert run in one transaction under an advisory lock, so two simultaneous first signups cannot both become admin. The invite claim is one statement: `UPDATE invite SET useCount = useCount + 1 WHERE codeHash = ? AND useCount < maxUses AND not expired AND not revoked RETURNING id`.
 5. Otherwise the user lands on `/signin?error=signup_closed`.
 
-The session cookie carries `{ id, role, username, name, avatar }`. The server still reads role and ban state from the database on every request through the existing resolver. Production sets `NUXT_OAUTH_GITHUB_REDIRECT_URL`; without it the redirect URL is built from request headers.
+The session cookie carries `{ id, role, username, name, avatar }`. The server still reads role and ban state from the database on every request through the existing resolver.
+
+Whoever signs up first owns the instance, so sign up yourself before sharing the address.
 
 ### Access control
 
@@ -356,6 +368,7 @@ Known ceiling: a demoted admin keeps seeing admin navigation until the session r
 - `/signin` with the GitHub button and `/invite/[code]`.
 - `/settings`: month usage against budget, personal API key.
 - `/admin/users`, `/admin/invites`, `/admin/models`, `/admin/settings`.
+- `/admin/settings` holds the signup mode, the default budget, the active inference platform, and for each platform its API key and default, title and speech-to-text models.
 
 The safety check switch on `/admin/settings` appears only when `capabilities.safetyCheck` is true. It is off by default and carries this warning:
 
@@ -372,7 +385,7 @@ The safety check switch on `/admin/settings` appears only when `capabilities.saf
 - `app/composables/core/useAuthSession.ts`, `useMe.ts` and both `session-prefetch` plugins. Template components call `useUserSession()` directly. `app/plugins/authorization-resolver.ts` is kept and rewired (section 6).
 - The two named middlewares, replaced by one global `auth` middleware.
 - `routeRules['/'].prerender`. `/` becomes the signed-in chat home, and a prerendered page carries no CSRF token.
-- `@vercel/blob`.
+- `@vercel/blob` (already removed).
 
 ## 8. Phases
 
@@ -381,22 +394,22 @@ Phase P is done. Phases 2 and 3 are independent once phase 1 is done, and phases
 | # | Phase | Work | Done when |
 |---|---|---|---|
 | P | Preparation | Done. See `plans/preparation-findings.md`. | The live checks in section 10 still wait for credentials |
-| 0 | Groundwork | Dependencies and scripts (below). Fix the four baseline typecheck errors. Configure CSRF, `runtimeConfig`, `applyMigrationsDuringDev: true` and the explicit Postgres driver for production builds. Rewrite `.env.example` and the README. | `bun run lint` and `bun run typecheck` pass; CI is green |
-| 1 | Data and conventions | New schema, regenerated migration, existing handlers and utils moved to `nuxt/server`, the authorization wrapper, the resolver returning `null` for guests | migration applies on PGlite and on a real Postgres; user routes still answer; a throwing ability answers 500, not 200 |
-| 2 | Auth and access control | GitHub handler, invite flow, admin bootstrap by id, global auth middleware, abilities and rule fixes from section 6, removals from section 7 | invite claim test passes; a second use of a single-use invite is refused; a moderator cannot ban or demote an admin |
-| 3 | Inference adapter | Both adapters, the DeepSeek glue, catalog cache, per-model capabilities, allowlist filter, key resolution and encryption | the adapter tests pass offline; with a key, one turn streams on that platform with routing, reasoning, web search and usage printed |
+| 0 | Groundwork | Done. Dependencies and scripts (below), the four baseline typecheck errors, ESLint, CSRF, the production database driver guard, `.env.example`, README. | `bun run lint` and `bun run typecheck` pass |
+| 1 | Data and conventions | New schema, regenerated migration, `applyMigrationsDuringDev: true`, existing handlers and utils moved to `nuxt/server`, the authorization wrapper, the resolver returning `null` for guests | migration applies on PGlite and on a real Postgres; user routes still answer; a throwing ability answers 500, not 200 |
+| 2 | Auth and access control | GitHub handler, invite flow, first-user admin, global auth middleware, abilities and rule fixes from section 6, removals from section 7 | invite claim test passes; a second use of a single-use invite is refused; only the first signup becomes admin; a moderator cannot ban or demote an admin |
+| 3 | Inference adapter | Both adapters, the DeepSeek glue, platform and key settings, catalog cache, per-model capabilities, allowlist filter, key resolution and encryption | the adapter tests pass offline; with a key, one turn streams on that platform with routing, reasoning, web search and usage printed; switching platform changes the catalog |
 | 4 | Chat backend | Routes in section 5 except files and transcription; sharing; ledger and quota | ordering, quota, truncation and chat access tests pass; a turn streams through `curl` |
 | 5 | Frontend port | Section 7 "Ported" on the new API | create, stream, edit, regenerate, vote, rename, delete and share work in the browser |
 | 6 | Extended chat UI | Model and provider pickers, settings panel, reply footer, share dialog | changing provider changes `metadata.provider` on the next reply; a listed person can open a private chat and a stranger gets 404 |
-| 7 | Files and dictation | File routes, runtime S3 storage, attachments by media type, DeepSeek PDF upload flow, WAV dictation | an image and a PDF reach a model on each platform; a spoken sentence lands in the prompt on both |
-| 8 | Admin and settings | Admin pages, `/settings`, the safety check switch | an admin can invite, ban, set a budget, disable a model and switch signup mode from the UI |
+| 7 | Files and dictation | File routes on `hub:blob`, attachments by media type, DeepSeek PDF upload flow, WAV dictation | an image and a PDF reach a model on each platform; a spoken sentence lands in the prompt on both |
+| 8 | Admin and settings | Admin pages, `/settings`, the platform switch and keys, the safety check switch | an admin can invite, ban, set a budget, disable a model, switch signup mode and switch platform from the UI |
 | 9 | Hardening | Rate limits on stream and transcription, CSP review, full smoke run per platform | smoke run passes on OpenRouter and on DeepSeek |
 
 Phase 0 dependencies:
 
-- Add `ai`, `@ai-sdk/vue`, `@openrouter/ai-sdk-provider`, `@ai-sdk/deepseek`, `@comark/vue`, `shiki`, `@shikijs/langs`, `@tanstack/charts`, `date-fns`, `aws4fetch`.
+- Add `ai`, `@ai-sdk/vue`, `@openrouter/ai-sdk-provider`, `@ai-sdk/deepseek`, `@comark/vue`, `shiki`, `@shikijs/langs`, `@tanstack/charts`, `date-fns`. `aws4fetch` was already added.
 - Add as dev dependencies `@nuxt/eslint`, `eslint`, `@types/node`.
-- Remove `@vercel/blob`.
+- Scripts read the env files: `dev` and `db:migrate` read `.env.dev`; `build` and `preview` read `.env.prod`. A missing file is ignored.
 - Add the `lint`, `db:generate` and `db:migrate` scripts.
 
 Tests kept small and pure where possible: invite claim, quota sum, message ordering, truncation, chat access (owner, listed, link, stranger, admin), the authorization wrapper, DeepSeek cost (peak window and cache split), and each adapter's option mapping.
@@ -404,28 +417,26 @@ Tests kept small and pure where possible: invite claim, quota sum, message order
 ## 9. Environment and deploy
 
 ```bash
-DATABASE_URL=                     # unset in dev uses PGlite; runtime only in production
+DATABASE_URL=                     # unset in dev uses PGlite
 NUXT_APP_SECRET=                  # sessions and the derived encryption key
 NUXT_PUBLIC_SITE_URL=
 NUXT_PUBLIC_SITE_NAME=
 NUXT_OAUTH_GITHUB_CLIENT_ID=
 NUXT_OAUTH_GITHUB_CLIENT_SECRET=
-NUXT_OAUTH_GITHUB_REDIRECT_URL=   # set in production
-NUXT_ADMIN_GITHUB_IDS=            # comma-separated numeric GitHub ids
-NUXT_INFERENCE_PLATFORM=          # openrouter | deepseek
-NUXT_INFERENCE_API_KEY=           # instance key for the active platform
-NUXT_S3_ACCESS_KEY_ID=
-NUXT_S3_SECRET_ACCESS_KEY=
-NUXT_S3_BUCKET=
-NUXT_S3_REGION=                   # required for AWS
-NUXT_S3_ENDPOINT=                 # for S3-compatible stores (path-style URLs)
+S3_ACCESS_KEY_ID=                 # storage variables must be set at build time
+S3_SECRET_ACCESS_KEY=
+S3_BUCKET=
+S3_REGION=                        # required for AWS
+S3_ENDPOINT=                      # for S3-compatible stores (path-style URLs)
+BLOB_READ_WRITE_TOKEN=            # Vercel Blob instead of S3; also needs @vercel/blob
 ```
 
-- **App secret.** `NUXT_APP_SECRET` seals sessions and derives the key that encrypts personal API keys. `NUXT_SESSION_PASSWORD` is not used. Rotating the secret logs everyone out and makes stored personal keys unreadable. Set it in `.env` in dev as well; otherwise deleting `.nuxt` orphans encrypted keys in the dev database.
-- **Database.** If `DATABASE_URL` is present while building, NuxtHub writes it into the bundle. Production builds therefore set `hub.db.driver: 'postgres-js'` and get `DATABASE_URL` only at runtime.
+- **App secret.** `NUXT_APP_SECRET` seals sessions and derives the key that encrypts stored API keys, both the instance keys and personal ones. `NUXT_SESSION_PASSWORD` is not used. Rotating the secret logs everyone out and makes every stored key unreadable. Set it in `.env.dev` as well; otherwise deleting `.nuxt` orphans encrypted keys in the dev database.
+- **Database.** If `DATABASE_URL` is present while building, NuxtHub writes it into the bundle. A build without it would silently use PGlite, so an inline module in `nuxt.config.ts` forces the `postgres-js` driver for real builds; the URL is then read at runtime. `nuxt prepare` and `nuxt typecheck` are left alone, because they would otherwise switch the driver under a running dev server.
 - **Migrations.** In dev they apply at boot. On a server, run `DATABASE_URL=… npx nuxt db migrate` before starting the new version. There is no runtime migration, and statements run without a transaction.
-- **S3.** The variables are `NUXT_S3_*`, read through `runtimeConfig`, not NuxtHub's `S3_*`. NuxtHub's auto-detected S3 driver would write the secret key into the bundle. A server util builds the storage at runtime from `@nuxthub/core/blob` and its S3 driver when a bucket is configured, and uses the local `hub:blob` otherwise.
+- **Storage.** The repo uses NuxtHub's auto-detected blob driver with its own variable names. The driver and its credentials are fixed at build time and written into the bundle; runtime env is not read. So the build needs the storage variables, and `.output/` must be treated as secret and never published. Building the storage at runtime instead would keep credentials out of the build, at the cost of the Vercel Blob option; that is the upgrade path if images are ever distributed.
 - **Cookies.** The session cookie is `Secure` by default, so anything other than localhost needs HTTPS.
+- **OAuth callback.** Only the GitHub client id and secret are needed. The callback URL is built from the request, and GitHub rejects one that does not match the OAuth app. `NUXT_OAUTH_GITHUB_REDIRECT_URL` exists for a proxy that does not pass the public host and protocol through.
 
 ## 10. Preparation results
 
