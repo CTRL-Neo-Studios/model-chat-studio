@@ -11,9 +11,10 @@ export function userAbilities() {
 			return satisfies(user)
 		}),
 
+		// Admin only. Profile fields come from GitHub at login; only role and budget are editable.
 		editUser: defineAbility((user: User, targetUser?: User) => {
 			if (!targetUser) return false;
-			return satisfies(user, { minRole: 'admin' }) || user.id === targetUser.id
+			return satisfies(user, { minRole: 'admin' })
 		}),
 
 		deleteUser: defineAbility((user: User, targetUser?: User) => {

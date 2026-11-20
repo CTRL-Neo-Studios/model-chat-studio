@@ -9,6 +9,7 @@
     "postinstall": "nuxt prepare",
     "lint": "eslint .",
     "typecheck": "nuxt typecheck",
+    "test": "bun test",
     "db:generate": "nuxt db generate",
     "db:migrate": "nuxt db migrate --dotenv .env.dev"
   },

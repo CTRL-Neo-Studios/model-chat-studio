@@ -5,7 +5,7 @@ import type {
 	InferInsertModel,
 	InferSelectModel
 } from "drizzle-orm";
-import type { schema } from "@nuxthub/db"
+import type { schema } from "hub:db"
 
 type Schema = typeof schema;
 type TSchema = ExtractTablesWithRelations<Schema>;
@@ -35,3 +35,5 @@ export type DbFile = InferSelectModel<typeof schema.file>;
 export type DbFileInsert = InferInsertModel<typeof schema.file>;
 
 export type UserRole = User['role']
+/** The profile anyone signed in may see. */
+export type PublicUser = Pick<User, 'id' | 'username' | 'name' | 'avatarUrl' | 'role' | 'createdAt'>

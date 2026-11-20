@@ -1,9 +1,6 @@
+import { defineEventHandler, getRouterParam, readValidatedBody } from 'nuxt/server'
 import { z } from 'zod';
 import {useServerUsers} from "#server/utils/core/useServerUsers";
-
-const routeParamsSchema = z.object({
-	userId: z.coerce.string()
-})
 
 const bodySchema = z.object({
 	banReason: z.string().optional(),
@@ -11,8 +8,8 @@ const bodySchema = z.object({
 })
 
 export default defineEventHandler(async event => {
-	const { userId } = await getValidatedRouterParams(event, routeParamsSchema.parse)
-	const { banReason, banExpires } = await readValidatedBody(event, bodySchema.parse)
+	const userId = getRouterParam(event, 'userId', { decode: true })!
+	const { banReason, banExpires } = await readValidatedBody(event, bodySchema)
 	const { banUserHandler } = useServerUsers()
 
 	return await banUserHandler(event, userId, banReason, banExpires)

@@ -5,7 +5,8 @@ export default defineNitroPlugin((nitroApp) => {
 		event.context.$authorization = {
 			resolveServerUser: async () => {
 				const session = await getUserSession(event);
-				return await useServerUsers().getDbUserFromId(session.user?.id);
+				// nuxt-authorization treats only `null` as a guest.
+				return (await useServerUsers().getDbUserFromId(session.user?.id)) ?? null;
 			},
 		};
 	});

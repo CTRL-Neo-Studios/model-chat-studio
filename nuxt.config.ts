@@ -41,7 +41,7 @@ export default defineNuxtConfig({
 		db: {
 			dialect: 'postgresql',
 			applyMigrationsDuringBuild: false,
-			applyMigrationsDuringDev: false,
+			applyMigrationsDuringDev: true,
 		},
 		blob: true,
 	},

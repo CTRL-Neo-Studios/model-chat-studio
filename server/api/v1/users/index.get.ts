@@ -1,3 +1,4 @@
+import { defineEventHandler } from 'nuxt/server'
 import {useServerUsers} from "#server/utils/core/useServerUsers";
 
 export default defineEventHandler(async event => {

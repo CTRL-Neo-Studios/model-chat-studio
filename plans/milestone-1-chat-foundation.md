@@ -1,6 +1,6 @@
 # Milestone 1: chat template frontend on an extended backend
 
-Status: phase P (preparation) and phase 0 (groundwork) are done (2026-11-20). Phase 1 is next. Evidence for every "verified" claim below is in `plans/preparation-findings.md`.
+Status: phases P (preparation), 0 (groundwork) and 1 (data and conventions) are done (2026-11-20). Phase 2 is next. Evidence for every "verified" claim below is in `plans/preparation-findings.md`.
 
 Goal: the Nuxt UI chat template's frontend (`../chat`, upstream `nuxt-ui-templates/chat` at `f00f2a6`) running in this repo on PostgreSQL and S3, with invite-gated GitHub signup, a platform-agnostic inference layer (OpenRouter or DeepSeek), model and upstream-provider selection, sampling parameters, usage accounting and quotas.
 
@@ -73,11 +73,12 @@ The existing eleven handlers under `server/api/v1` and both files in `server/uti
 ### Other conventions
 
 - Database access: `import { db, schema } from 'hub:db'`. It is an alias of `@nuxthub/db`, so this is one spelling, not a migration.
-- `numeric` columns come back from Postgres as strings. Budget and cost math converts them explicitly.
-- Authorization goes through the wrapper in `server/utils/core/authorize.ts` (section 6). Handlers never call `nuxt-authorization`'s own server `authorize`, `allows` or `denies`.
+- Money columns are `numeric(16, 8)` with Drizzle's `mode: 'number'`, so they come back as numbers, not strings.
+- Authorization goes through the wrapper in `server/utils/core/authorize.ts` (section 6). Nitro auto-imports it under the name `authorize` and it shadows nuxt-authorization's server `authorize` (the build logs "Duplicated imports"), so even a bare `authorize(...)` gets the wrapper. Handlers never call the module's `allows` or `denies` on the server.
 - API prefix: `/api/v1`. OAuth lives at `/auth/github` as a server route.
 - Formatting: tabs, per `.editorconfig`. Ported template files are reformatted.
-- Package manager: bun. Tests: `bun test`, no framework.
+- Package manager: bun. Tests: `bun run test` (`bun test`), files in `test/`, no framework.
+- Table and column names are camelCase, as in the existing schema (`chatShare`, `"userId"`).
 
 ## 3. Inference layer
 
@@ -193,7 +194,7 @@ PostgreSQL through Drizzle `pgTable`, in `server/db/schema.ts`.
 
 | Table | Columns of note |
 |---|---|
-| `user` | `id` uuid, `githubId` unique, `username`, `name`, `email`, `avatarUrl`, `role`, ban fields, `monthlyBudgetUsd` numeric null |
+| `user` | `id` uuid, `githubId` bigint unique, `username`, `name`, `email` (nullable: GitHub may hide it), `avatarUrl`, `role`, ban fields, `monthlyBudgetUsd` numeric null |
 | `invite` | `codeHash` unique, `createdBy`, `maxUses`, `useCount`, `expiresAt`, `revokedAt` |
 | `setting` | `key` PK, `value` jsonb: `signupMode`, `defaultMonthlyBudgetUsd`, `safetyCheck`, `inferencePlatform`, and per platform `apiKey` (ciphertext), `defaultModel`, `titleModel`, `sttModel` |
 | `modelSetting` | PK (`platform`, `modelId`), `enabled`, `priceInput`, `priceCachedInput`, `priceOutput` (null means no override) |
@@ -203,7 +204,7 @@ PostgreSQL through Drizzle `pgTable`, in `server/db/schema.ts`.
 | `message` | `id` text, `seq` identity, `chatId` FK cascade, `parentId` self FK null, `role`, `parts` jsonb, `metadata` jsonb |
 | `vote` | PK (`chatId`, `messageId`), `isUpvoted` |
 | `file` | existing columns plus `chatId` uuid (no FK), `messageId` FK null, `mediaType`, `size` |
-| `providerFile` | PK (`fileId`, `platform`, `keyHash`), `remoteId` |
+| `providerFile` | PK (`fileId`, `platform`, `keyHash`), `remoteId`, `expiresAt` |
 | `usageEvent` | `userId`, `chatId` set null, `kind` (`chat`, `title`, `stt`, `parse`), `platform`, `model`, `provider`, token counts, `costUsd`, `byok`, `createdAt` |
 
 Reasons behind the shape:
@@ -331,10 +332,10 @@ Rules:
 
 Fixes to rules that exist today:
 
-- Every `authorize()` call in `useServerUsers.ts` moves to the wrapper.
+- Done in phase 1: every `authorize()` call in `useServerUsers.ts` moved to the wrapper.
 - `demoteUser` and `banUser` compare no roles, so a moderator can demote or ban an admin. Both get the strictly-lower rule.
 - `promoteUser` lets a moderator create moderators. Promote and demote become admin only.
-- `editUserHandler` strips protected fields with a denylist and accepts an unvalidated body, so new columns such as `githubId` and `monthlyBudgetUsd` would be self-editable. `PATCH /users/:id` becomes admin only with a zod allowlist (`role`, `monthlyBudgetUsd`).
+- Done in phase 1: `PATCH /users/:id` is admin only with a strict zod allowlist (`role`, `monthlyBudgetUsd`); the old denylist and unvalidated body are gone.
 - `banExpires` is stored but never read. `getBanned` in `shared/utils/roles.ts` treats an expired ban as lifted.
 - `app/plugins/authorization-resolver.ts` reads `useUserSession().user` instead of `useAuthSession().user`.
 
@@ -380,7 +381,7 @@ The safety check switch on `/admin/settings` appears only when `capabilities.saf
 
 ### Removed from this repo
 
-- `server/api/v1/auth/logto.get.ts` and the Logto env vars.
+- `server/api/v1/auth/logto.get.ts` and the Logto env vars (removed in phase 1: the new `user` table no longer fits it).
 - `app/components/Layout/Header.vue` and `app/components/Logo.vue` (it points at a missing `/logo.png`).
 - `app/composables/core/useAuthSession.ts`, `useMe.ts` and both `session-prefetch` plugins. Template components call `useUserSession()` directly. `app/plugins/authorization-resolver.ts` is kept and rewired (section 6).
 - The two named middlewares, replaced by one global `auth` middleware.
@@ -395,7 +396,7 @@ Phase P is done. Phases 2 and 3 are independent once phase 1 is done, and phases
 |---|---|---|---|
 | P | Preparation | Done. See `plans/preparation-findings.md`. | The live checks in section 10 still wait for credentials |
 | 0 | Groundwork | Done. Dependencies and scripts (below), the four baseline typecheck errors, ESLint, CSRF, the production database driver guard, `.env.example`, README. | `bun run lint` and `bun run typecheck` pass |
-| 1 | Data and conventions | New schema, regenerated migration, `applyMigrationsDuringDev: true`, existing handlers and utils moved to `nuxt/server`, the authorization wrapper, the resolver returning `null` for guests | migration applies on PGlite and on a real Postgres; user routes still answer; a throwing ability answers 500, not 200 |
+| 1 | Data and conventions | Done. New schema, regenerated migration `0000_init`, `applyMigrationsDuringDev: true`, handlers and utils on `nuxt/server` and `hub:db`, the authorization wrapper and its test, the resolver returning `null` for guests, Logto removed, user lookups by non-UUID ids find nobody | migration applied on PGlite and on a throwaway Postgres 16; user routes answer as before; a throwing ability answers 500 |
 | 2 | Auth and access control | GitHub handler, invite flow, first-user admin, global auth middleware, abilities and rule fixes from section 6, removals from section 7 | invite claim test passes; a second use of a single-use invite is refused; only the first signup becomes admin; a moderator cannot ban or demote an admin |
 | 3 | Inference adapter | Both adapters, the DeepSeek glue, platform and key settings, catalog cache, per-model capabilities, allowlist filter, key resolution and encryption | the adapter tests pass offline; with a key, one turn streams on that platform with routing, reasoning, web search and usage printed; switching platform changes the catalog |
 | 4 | Chat backend | Routes in section 5 except files and transcription; sharing; ledger and quota | ordering, quota, truncation and chat access tests pass; a turn streams through `curl` |

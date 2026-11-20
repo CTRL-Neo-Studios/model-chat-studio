@@ -31,6 +31,7 @@ The first person to sign up becomes the admin, so sign up yourself before sharin
 bun run dev          # http://localhost:3000, reads .env.dev
 bun run lint
 bun run typecheck
+bun run test
 ```
 
 ## Database
