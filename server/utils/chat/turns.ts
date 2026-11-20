@@ -53,6 +53,7 @@ export async function listChatMessages(db: Db, chatId: string) {
 		role: tables.message.role,
 		parts: tables.message.parts,
 		metadata: tables.message.metadata,
+		createdAt: tables.message.createdAt,
 	}).from(tables.message)
 		.where(eq(tables.message.chatId, chatId))
 		.orderBy(asc(tables.message.seq))

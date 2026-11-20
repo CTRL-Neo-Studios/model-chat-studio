@@ -3,6 +3,7 @@ useHead({ title: "Sign in" });
 
 definePageMeta({
 	auth: 'guest',
+	layout: false,
 });
 
 const errors: Record<string, string> = {

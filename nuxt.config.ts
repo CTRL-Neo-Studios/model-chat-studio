@@ -12,6 +12,7 @@ export default defineNuxtConfig({
 		},
 		'@nuxt/eslint',
 		'@nuxt/ui',
+		'@comark/vue',
 		'@type32/nuxt-ui-extras',
 		'@nuxt/image',
 		'@nuxtjs/i18n',
@@ -23,6 +24,11 @@ export default defineNuxtConfig({
 		'nuxt-security',
 		'motion-v/nuxt'
 	],
+
+	experimental: {
+		// The prompt morphs from the home page into the chat page.
+		viewTransition: true,
+	},
 
 	devtools: {
 		enabled: true

@@ -358,11 +358,14 @@ Known ceilings:
 
 ### Ported from the template
 
-- `layouts/default.vue`, `pages/index.vue`, `pages/chat/[id].vue`, `middleware/transitions.global.ts`.
-- `components/`: `Navbar`, `UserMenu`, `ModalConfirm`, `ModalRename`, and under `chat/`: `Prompt`, `PromptMenu`, `ChatTitle`, `DictateButton`, `Indicator`, `SourceLink`, `Comark.ts`, `message/*`, `tool/Chart`, `tool/Sources`.
-- `composables/`: `useChats`, `useChatActions`, `useFileUpload`.
-- `utils/`: `ai.ts`, `tool.ts`, `url.ts`; `shared/utils/file.ts`, `shared/utils/tools/chart.ts`.
-- The template's CSS additions in `main.css`.
+Done in phase 5, except where noted:
+
+- `layouts/default.vue`, `pages/index.vue`, `pages/chat/[id].vue`, `middleware/transitions.global.ts`. The chat page is open to guests (`auth: false`) for link access; guests get no chat list and a sign-in button. `/signin` has no layout.
+- `components/`: `Navbar`, `UserMenu` (the template's links removed; sign-out goes to `/signin`), `ModalConfirm`, `ModalRename`, and under `chat/`: `Prompt` (text only), `ChatTitle`, `ChatVisibility` (link access only), `Indicator`, `SourceLink`, `Comark.ts`, `message/*`, `tool/Chart`. `PromptMenu` moves to phase 6 with the settings it toggles; `DictateButton` to phase 7.
+- `composables/`: `useChats`, `useChatActions`. `useFileUpload` moves to phase 7.
+- `utils/`: `ai.ts` (citations become inline links, one per URL), `url.ts`; `shared/utils/tools/chart.ts`. `tool/Sources`, `getSources()` and the weather tool are gone: neither platform sends search tool parts, only `source-url` parts.
+- The template's CSS additions in `main.css`; `@comark/vue` registered as a module; view transitions on.
+- The home page shows a notice and disables the prompt while `/models` reports no platform.
 
 ### Rewritten
 
@@ -370,8 +373,7 @@ Known ceilings:
 - `useChatSettings`: per-chat `params` saved with `PATCH /chats/:id` instead of cookies.
 - `ChatVisibility`: becomes the share dialog. It has a people picker backed by `/users/search`, the list of people with access, a link access switch and the copy-link button.
 - `useDictation`: keeps the microphone capture and level meter, collects samples, encodes 16 kHz mono 16-bit WAV on stop and posts it. `SAMPLE_RATE` and `MAX_DURATION` stay as constants. 120 s at 16 kHz is 3.84 MB; at 48 kHz it would be 11.5 MB, over DeepSeek's 8 MiB limit.
-- The chat transport: `prepareSendMessagesRequest` sends only the new message, the trigger and the message id, with the CSRF header. `regenerate` always passes the message id.
-- `app/utils/tool.ts` `getSources()`: sources arrive as `source-url` parts on both platforms.
+- The chat transport (done in phase 5): `prepareSendMessagesRequest` sends `{ trigger: 'submit-message', message }` (the last message) or `{ trigger: 'regenerate-message', messageId }`, with the CSRF header. An edit is `sendMessage({ text, messageId })`; the template's separate delete call is gone. `regenerate()` without an id (the first answer, the retry button) matches the server's rule: both drop a trailing answer, if any.
 
 ### New
 
@@ -411,8 +413,8 @@ Phase P is done. Phases 2 and 3 are independent once phase 1 is done, and phases
 | 2 | Auth and access control | Done. GitHub handler, invite flow and admin invites API, first-user admin, global auth middleware, role rules from section 6, removals from section 7, sign-in page and a signed-in placeholder home | signup, invite and role-rule tests pass; one admin out of 20 simultaneous first signups on Postgres; sign-in, error, sign-out and redirects checked in the browser |
 | 3 | Inference adapter | Done. Both adapters, the DeepSeek glue, platform and key settings, catalog cache, per-model capabilities, allowlist, key resolution and encryption, `scripts/inference-smoke.ts` | offline tests pass for option mapping, usage and cost, catalog, encryption, platform switch and allowlist; live turns streamed on both platforms (2026-11-20, results in section 10) |
 | 4 | Chat backend | Done. Chat, vote, share, search, usage and admin model routes; the turn route with policy checks, ledger, titles and truncation; `chatAbilities.ts` | ordering, quota, truncation and chat access tests pass (`test/chat.test.ts`); turns streamed through `curl` against fixture upstreams on both platforms (below) |
-| 5 | Frontend port | Section 7 "Ported" on the new API | create, stream, edit, regenerate, vote, rename, delete and share work in the browser |
-| 6 | Extended chat UI | Model and provider pickers, settings panel, reply footer, share dialog | changing provider changes `metadata.provider` on the next reply; a listed person can open a private chat and a stranger gets 404 |
+| 5 | Frontend port | Done. Section 7 "Ported" on the new API | create, stream, edit, regenerate, vote, rename, delete and link sharing checked in the browser against a fixture upstream (OpenRouter-shaped, slowed to stream word by word), including a chart tool turn, a guest on a shared and on a private chat, and the 402 budget toast |
+| 6 | Extended chat UI | Model and provider pickers, `PromptMenu` with web search and reasoning, settings panel, reply footer, share dialog | changing provider changes `metadata.provider` on the next reply; a listed person can open a private chat and a stranger gets 404 |
 | 7 | Files and dictation | File routes on `hub:blob`, attachments by media type, DeepSeek PDF upload flow, WAV dictation; file parts in `userMessageSchema` (text only until then); deleting blobs, remote files and file rows on chat delete and on truncation | an image and a PDF reach a model on each platform; a spoken sentence lands in the prompt on both |
 | 8 | Admin and settings | Admin pages, `/settings`, the platform switch and keys, the safety check switch | an admin can invite, ban, set a budget, disable a model, switch signup mode and switch platform from the UI |
 | 9 | Hardening | Rate limits on stream and transcription, CSP review, full smoke run per platform | smoke run passes on OpenRouter and on DeepSeek |
