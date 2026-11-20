@@ -1,6 +1,6 @@
 # Milestone 1: chat template frontend on an extended backend
 
-Status: phases P (preparation), 0 (groundwork) and 1 (data and conventions) are done (2026-11-20). Phase 2 is next. Evidence for every "verified" claim below is in `plans/preparation-findings.md`.
+Status: phases P (preparation) and 0–2 (groundwork, data and conventions, auth and access control) are done (2026-11-20). Phase 3 is next. Evidence for every "verified" claim below is in `plans/preparation-findings.md`.
 
 Goal: the Nuxt UI chat template's frontend (`../chat`, upstream `nuxt-ui-templates/chat` at `f00f2a6`) running in this repo on PostgreSQL and S3, with invite-gated GitHub signup, a platform-agnostic inference layer (OpenRouter or DeepSeek), model and upstream-provider selection, sampling parameters, usage accounting and quotas.
 
@@ -77,7 +77,7 @@ The existing eleven handlers under `server/api/v1` and both files in `server/uti
 - Authorization goes through the wrapper in `server/utils/core/authorize.ts` (section 6). Nitro auto-imports it under the name `authorize` and it shadows nuxt-authorization's server `authorize` (the build logs "Duplicated imports"), so even a bare `authorize(...)` gets the wrapper. Handlers never call the module's `allows` or `denies` on the server.
 - API prefix: `/api/v1`. OAuth lives at `/auth/github` as a server route.
 - Formatting: tabs, per `.editorconfig`. Ported template files are reformatted.
-- Package manager: bun. Tests: `bun run test` (`bun test`), files in `test/`, no framework.
+- Package manager: bun. Tests: `bun run test` (`bun test`), files in `test/`, no framework. Tests run outside Nuxt: `bunfig.toml` preloads `test/setup.ts`, which provides the auto-imports shared code relies on (`createRoleChecker`), and the root `tsconfig.json` maps `#shared` and `#server` for them. Database tests run on an in-memory PGlite with the real migration.
 - Table and column names are camelCase, as in the existing schema (`chatShare`, `"userId"`).
 
 ## 3. Inference layer
@@ -235,7 +235,8 @@ All under `/api/v1`, all requiring a user unless noted.
 | `POST /transcriptions` | WAV in, text out |
 | `GET /users/me`, `GET /me/usage`, `PUT /me/api-key`, `DELETE /me/api-key` | profile, month spend against budget, personal key |
 | `/users/**` | existing user management, migrated to `nuxt/server`, plus budget |
-| `/admin/invites`, `/admin/settings`, `/admin/models` | admin only; settings include the active platform and its key, which is write-only |
+| `GET /admin/invites`, `POST /admin/invites`, `DELETE /admin/invites/:id` | admin only. Create takes `maxUses` (default 1) and `expiresInDays` (default 7, `null` never expires) and returns the link once; only a hash of the code is stored. Delete revokes. |
+| `/admin/settings`, `/admin/models` | admin only; settings include the active platform and its key, which is write-only |
 | `GET /auth/github` (server route) | OAuth callback and signup gate |
 
 `GET /users/search` shows every signed-in member the names of the other members. That is what sharing with listed people requires.
@@ -288,7 +289,9 @@ Known ceilings:
 2. `server/routes/auth/github.get.ts` uses `defineOAuthGitHubEventHandler` from `nuxt-auth-utils`, which is built on `nuxt/server`.
 3. A known `githubId` logs in, unless banned. Profile fields are refreshed from GitHub.
 4. A new account is created when no user exists yet, signup is `open`, or the invite claim succeeds. The first account gets the admin role. The check and the insert run in one transaction under an advisory lock, so two simultaneous first signups cannot both become admin. The invite claim is one statement: `UPDATE invite SET useCount = useCount + 1 WHERE codeHash = ? AND useCount < maxUses AND not expired AND not revoked RETURNING id`.
-5. Otherwise the user lands on `/signin?error=signup_closed`.
+5. Otherwise the user lands on `/signin` with `error` set to `invite_required` (invite mode, no code), `invite_invalid` (unknown, expired, revoked or used up), `signup_closed` (closed mode, which refuses invites too) or `banned`.
+
+The signup mode defaults to `invite` until an admin changes it. The rules live in `server/utils/core/signup.ts`, with the database passed in so `test/signup.test.ts` runs them on PGlite. On a throwaway Postgres 16, 20 simultaneous first signups produced exactly one admin in each of 5 rounds; without the advisory lock they produced 4 to 7.
 
 The session cookie carries `{ id, role, username, name, avatar }`. The server still reads role and ban state from the database on every request through the existing resolver.
 
@@ -333,13 +336,16 @@ Rules:
 Fixes to rules that exist today:
 
 - Done in phase 1: every `authorize()` call in `useServerUsers.ts` moved to the wrapper.
-- `demoteUser` and `banUser` compare no roles, so a moderator can demote or ban an admin. Both get the strictly-lower rule.
-- `promoteUser` lets a moderator create moderators. Promote and demote become admin only.
+- Done in phase 2: ban, unban and delete need a target of strictly lower role, which also excludes oneself. Promote and demote are admin only. Moderators may list users.
+- Done in phase 2: changing a role through `PATCH /users/:id` follows the same rule; setting a budget does not.
 - Done in phase 1: `PATCH /users/:id` is admin only with a strict zod allowlist (`role`, `monthlyBudgetUsd`); the old denylist and unvalidated body are gone.
-- `banExpires` is stored but never read. `getBanned` in `shared/utils/roles.ts` treats an expired ban as lifted.
-- `app/plugins/authorization-resolver.ts` reads `useUserSession().user` instead of `useAuthSession().user`.
+- Done in phase 2: an expired ban no longer counts. A new ban also clears any old expiry; before, a ban without an expiry kept the previous one and could be void from the start.
+- Done in phase 2: `app/plugins/authorization-resolver.ts` reads `useUserSession().user`.
 
-Known ceiling: a demoted admin keeps seeing admin navigation until the session refreshes. Every admin request already fails with `403`.
+Known ceilings:
+
+- A demoted admin keeps seeing admin navigation until the session refreshes. Every admin request already fails with `403`.
+- An admin cannot be demoted or removed through the app, since no role outranks admin. It takes a database edit.
 
 ## 7. Frontend
 
@@ -382,9 +388,7 @@ The safety check switch on `/admin/settings` appears only when `capabilities.saf
 ### Removed from this repo
 
 - `server/api/v1/auth/logto.get.ts` and the Logto env vars (removed in phase 1: the new `user` table no longer fits it).
-- `app/components/Layout/Header.vue` and `app/components/Logo.vue` (it points at a missing `/logo.png`).
-- `app/composables/core/useAuthSession.ts`, `useMe.ts` and both `session-prefetch` plugins. Template components call `useUserSession()` directly. `app/plugins/authorization-resolver.ts` is kept and rewired (section 6).
-- The two named middlewares, replaced by one global `auth` middleware.
+- Phase 2 removed the rest: `Layout/Header.vue`, `Logo.vue`, `useAuthSession`, `useMe`, both `session-prefetch` plugins, `POST /api/v1/auth/logout` (sign-out is `useUserSession().clear()`), and the two named middlewares, replaced by `app/middleware/auth.global.ts`. A page opts out with `definePageMeta({ auth: 'guest' })` or `auth: false`.
 - `routeRules['/'].prerender`. `/` becomes the signed-in chat home, and a prerendered page carries no CSRF token.
 - `@vercel/blob` (already removed).
 
@@ -397,7 +401,7 @@ Phase P is done. Phases 2 and 3 are independent once phase 1 is done, and phases
 | P | Preparation | Done. See `plans/preparation-findings.md`. | The live checks in section 10 still wait for credentials |
 | 0 | Groundwork | Done. Dependencies and scripts (below), the four baseline typecheck errors, ESLint, CSRF, the production database driver guard, `.env.example`, README. | `bun run lint` and `bun run typecheck` pass |
 | 1 | Data and conventions | Done. New schema, regenerated migration `0000_init`, `applyMigrationsDuringDev: true`, handlers and utils on `nuxt/server` and `hub:db`, the authorization wrapper and its test, the resolver returning `null` for guests, Logto removed, user lookups by non-UUID ids find nobody | migration applied on PGlite and on a throwaway Postgres 16; user routes answer as before; a throwing ability answers 500 |
-| 2 | Auth and access control | GitHub handler, invite flow, first-user admin, global auth middleware, abilities and rule fixes from section 6, removals from section 7 | invite claim test passes; a second use of a single-use invite is refused; only the first signup becomes admin; a moderator cannot ban or demote an admin |
+| 2 | Auth and access control | Done. GitHub handler, invite flow and admin invites API, first-user admin, global auth middleware, role rules from section 6, removals from section 7, sign-in page and a signed-in placeholder home | signup, invite and role-rule tests pass; one admin out of 20 simultaneous first signups on Postgres; sign-in, error, sign-out and redirects checked in the browser |
 | 3 | Inference adapter | Both adapters, the DeepSeek glue, platform and key settings, catalog cache, per-model capabilities, allowlist filter, key resolution and encryption | the adapter tests pass offline; with a key, one turn streams on that platform with routing, reasoning, web search and usage printed; switching platform changes the catalog |
 | 4 | Chat backend | Routes in section 5 except files and transcription; sharing; ledger and quota | ordering, quota, truncation and chat access tests pass; a turn streams through `curl` |
 | 5 | Frontend port | Section 7 "Ported" on the new API | create, stream, edit, regenerate, vote, rename, delete and share work in the browser |
@@ -436,7 +440,7 @@ BLOB_READ_WRITE_TOKEN=            # Vercel Blob instead of S3; also needs @verce
 - **Database.** If `DATABASE_URL` is present while building, NuxtHub writes it into the bundle. A build without it would silently use PGlite, so an inline module in `nuxt.config.ts` forces the `postgres-js` driver for real builds; the URL is then read at runtime. `nuxt prepare` and `nuxt typecheck` are left alone, because they would otherwise switch the driver under a running dev server.
 - **Migrations.** In dev they apply at boot. On a server, run `DATABASE_URL=… npx nuxt db migrate` before starting the new version. There is no runtime migration, and statements run without a transaction.
 - **Storage.** The repo uses NuxtHub's auto-detected blob driver with its own variable names. The driver and its credentials are fixed at build time and written into the bundle; runtime env is not read. So the build needs the storage variables, and `.output/` must be treated as secret and never published. Building the storage at runtime instead would keep credentials out of the build, at the cost of the Vercel Blob option; that is the upgrade path if images are ever distributed.
-- **Cookies.** The session cookie is `Secure` by default, so anything other than localhost needs HTTPS.
+- **Cookies.** The session cookie is `Secure` in production, so anything other than localhost needs HTTPS. Dev turns off `Secure`, HSTS and `upgrade-insecure-requests` (`$development` in `nuxt.config.ts`), because Safari otherwise drops the session and upgrades asset requests to https on plain http.
 - **OAuth callback.** Only the GitHub client id and secret are needed. The callback URL is built from the request, and GitHub rejects one that does not match the OAuth app. `NUXT_OAUTH_GITHUB_REDIRECT_URL` exists for a proxy that does not pass the public host and protocol through.
 
 ## 10. Preparation results

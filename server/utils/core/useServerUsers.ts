@@ -38,7 +38,7 @@ export function useServerUsers() {
 	}
 
 	async function editUserHandler(event: RequestEvent, targetUserId: string, values: UserEdit): Promise<User | undefined> {
-		await authorize(event, userAbilities().editUser, await getDbUserFromId(targetUserId))
+		await authorize(event, userAbilities().editUser, await getDbUserFromId(targetUserId), values.role)
 
 		const [updatedUser] = await db.update(schema.user)
 			.set(values)
@@ -90,8 +90,9 @@ export function useServerUsers() {
 		const [user] = await db.update(schema.user)
 			.set({
 				banned: true,
-				banReason,
-				banExpires
+				// Explicit nulls: Drizzle skips `undefined`, which would keep an old expiry and void the new ban.
+				banReason: banReason ?? null,
+				banExpires: banExpires ?? null
 			})
 			.where(eq(schema.user.id, targetUserId))
 			.returning()

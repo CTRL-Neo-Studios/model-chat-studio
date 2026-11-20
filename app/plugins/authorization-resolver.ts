@@ -1,4 +1,4 @@
-import { useAuthSession } from "~/composables/core/useAuthSession";
+import type { User } from "#shared/types/db";
 
 export default defineNuxtPlugin({
 	name: "authorization-resolver",
@@ -7,7 +7,8 @@ export default defineNuxtPlugin({
 		return {
 			provide: {
 				authorization: {
-					resolveClientUser: () => unref(useAuthSession().user),
+					// The session user only has display fields; client checks are cosmetic, the server decides.
+					resolveClientUser: () => useUserSession().user.value as User | null,
 				},
 			},
 		};

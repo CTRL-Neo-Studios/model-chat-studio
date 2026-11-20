@@ -7,7 +7,6 @@ defineProps({
 </script>
 
 <template>
-<!--	<LayoutHeader />-->
 	<UError
 		:error="error"
 		:ui="{

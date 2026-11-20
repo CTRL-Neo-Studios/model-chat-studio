@@ -1,5 +1,12 @@
 {
   // https://nuxt.com/docs/guide/concepts/typescript
+  // `paths` only serves `bun test`, which runs outside Nuxt; the referenced projects define their own aliases.
+  "compilerOptions": {
+    "paths": {
+      "#shared/*": ["./shared/*"],
+      "#server/*": ["./server/*"]
+    }
+  },
   "files": [],
   "references": [
     { "path": "./.nuxt/tsconfig.app.json" },

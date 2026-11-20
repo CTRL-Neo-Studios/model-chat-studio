@@ -68,6 +68,21 @@ export default defineNuxtConfig({
 		}
 	},
 
+	$development: {
+		security: {
+			headers: {
+				// Dev runs on plain http. Safari applies these to localhost and upgrades every asset request
+				// to https, so the page loads without styles or scripts.
+				contentSecurityPolicy: { 'upgrade-insecure-requests': false },
+				strictTransportSecurity: false,
+			},
+		},
+		runtimeConfig: {
+			// Safari drops `Secure` cookies on plain http, so the session would never stick in dev.
+			session: { cookie: { secure: false } },
+		},
+	},
+
 	image: {
 		domains: [],
 		provider: 'none', // or configure ipx with a custom fetchAdapter
