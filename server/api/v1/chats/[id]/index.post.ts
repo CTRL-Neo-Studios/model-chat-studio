@@ -21,8 +21,13 @@ Formatting:
 
 Quality:
 - Be concise yet complete, with examples when they help.
-- Break complex topics into digestible parts.
-- When you use web search, cite your sources.`
+- Break complex topics into digestible parts.`
+
+// Added only while web search is on. Without it, DeepSeek sometimes answered that it had no web
+// access and did not search (live runs, plan section 10).
+const WEB_SEARCH_INSTRUCTIONS = `Web search is on in this chat: you can search the web and read pages.
+- Search for recent events and for facts you are not sure of; otherwise answer from what you know.
+- Cite the pages you used.`
 
 const TITLE_INSTRUCTIONS = `Write a title for a chat that starts with the user's message below.
 - Under 30 characters, summarizing the message
@@ -99,9 +104,9 @@ export default defineEventHandler(async (event) => {
 			})
 		: Promise.resolve(undefined)
 
+	const webSearch = !!params.webSearch && model.webSearch
 	const prepared = platform.prepare({
-		...params, apiKey, model: model.id, providers, reasoningLevel,
-		webSearch: !!params.webSearch && model.webSearch,
+		...params, apiKey, model: model.id, providers, reasoningLevel, webSearch,
 		userId: user.id, firstTurn, safetyCheck,
 	})
 	const tools: ToolSet = { ...prepared.tools, chart: chartTool }
@@ -114,7 +119,7 @@ export default defineEventHandler(async (event) => {
 	const result = streamText({
 		...prepared,
 		tools,
-		instructions: chat!.systemPrompt ? `${INSTRUCTIONS}\n\n${chat!.systemPrompt}` : INSTRUCTIONS,
+		instructions: [INSTRUCTIONS, webSearch && WEB_SEARCH_INSTRUCTIONS, chat!.systemPrompt].filter(Boolean).join('\n\n'),
 		messages: await convertToModelMessages(modelHistory, { tools }),
 		stopWhen: isStepCount(5),
 		abortSignal: event.req.signal,
