@@ -1,8 +1,5 @@
 <script setup lang="ts">
-import type { DropdownMenuItem } from '@nuxt/ui'
-
 const { loggedIn } = useUserSession()
-const { renameChat, deleteChat } = useChatActions()
 const queryCache = useQueryCache()
 const siteName = useRuntimeConfig().public.siteName as string || 'Chat'
 
@@ -18,6 +15,7 @@ const chats = computed(() => loggedIn.value
 			to: `/chat/${chat.id}`,
 			icon: 'i-lucide-message-circle',
 			createdAt: chat.createdAt,
+			folderId: chat.folderId,
 		}))
 	: [])
 
@@ -36,32 +34,25 @@ if (import.meta.client) {
 	}, { immediate: true })
 }
 
-// A chat loads while the pointer is over its link or the link has focus, so opening it is instant.
-function prefetchChat(event: Event) {
-	const link = event.target instanceof Element ? event.target.closest('a') : null
-	const id = link?.getAttribute('href')?.match(/^\/chat\/([\w-]+)$/)?.[1]
-	if (id) prefetch(chatQuery(id))
-}
-
+// Search covers every chat, in folders or not.
 const { groups } = useChats(chats)
 
-const items = computed(() => groups.value.flatMap(group => [
-	{ label: group.label, type: 'label' as const },
-	...group.items.map(item => ({
-		...item,
-		slot: 'chat' as const,
-		icon: undefined,
-		class: item.label === 'Untitled' ? 'text-muted' : '',
-	})),
-]))
-
-function getChatActions(item: { id: string, label: string }): DropdownMenuItem[][] {
-	return [[
-		{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => renameChat(item.id, item.label === 'Untitled' ? '' : item.label) },
-	], [
-		{ label: 'Delete', icon: 'i-lucide-trash', color: 'error', onSelect: () => deleteChat(item.id) },
-	]]
-}
+// A temporary chat starts with the sidebar collapsed; leaving it restores the sidebar as it was. The state before
+// is kept in a cookie, since the sidebar saves its own state and a reload of the temporary chat would otherwise
+// take the forced collapse for the member's choice. Applied after mount, once the sidebar has read its state.
+const route = useRoute()
+const sidebarCollapsed = ref(false)
+const collapsedBefore = useCookie<boolean | null>('sidebar-before-temporary', { default: () => null, sameSite: 'lax' })
+onMounted(() => watch(() => route.path === '/temporary', (temporary) => {
+	if (temporary) {
+		collapsedBefore.value ??= sidebarCollapsed.value
+		sidebarCollapsed.value = true
+	}
+	else if (collapsedBefore.value !== null) {
+		sidebarCollapsed.value = collapsedBefore.value
+		collapsedBefore.value = null
+	}
+}, { immediate: true }))
 
 defineShortcuts({
 	meta_o: () => navigateTo('/'),
@@ -73,6 +64,7 @@ defineShortcuts({
 		<UDashboardSidebar
 			id="default"
 			v-model:open="sidebarOpen"
+			v-model:collapsed="sidebarCollapsed"
 			:min-size="12"
 			collapsible
 			resizable
@@ -100,6 +92,10 @@ defineShortcuts({
 						kbds: ['meta', 'o'],
 						icon: 'i-lucide-circle-plus',
 					}, {
+						label: 'Temporary chat',
+						to: '/temporary',
+						icon: 'i-lucide-ghost',
+					}, {
 						label: 'Search',
 						icon: 'i-lucide-search',
 						kbds: ['meta', 'k'],
@@ -124,37 +120,7 @@ defineShortcuts({
 					</template>
 				</UNavigationMenu>
 
-				<UNavigationMenu
-					v-if="!collapsed"
-					:items="items"
-					:collapsed="collapsed"
-					orientation="vertical"
-					:ui="{
-						link: 'overflow-hidden pr-7.5',
-						linkTrailing: 'translate-x-full group-hover:translate-x-0 group-has-data-[state=open]:translate-x-0 transition-transform ms-0 absolute inset-e-px',
-					}"
-					@pointerover="prefetchChat"
-					@focusin="prefetchChat"
-				>
-					<template #chat-trailing="{ item }">
-						<UDropdownMenu
-							:items="getChatActions(item as { id: string, label: string })"
-							:content="{ align: 'end' }"
-						>
-							<UButton
-								as="div"
-								icon="i-lucide-ellipsis"
-								color="neutral"
-								variant="link"
-								size="sm"
-								class="rounded-[5px] hover:bg-accented/50 focus-visible:bg-accented/50 data-[state=open]:bg-accented/50"
-								aria-label="Chat actions"
-								tabindex="-1"
-								@click.stop.prevent
-							/>
-						</UDropdownMenu>
-					</template>
-				</UNavigationMenu>
+				<SidebarChats v-if="loggedIn && !collapsed" :chats="chats" />
 			</template>
 
 			<template #footer="{ collapsed }">

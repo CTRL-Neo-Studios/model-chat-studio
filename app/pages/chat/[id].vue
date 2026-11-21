@@ -3,13 +3,15 @@
 definePageMeta({ auth: false })
 
 const chatId = useRoute().params.id as string
+// Set by the home page for a chat it just created.
+const firstAnswer = !!useRouter().options.history.state.firstAnswer
 // The page opens at once: a chat seen before, or hovered in the sidebar, renders from the cache; a new one
 // shows placeholders until it arrives.
 const { data, error } = useQuery(chatQuery(chatId))
 </script>
 
 <template>
-	<ChatView v-if="data?.id" :chat-id="chatId" />
+	<ChatView v-if="data?.id" :chat-id="chatId" :first-answer="firstAnswer" />
 
 	<UContainer v-else-if="error" class="flex-1 flex flex-col gap-4 sm:gap-6">
 		<UError :error="{ statusMessage: 'Chat not found', statusCode: 404 }" class="min-h-full" />

@@ -12,10 +12,13 @@ const props = withDefaults(defineProps<{
 	/** The upload state of the files, in the same order as `v-model:files`. */
 	uploads?: PromptUpload[]
 	uploading?: boolean
+	/** Messages in the longest lane thread: the memory slider's range. Unset hides the slider (a new chat). */
+	memoryMax?: number
 }>(), {
 	status: 'ready',
 	error: undefined,
 	uploads: () => [],
+	memoryMax: undefined,
 })
 
 const emit = defineEmits<{
@@ -27,6 +30,18 @@ const emit = defineEmits<{
 const input = defineModel<string>({ default: '' })
 const files = defineModel<File[]>('files', { default: () => [] })
 const webSearch = defineModel<boolean | undefined>('webSearch')
+/** How many messages each lane is sent; `null` is all. */
+const memoryLength = defineModel<number | null | undefined>('memoryLength')
+
+// The slider's rightmost step means "all", so the chat can grow past it. It shows its value while dragged and is
+// saved when released, not on every step.
+const memoryAll = computed(() => (props.memoryMax ?? 1) + 1)
+const memoryStep = ref(memoryLength.value ?? memoryAll.value)
+watch([memoryLength, memoryAll], () => memoryStep.value = memoryLength.value ?? memoryAll.value)
+function commitMemory() {
+	memoryLength.value = memoryStep.value >= memoryAll.value ? null : memoryStep.value
+}
+const memoryLabel = computed(() => memoryLength.value ? `Memory: ${memoryLength.value} ${memoryLength.value === 1 ? 'message' : 'messages'}` : 'Memory: all')
 
 // Text files always; images and PDFs when a model reads them. A model that cannot gets a note instead.
 const accept = computed(() => fileAcceptPattern({
@@ -73,11 +88,29 @@ function appendTranscript(text: string) {
 		</template>
 
 		<template #footer="{ open }">
-			<ChatPromptMenu
-				v-model:web-search="webSearch"
-				:web-search-available="models.some(model => model.webSearch)"
-				:open="open"
-			/>
+			<div class="flex items-center gap-1 min-w-0">
+				<ChatPromptMenu
+					v-model:web-search="webSearch"
+					:web-search-available="models.some(model => model.webSearch)"
+					:open="open"
+				/>
+				<UPopover v-if="memoryMax !== undefined" :content="{ side: 'top', align: 'start' }">
+					<UButton :label="memoryLabel" icon="i-lucide-brain" color="neutral" variant="ghost" size="sm" :class="memoryLength && 'text-highlighted'" />
+					<template #content>
+						<div class="w-72 p-3 flex flex-col gap-3">
+							<p class="text-sm text-muted">
+								How many recent messages each model is sent with your next message. Fewer is cheaper; the model forgets the rest.
+							</p>
+							<USlider v-model="memoryStep" :min="1" :max="memoryAll" aria-label="Messages sent" @change="commitMemory" />
+							<div class="flex justify-between text-xs text-muted">
+								<span>1</span>
+								<span class="text-highlighted font-medium">{{ memoryStep >= memoryAll ? 'All' : memoryStep }}</span>
+								<span>All</span>
+							</div>
+						</div>
+					</template>
+				</UPopover>
+			</div>
 
 			<div class="flex items-center gap-1 min-w-0">
 				<ChatDictateButton

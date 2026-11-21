@@ -4,11 +4,17 @@ import { LazyModalConfirm } from '#components'
 import type { ChatMessage } from '~/composables/useLaneAnswers'
 
 /** A loaded chat: the page renders it once the chat's query has data. */
-const props = defineProps<{ chatId: string }>()
+const props = defineProps<{
+	chatId: string
+	/** The chat was just created with one message: every model answers it on arrival. */
+	firstAnswer?: boolean
+}>()
+/** A temporary chat was kept. */
+const emit = defineEmits<{ kept: [] }>()
 const chatId = props.chatId
 
-const router = useRouter()
 const toast = useToast()
+const act = useApiAction()
 const queryCache = useQueryCache()
 const { csrf, headerName } = useCsrf()
 
@@ -19,6 +25,20 @@ const visibility = ref<'public' | 'private'>(data.value?.visibility ?? 'private'
 const sharedWith = ref(data.value?.sharedWith ?? [])
 // Renaming writes the cache (`useChatActions`), so the title is read from it.
 const title = computed(() => data.value?.title ?? null)
+const temporary = computed(() => data.value?.temporary ?? false)
+
+// "Keep this chat": it joins the chat list, named from its first message.
+const keeping = ref(false)
+async function keep() {
+	keeping.value = true
+	const kept = await act<{ title: string | null }>(`/api/v1/chats/${chatId}`, { method: 'PATCH', body: { temporary: false } })
+	keeping.value = false
+	if (!kept) return
+	const chat = queryCache.getQueryData(chatQuery(chatId).key)
+	if (chat) queryCache.setQueryData(chatQuery(chatId).key, { ...chat, temporary: false, title: kept.title })
+	queryCache.invalidateQueries({ key: chatsQuery.key, exact: true })
+	emit('kept')
+}
 
 useHead({ title: () => title.value || 'Chat' })
 
@@ -49,6 +69,13 @@ const answers = useLaneAnswers(chatId, messages, {
 	onAnswered: refreshTitle,
 	keepPreviousOnStop: () => (me.value?.preferences.stoppedRegenerate ?? 'keep-previous') === 'keep-previous',
 })
+
+// The memory slider's range: the longest lane thread after its latest summary, in messages that count.
+const memoryMax = computed(() => Math.max(1, ...lanes.value.map((lane) => {
+	const thread = messages.value.filter(message => message.role === 'user' || (message.chatModelId === lane.id
+		&& (message.role === 'system' || message.parts.some(part => part.type === 'text' || part.type === 'file'))))
+	return thread.length - (thread.findLastIndex(message => message.role === 'system') + 1)
+})))
 
 // The cached chat follows this page, so coming back to it shows it as it is now, without a refetch.
 function writeBack() {
@@ -174,11 +201,11 @@ async function vote(message: UIMessage, isUpvoted: boolean) {
 	}
 }
 
-// A chat just created on the home page arrives with only its first message: every model answers it. Coming
-// back to it later does not, even when its cached copy still has one message.
+// A chat just created arrives with only its first message: every model answers it. Coming back to it later does
+// not, even when its cached copy still has one message.
 onMounted(() => {
 	const [first] = messages.value
-	if (isOwner.value && messages.value.length === 1 && first && router.options.history.state.firstAnswer) {
+	if (isOwner.value && messages.value.length === 1 && first && props.firstAnswer) {
 		for (const lane of enabledLanes.value) answers.regenerate(lane.id, first)
 	}
 })
@@ -201,8 +228,12 @@ onMounted(() => {
 					<ChatModelsMenu v-if="isOwner" :chat-lanes="chatLanes" />
 				</template>
 
+				<template v-if="temporary && isOwner">
+					<UBadge icon="i-lucide-ghost" label="Temporary" color="neutral" variant="subtle" />
+					<UButton label="Keep this chat" icon="i-lucide-bookmark-plus" size="sm" variant="soft" :loading="keeping" @click="keep" />
+				</template>
 				<ChatVisibility
-					v-if="isOwner"
+					v-else-if="isOwner"
 					v-model:visibility="visibility"
 					v-model:shared-with="sharedWith"
 					:chat-id="chatId"
@@ -290,7 +321,10 @@ onMounted(() => {
 								:uploading="uploading"
 								:status="answers.busy.value ? 'streaming' : 'ready'"
 								class="[view-transition-name:chat-prompt] rounded-b-none backdrop-blur-sm"
+								:memory-max="memoryMax"
+								:memory-length="settings.memoryLength"
 								@update:web-search="chatLanes.setSettings({ webSearch: $event })"
+								@update:memory-length="chatLanes.setSettings({ memoryLength: $event ?? null })"
 								@submit="handleSubmit"
 								@stop="answers.stop()"
 							/>

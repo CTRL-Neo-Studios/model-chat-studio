@@ -6,6 +6,8 @@ export interface UIChat {
 	to: string
 	icon: string
 	createdAt: string
+	/** `null` is no folder. */
+	folderId: string | null
 }
 
 interface ChatGroup {

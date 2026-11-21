@@ -1,11 +1,16 @@
 <script setup lang="ts">
-const props = defineProps<{
+const props = withDefaults(defineProps<{
+	/** The current name. */
 	title?: string
-}>()
+	heading?: string
+	description?: string
+	placeholder?: string
+	maxlength?: number
+}>(), { title: '', heading: 'Rename chat', description: 'Choose a new title for this chat.', placeholder: 'Chat title', maxlength: 200 })
 
 const emit = defineEmits<{ close: [string | false] }>()
 
-const value = ref(props.title ?? '')
+const value = ref(props.title)
 const trimmed = computed(() => value.value.trim())
 
 function submit() {
@@ -16,8 +21,8 @@ function submit() {
 
 <template>
 	<UModal
-		title="Rename chat"
-		description="Choose a new title for this chat."
+		:title="heading"
+		:description="description"
 		:ui="{ footer: 'flex-row-reverse justify-start' }"
 		:close="false"
 	>
@@ -26,8 +31,8 @@ function submit() {
 				v-model="value"
 				autofocus
 				size="lg"
-				placeholder="Chat title"
-				maxlength="200"
+				:placeholder="placeholder"
+				:maxlength="maxlength"
 				class="w-full"
 				:ui="{ root: 'w-full' }"
 				@keydown.enter.prevent="submit"

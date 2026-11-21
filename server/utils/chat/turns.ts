@@ -53,6 +53,12 @@ export const turnRequestSchema = z.discriminatedUnion('trigger', [
 ])
 export type TurnRequest = z.infer<typeof turnRequestSchema>
 
+/** The start of the first user message, for when no title was generated. */
+export function fallbackTitle(text: string): string {
+	const clean = text.replace(/\s+/g, ' ').trim()
+	return clean.length > 60 ? `${clean.slice(0, 59)}…` : clean || 'New chat'
+}
+
 /** A chat with the ids of the people it is shared with. Ids that are not UUIDs find nothing. */
 export async function findChat(db: Db, id: string | undefined) {
 	if (!z.uuid().safeParse(id).success) return undefined

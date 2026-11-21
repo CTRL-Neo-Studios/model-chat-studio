@@ -14,7 +14,7 @@ import {
 } from "drizzle-orm/pg-core";
 import {relations} from "drizzle-orm";
 import type {UIMessage} from "ai";
-import {type ChatSettings, LANE_COLORS, type MessageMetadata, type ModelParams} from "../../shared/utils/chat";
+import {type ChatSettings, type ContextBlock, LANE_COLORS, type MessageMetadata, type ModelParams} from "../../shared/utils/chat";
 import type {UserPreferences} from "../../shared/utils/preferences";
 
 const createdAt = timestamp({ withTimezone: true }).defaultNow().notNull()
@@ -99,6 +99,19 @@ export const userApiKey = pgTable("userApiKey", {
 	primaryKey({ columns: [t.userId, t.platform] }),
 ]);
 
+/** A member's folder of chats. Folders nest; their order is by name, so there is no position. */
+export const chatFolder = pgTable("chatFolder", {
+	id: uuid().primaryKey().defaultRandom(),
+	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	/** `null` is the top level. Deleting a folder moves its content up first; `set null` is a backstop. */
+	parentId: uuid().references((): AnyPgColumn => chatFolder.id, { onDelete: "set null" }),
+	name: text().notNull(),
+
+	...createdUpdatedAtColumns
+}, (t) => [
+	index().on(t.userId),
+]);
+
 export const chat = pgTable("chat", {
 	id: uuid().primaryKey().defaultRandom(),
 	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
@@ -107,6 +120,10 @@ export const chat = pgTable("chat", {
 	visibility: text({ enum: ["private", "public"] }).notNull().default("private"),
 	/** Settings shared by every lane; each lane's model settings live in `chatModel`. */
 	settings: jsonb().$type<ChatSettings>().notNull().default({}),
+	/** `null` is no folder. */
+	folderId: uuid().references(() => chatFolder.id, { onDelete: "set null" }),
+	/** Hidden from the chat list and deleted when its page is left; swept after 24 h. "Keep this chat" clears it. */
+	temporary: boolean().notNull().default(false),
 
 	...createdUpdatedAtColumns
 }, (t) => [
@@ -178,6 +195,13 @@ export const message = pgTable("message", {
 	index().on(t.chatId, t.seq),
 ]);
 
+/** What one answer was given: its context blocks in the order sent. Messages and files are referenced, not copied. */
+export const turnTrace = pgTable("turnTrace", {
+	messageId: text().primaryKey().references(() => message.id, { onDelete: "cascade" }),
+	blocks: jsonb().$type<ContextBlock[]>().notNull(),
+	createdAt,
+});
+
 export const vote = pgTable("vote", {
 	chatId: uuid().notNull().references(() => chat.id, { onDelete: "cascade" }),
 	messageId: text().notNull().references(() => message.id, { onDelete: "cascade" }),
@@ -246,6 +270,7 @@ export const userRelations = relations(user, ({ many }) => ({
 
 export const chatRelations = relations(chat, ({ one, many }) => ({
 	user: one(user, { fields: [chat.userId], references: [user.id] }),
+	folder: one(chatFolder, { fields: [chat.folderId], references: [chatFolder.id] }),
 	messages: many(message),
 	models: many(chatModel),
 	shares: many(chatShare),

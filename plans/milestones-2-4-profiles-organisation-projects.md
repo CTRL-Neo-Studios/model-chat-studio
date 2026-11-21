@@ -1,6 +1,6 @@
 # Milestones 2–4: model profiles, organisation, projects
 
-Status: planned (2026-11-21). Nothing here is built. Milestone 1 (`plans/milestone-1-chat-foundation.md`) is done and is the base; its conventions (section 2 there) apply unchanged.
+Status: milestone 2 done (live smoke run passed on both platforms). Milestone 3: spikes done (D's live run pending), 3.1 folders and 3.2 temporary chat done. Milestone 1 (`plans/milestone-1-chat-foundation.md`) is the base; its conventions (section 2 there) apply unchanged.
 
 Goal, in build order:
 
@@ -176,8 +176,8 @@ A summary is a `message` row with role `system`, `metadata.kind: 'summary'` and 
 
 ### Behaviour
 
-- **Folders.** The sidebar becomes a `UTree`: folders first, then loose chats in today's date groups. Dragging uses `useSortable` (the way Nuxt UI documents tree drag and drop), which needs `sortablejs`. Every drag has a "Move to…" menu twin for keyboards. Folder menu: New folder, Rename, Move to, Delete.
-- **Temporary chat.** `/temporary` is the chat page without an id in the URL, so a refresh starts over by itself. The sidebar starts collapsed. Leaving the page deletes the chat with a `keepalive` request on `pagehide`; the 24 h sweep catches tabs that died. No title is generated and sharing is off. A banner says the chat is temporary and offers "Keep this chat", which clears the mark, titles the chat from its first message and moves to `/chat/:id`. Spend is recorded as usual.
+- **Folders.** The sidebar becomes a `UTree`: folders first, then loose chats in today's date groups. Dragging uses native drag events on the rows (spike A): a row dropped on a folder moves into it, dropped on "no folder" moves out. Every drag has a "Move to…" menu twin for keyboards. Folder menu: New folder, Rename, Move to, Delete.
+- **Temporary chat.** `/temporary` is the chat page without an id in the URL, so a refresh starts over by itself. The sidebar starts collapsed and is restored on leaving. Leaving the page deletes the chat: a `keepalive` DELETE on `pagehide` (refresh, closed tab, another site page) and on route leave (another page in the app); the 24 h sweep in `GET /chats` catches tabs that died. No title is generated and sharing is refused. The navbar shows "Temporary" and "Keep this chat", which clears the mark, titles the chat from its first message and moves to `/chat/:id`. Spend is recorded as usual.
 - **Memory slider.** In the prompt footer, bottom left: "Memory: all" or "Memory: 12 messages". It counts the messages after the latest summary; the summary itself is always sent. Stored per chat and applied to each lane's own thread.
 - **Commands.** The prompt body becomes a `UEditor` (Markdown, starter kit off, Enter submits). "/" opens the command menu. `/compact` calls the route above. `/clear` opens a new chat with the same lanes and settings. `/temp` turns a not-yet-started chat temporary. `/rename <title>` renames.
 - **Overview slideover**, opened from the navbar, owner only:
@@ -289,10 +289,10 @@ Milestone 2:
 
 Milestone 3:
 
-- `UTree` with `useSortable` can drop a row into another folder, not only reorder siblings. If not, native drag events on the rows.
-- The `UEditor` prompt: Enter submits and Shift+Enter breaks the line, paste arrives as plain text, IME composition is not cut by Enter, dictation can insert text, and it behaves on a phone.
-- A `keepalive` DELETE with the CSRF header is sent on `pagehide` in Chromium and Safari.
-- A thread that starts with an answer (memory cut on an odd count) is accepted by both platforms.
+- **Spike A, decided against `useSortable`, native drag confirmed** (throwaway page, Chromium, 2026-11-21). Nuxt UI's documented `useSortable` integration flattens the tree (`nested: false`) and reports only old and new indexes: it reorders, and folder order is not manual here, so "into this folder" would have to be guessed from a position. Native drag events instead: a `draggable` label in the `#item-label` slot, `dragover`/`drop` on the tree read the target row's folder. Dropped a chat into a folder, a folder with its content into another, a chat to "no folder"; a drop on a chat row and a drop of a folder into its own subfolder were refused. `sortablejs` is not added. To build: rows rendered as `div` (`:as="{ link: 'div' }"`), because Firefox does not drag elements inside a `<button>`.
+- **Spike B, confirmed with one plan change** (throwaway page, Chromium, 2026-11-21). `UChatPrompt` `#body` with `UEditor` (starter kit off) and an Enter shortcut: Enter submits; Shift+Enter breaks the line; Enter while the "/" menu is open picks the item instead of submitting; pasted HTML (heading, bold, link, list) arrives as plain paragraphs; an Enter inside an IME composition (synthetic events) does not submit; text appended to the model (dictation) shows in the editor. Change: the `markdown` content type escapes what is typed (`**bold**` becomes `\*\*bold\*\*`, `<b>` becomes `&lt;b&gt;`), so the prompt reads `editor.getText({ blockSeparator: '\n' })`, which returned the text exactly with `\n` for line breaks. Commands use `UEditorSuggestionMenu` with custom `kind`s run by `UEditor`'s `handlers` (it deletes the typed `/comp` and calls the handler), not a mention menu, which would insert a `[@ label="compact" char="/"]` node. `/rename` opens the rename dialog rather than taking an argument. Not tested: a real IME and a phone; on touch screens Enter will break the line and the send button sends, since a phone keyboard has no Shift+Enter.
+- **Spike C, confirmed** (throwaway route, 2026-11-21). A `keepalive` DELETE with the CSRF header, sent on `pagehide`, passed the CSRF check and arrived in Chromium on reload, on navigating to another site page and on closing the tab, and in Safari 27 on navigating away and on closing the window (Safari reload not driven: Apple Events JavaScript is off). Two gaps for the build: moving to another page inside the app fires no `pagehide`, so the page also deletes on route leave; a page left before it hydrated sends nothing, which the 24 h sweep covers.
+- **Spike D, offline part done, live run pending** (`scripts/spikes/m3/thread-starts-with-answer.ts`, in the prep checkout). Offline: `system, assistant, user` and `system, assistant, user, assistant, user` go on the wire unchanged on both platforms. AI SDK v7 refuses system messages inside `messages` ("Use the instructions option instead"), so a stored summary (role `system`) is sent as a user message or folded into the instructions; this also answers milestone 4's "system-role messages after the first message" question. Live: `OPENROUTER_API_KEY=… DEEPSEEK_API_KEY=… bun scripts/spikes/m3/thread-starts-with-answer.ts --live`.
 
 Milestone 4:
 
@@ -315,4 +315,4 @@ Milestone 4:
 - A profile is tied to one platform's model id. After a platform switch its lanes are skipped until edited.
 - Still out, as in milestone 1: branching, read-aloud, image generation, export and import, translations.
 
-New dependencies: `sortablejs` (peer of the installed `@vueuse/integrations`) and `fuse.js` (already installed through Nuxt UI, made a direct dependency). TipTap comes with Nuxt UI.
+New dependency: `fuse.js` (already installed through Nuxt UI, made a direct dependency). TipTap comes with Nuxt UI.

@@ -36,6 +36,27 @@
       "when": 1795283610432,
       "tag": "0004_model_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795302970303,
+      "tag": "0005_chat_folders",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795303367729,
+      "tag": "0006_temporary_chats",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795303804998,
+      "tag": "0007_turn_trace",
+      "breakpoints": true
     }
   ]
 }

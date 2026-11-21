@@ -5,34 +5,22 @@ import { and, eq, isNull } from 'drizzle-orm'
 import type { MessageMetadata } from '#shared/utils/chat'
 import { chartTool } from '#shared/utils/tools/chart'
 import { userPreferencesSchema } from '#shared/utils/preferences'
-import { DEFAULT_INSTRUCTIONS } from '#shared/utils/instructions'
 import { getInstanceSettings } from '#server/utils/core/settings'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { assertRateLimit } from '#server/utils/core/rateLimit'
 import { requireChat } from '#server/utils/chat/access'
-import { answerAttempt, applyTurnTrigger, assertWithinBudget, listChatMessages, monthlyBudgetStatus, saveAnswer, turnRequestSchema } from '#server/utils/chat/turns'
+import { answerAttempt, applyTurnTrigger, assertWithinBudget, fallbackTitle, listChatMessages, monthlyBudgetStatus, saveAnswer, turnRequestSchema } from '#server/utils/chat/turns'
 import { listChatModels } from '#server/utils/chat/lanes'
 import { resolveAttachments } from '#server/utils/chat/files'
 import { getCatalog, getEndpoints, getPriceOverride, useInference } from '#server/utils/inference'
+import { buildContext } from '#server/utils/chat/context'
 import type { FinishedStep, Pricing } from '#server/utils/inference/types'
-
-// Added only while web search is on. Without it, DeepSeek sometimes answered that it had no web
-// access and did not search (live runs, plan section 10).
-const WEB_SEARCH_INSTRUCTIONS = `Web search is on in this chat: you can search the web and read pages.
-- Search for recent events and for facts you are not sure of; otherwise answer from what you know.
-- Cite the pages you used.`
 
 const TITLE_INSTRUCTIONS = `Write a title for a chat that starts with the user's message below.
 - Under 30 characters, summarizing the message
 - Plain text: no quotes, colons, punctuation or Markdown`
 
 const REFUSAL = 'This answer was withheld by the content safety check.'
-
-/** The start of the first user message, for when no title was generated. */
-function fallbackTitle(text: string): string {
-	const clean = text.replace(/\s+/g, ' ').trim()
-	return clean.length > 60 ? `${clean.slice(0, 59)}…` : clean || 'New chat'
-}
 
 /**
  * Streams one lane's answer. The client sends only the new message (or the regenerate target) and the lane,
@@ -94,7 +82,8 @@ export default defineEventHandler(async (event) => {
 	const firstText = history.find(message => message.role === 'user')?.parts.map(part => part.type === 'text' ? part.text : '').join(' ') ?? ''
 
 	// The first enabled lane names the chat, so a chat answered by several lanes is named once.
-	const firstTurn = !chat.title && lanes.find(lane => lane.enabled)?.id === lane.id
+	// A temporary chat gets no title; "Keep this chat" names it from its first message.
+	const firstTurn = !chat.temporary && !chat.title && lanes.find(lane => lane.enabled)?.id === lane.id
 	/** Appends one row to the spend ledger and returns the usage. */
 	const recordUsage = async (kind: 'chat' | 'title', modelId: string, steps: FinishedStep[], price: Pricing | null = null) => {
 		const usage = platform.usage({ model: modelId, steps, price })
@@ -121,13 +110,14 @@ export default defineEventHandler(async (event) => {
 		: Promise.resolve(undefined)
 
 	const webSearch = !!chat.settings.webSearch && model.webSearch
+	const context = buildContext({ thread: history, systemPrompt: lane.systemPrompt, webSearch, memoryLength: chat.settings.memoryLength ?? null })
 	const prepared = platform.prepare({
 		...params, apiKey, model: model.id, providers, reasoningLevel, webSearch,
 		userId: user.id, firstTurn, safetyCheck,
 	})
 	const tools: ToolSet = { ...prepared.tools, chart: chartTool }
 	const price = await getPriceOverride(db, platform.id, model.id)
-	const modelHistory = await resolveAttachments({ db, inference, model, userId: user.id, chatId }, history).catch((error) => {
+	const modelHistory = await resolveAttachments({ db, inference, model, userId: user.id, chatId }, context.messages).catch((error) => {
 		console.error('[chat] attachment failed', error)
 		throw createError({ status: 502, statusText: `${platform.id} did not accept an attachment. Try again, or remove it.` })
 	})
@@ -135,8 +125,7 @@ export default defineEventHandler(async (event) => {
 	const result = streamText({
 		...prepared,
 		tools,
-		// A lane's own system prompt replaces the default instructions; web search instructions apply either way.
-		instructions: [lane.systemPrompt ?? DEFAULT_INSTRUCTIONS, webSearch && WEB_SEARCH_INSTRUCTIONS].filter(Boolean).join('\n\n'),
+		instructions: context.instructions,
 		messages: await convertToModelMessages(modelHistory, { tools }),
 		stopWhen: isStepCount(5),
 		// Retries rate limits and server errors until the stream starts.
@@ -184,9 +173,10 @@ export default defineEventHandler(async (event) => {
 					const parts = stored.refused ? [{ type: 'text' as const, text: REFUSAL }] : responseMessage.parts
 					// A stopped answer replaces the lane's earlier one unless the member chose to keep the earlier one.
 					const keepPrevious = isAborted && userPreferencesSchema.parse(user.preferences).stoppedRegenerate === 'keep-previous'
-					if (parts.length) {
-						await saveAnswer(db, { id: responseMessage.id, chatId, parentId, chatModelId: lane.id, parts, metadata: stored }, keepPrevious)
-					}
+					const saved = parts.length > 0
+						&& await saveAnswer(db, { id: responseMessage.id, chatId, parentId, chatModelId: lane.id, parts, metadata: stored }, keepPrevious)
+					// What the answer was given, for the conversation overview.
+					if (saved) await db.insert(schema.turnTrace).values({ messageId: responseMessage.id, blocks: context.blocks })
 					if (firstTurn) {
 						const title = (await titlePromise) ?? usage.title ?? fallbackTitle(firstText)
 						await db.update(schema.chat).set({ title }).where(and(eq(schema.chat.id, chatId), isNull(schema.chat.title)))

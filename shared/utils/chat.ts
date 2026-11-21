@@ -29,6 +29,8 @@ export const chatSettingsSchema = z.object({
 	webSearch: z.boolean().optional(),
 	/** How several lanes' answers to one message are shown: side by side (default) or one under another. */
 	answerLayout: z.enum(['columns', 'stack']).optional(),
+	/** How many messages of each lane's thread are sent (after its latest summary); `null` or absent: all. */
+	memoryLength: z.number().int().min(1).max(10_000).nullable().optional(),
 })
 
 export type ChatSettings = z.infer<typeof chatSettingsSchema>
@@ -86,4 +88,21 @@ export interface MessageMetadata {
 	durationMs?: number
 	/** 1 for the first answer, then one more per regenerate (capped by `maxRegenerations`). */
 	attempt?: number
+}
+
+/**
+ * One piece of what a lane's answer was given, in the order sent: what the conversation overview shows. Prompts
+ * are copied (they are short); messages and files are referenced by id.
+ */
+export interface ContextBlock {
+	kind: 'instructions' | 'omitted' | 'summary' | 'message'
+	role: 'system' | 'user' | 'assistant'
+	label: string
+	/** Characters of text; attachments are not counted. */
+	size: number
+	/** Instructions and summaries. */
+	text?: string
+	messageId?: string
+	/** `omitted`: how many earlier messages the memory setting left out. */
+	count?: number
 }

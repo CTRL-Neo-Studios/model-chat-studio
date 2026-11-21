@@ -13,6 +13,11 @@ export const chatsQuery = defineQueryOptions({
 	query: () => useRequestFetch()('/api/v1/chats'),
 })
 
+export const foldersQuery = defineQueryOptions({
+	key: ['folders'],
+	query: () => useRequestFetch()('/api/v1/folders'),
+})
+
 export const chatQuery = defineQueryOptions((id: string) => ({
 	key: ['chats', id],
 	query: () => useRequestFetch()(`/api/v1/chats/${id}`),

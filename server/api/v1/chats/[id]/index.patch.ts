@@ -1,11 +1,11 @@
-import { defineEventHandler, readValidatedBody } from 'nuxt/server'
+import { createError, defineEventHandler, readValidatedBody } from 'nuxt/server'
 import { db, schema } from 'hub:db'
-import { and, eq, inArray, ne } from 'drizzle-orm'
+import { and, asc, eq, inArray, ne } from 'drizzle-orm'
 import { z } from 'zod'
 import { chatSettingsSchema } from '#shared/utils/chat'
 import type { Db } from '#server/utils/core/settings'
 import { requireChat } from '#server/utils/chat/access'
-import { listChatShares } from '#server/utils/chat/turns'
+import { fallbackTitle, listChatShares } from '#server/utils/chat/turns'
 
 const bodySchema = z.object({
 	title: z.string().trim().min(1).max(200),
@@ -13,12 +13,31 @@ const bodySchema = z.object({
 	settings: chatSettingsSchema,
 	/** Replaces the list of people the chat is shared with. */
 	sharedWith: z.array(z.uuid()).max(100),
+	/** One of the owner's folders; `null` takes the chat out of its folder. */
+	folderId: z.uuid().nullable(),
+	/** "Keep this chat": a temporary chat becomes a normal one, named from its first message. */
+	temporary: z.literal(false),
 }).partial().strict()
 
-/** Owner only: title, link access, people, and the settings shared by every lane. */
+/** Owner only: title, link access, people, folder, keeping a temporary chat, and the settings shared by every lane. */
 export default defineEventHandler(async (event) => {
 	const chat = await requireChat(event, 'manageChat')
 	const { sharedWith, ...fields } = await readValidatedBody(event, bodySchema)
+	const temporary = chat.temporary && fields.temporary === undefined
+	if (temporary && (fields.visibility === 'public' || sharedWith?.length)) {
+		throw createError({ status: 400, statusText: 'A temporary chat cannot be shared. Keep it first.' })
+	}
+	if (fields.folderId) {
+		const [folder] = await db.select({ id: schema.chatFolder.id }).from(schema.chatFolder)
+			.where(and(eq(schema.chatFolder.id, fields.folderId), eq(schema.chatFolder.userId, chat.userId)))
+		if (!folder) throw createError({ status: 404, statusText: 'Folder not found' })
+	}
+	if (chat.temporary && fields.temporary === false && !chat.title && !fields.title) {
+		const [first] = await db.select({ parts: schema.message.parts }).from(schema.message)
+			.where(and(eq(schema.message.chatId, chat.id), eq(schema.message.role, 'user')))
+			.orderBy(asc(schema.message.seq)).limit(1)
+		fields.title = fallbackTitle(first?.parts.map(part => part.type === 'text' ? part.text : '').join(' ') ?? '')
+	}
 
 	// `updatedAt` keeps the update non-empty when only the people change.
 	const update = (tx: Db) => tx.update(schema.chat).set({ ...fields, updatedAt: new Date() }).where(eq(schema.chat.id, chat.id)).returning()
