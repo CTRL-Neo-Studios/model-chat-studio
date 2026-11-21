@@ -1,6 +1,6 @@
 # Optimization plan: page speed and the admin model pickers
 
-Status: O1 done; O2 to O4 planned. It sits between milestone 2 (waiting for its live smoke run) and milestone 3, and changes no feature.
+Status: O1 and O2 done; O3 and O4 planned. It sits between milestone 2 (waiting for its live smoke run) and milestone 3, and changes no feature.
 
 ## 1. Findings
 

@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm'
 // Relative, not `hub:db`, so this module also loads in `bun test`.
 import * as tables from '../../db/schema'
 import { openSecret } from '../core/secrets'
-import { type Db, getSetting, type InferencePlatformId, type PlatformConfig } from '../core/settings'
+import { type Db, getInstanceSettings, getSetting, type InferencePlatformId, type PlatformConfig } from '../core/settings'
 import { deepseekPlatform } from './deepseek'
 import { openrouterPlatform } from './openrouter'
 import type { CatalogEndpoint, CatalogModel, InferencePlatform, Pricing } from './types'
@@ -81,9 +81,8 @@ export async function getSttCatalog(inference: ActiveInference): Promise<Catalog
 
 /** The platform's models, narrowed to the admin allowlist when it has entries. */
 export async function getCatalog(db: Db, inference: ActiveInference): Promise<CatalogModel[]> {
-	const models = await getFullCatalog(inference)
-	const allowed = await db.select({ modelId: tables.modelSetting.modelId }).from(tables.modelSetting)
-		.where(and(eq(tables.modelSetting.platform, inference.platform.id), eq(tables.modelSetting.enabled, true)))
+	const [models, { models: settings }] = await Promise.all([getFullCatalog(inference), getInstanceSettings(db)])
+	const allowed = settings.filter(row => row.platform === inference.platform.id && row.enabled)
 	if (!allowed.length) return models
 	const ids = new Set(allowed.map(row => row.modelId))
 	return models.filter(model => ids.has(model.id))
@@ -91,8 +90,7 @@ export async function getCatalog(db: Db, inference: ActiveInference): Promise<Ca
 
 /** The admin's price for a model, when input and output prices are both set. */
 export async function getPriceOverride(db: Db, platformId: InferencePlatformId, modelId: string): Promise<Pricing | null> {
-	const [row] = await db.select().from(tables.modelSetting)
-		.where(and(eq(tables.modelSetting.platform, platformId), eq(tables.modelSetting.modelId, modelId)))
+	const row = (await getInstanceSettings(db)).models.find(row => row.platform === platformId && row.modelId === modelId)
 	if (row?.priceInput == null || row.priceOutput == null) return null
 	return { input: row.priceInput, cacheRead: row.priceCachedInput ?? undefined, output: row.priceOutput }
 }

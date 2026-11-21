@@ -20,10 +20,9 @@ const typesByExtension: Record<string, string> = { csv: 'text/csv', md: 'text/ma
  * the original name is kept only in the `file` row.
  */
 export default defineEventHandler(async (event) => {
-	const user = await useServerAuth().requireUser(event)
 	const chatId = getRouterParam(event, 'id', { decode: true })
 	if (!z.uuid().safeParse(chatId).success) throw createError({ status: 404, statusText: 'Chat not found' })
-	const chat = await findChat(db, chatId)
+	const [user, chat] = await Promise.all([useServerAuth().requireUser(event), findChat(db, chatId)])
 	if (chat) await authorize(event, chatAbilities().manageChat, chat)
 
 	const upload = (await event.req.formData()).get('file')

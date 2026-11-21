@@ -2,10 +2,8 @@ import { createError, defineEventHandler, getRouterParam, readValidatedBody } fr
 import { db, schema } from 'hub:db'
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { chatAbilities } from '#shared/abilities/chatAbilities'
 import { laneFieldsSchema } from '#shared/utils/chat'
-import { authorize } from '#server/utils/core/authorize'
-import { findChat } from '#server/utils/chat/turns'
+import { requireChat } from '#server/utils/chat/access'
 import { assertLaneLimit, countEnabledLanes, findChatModel, laneValues } from '#server/utils/chat/lanes'
 
 const bodySchema = laneFieldsSchema.partial().extend({
@@ -16,12 +14,14 @@ const bodySchema = laneFieldsSchema.partial().extend({
 
 /** Owner only: changes a lane. Answers already given keep the model that wrote them. */
 export default defineEventHandler(async (event) => {
-	const chat = await findChat(db, getRouterParam(event, 'id', { decode: true }))
-	await authorize(event, chatAbilities().manageChat, chat)
-	const lane = await findChatModel(db, chat!.id, getRouterParam(event, 'laneId', { decode: true }))
-	if (!lane) throw createError({ status: 404, statusText: 'Model not found in this chat' })
+	const chat = await requireChat(event, 'manageChat')
 	const fields = await readValidatedBody(event, bodySchema)
-	if (fields.enabled && !lane.enabled) await assertLaneLimit(db, await countEnabledLanes(db, chat!.id) + 1)
+	const [lane, enabled] = await Promise.all([
+		findChatModel(db, chat.id, getRouterParam(event, 'laneId', { decode: true })),
+		fields.enabled ? countEnabledLanes(db, chat.id) : 0,
+	])
+	if (!lane) throw createError({ status: 404, statusText: 'Model not found in this chat' })
+	if (fields.enabled && !lane.enabled) await assertLaneLimit(db, enabled + 1)
 
 	const [updated] = await db.update(schema.chatModel).set(await laneValues(db, fields))
 		.where(eq(schema.chatModel.id, lane.id))

@@ -2,7 +2,7 @@ import { createError, defineEventHandler } from 'nuxt/server'
 import { db, schema } from 'hub:db'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { assertRateLimit } from '#server/utils/core/rateLimit'
-import { assertWithinBudget } from '#server/utils/chat/turns'
+import { assertWithinBudget, monthlyBudgetStatus } from '#server/utils/chat/turns'
 import { useInference } from '#server/utils/inference'
 import { wavDurationSeconds } from '#server/utils/inference/wav'
 
@@ -23,13 +23,13 @@ export default defineEventHandler(async (event) => {
 	if (seconds === null) throw createError({ status: 400, statusText: 'Send a 16-bit PCM WAV recording' })
 	if (seconds > MAX_SECONDS) throw createError({ status: 400, statusText: 'Recordings can be at most 2 minutes' })
 
-	const inference = await useInference(db, user.id)
+	const [inference, budget] = await Promise.all([useInference(db, user.id), monthlyBudgetStatus(db, user)])
 	if (!inference) throw createError({ status: 503, statusText: 'No model platform is configured yet. An admin can set one up in the settings.' })
 	const { platform, apiKey, byok, config } = inference
 	if (platform.capabilities.sttModel && !config.sttModel) {
 		throw createError({ status: 503, statusText: 'Dictation is not set up yet. An admin can choose a speech-to-text model in the settings.' })
 	}
-	await assertWithinBudget(db, user, byok)
+	assertWithinBudget(budget, byok)
 
 	const { text, costUsd } = await platform.transcribe({ apiKey, wav, model: config.sttModel }).catch((error) => {
 		console.error('[transcriptions] failed', error)

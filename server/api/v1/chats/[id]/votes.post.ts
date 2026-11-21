@@ -1,10 +1,8 @@
-import { createError, defineEventHandler, getRouterParam, readValidatedBody } from 'nuxt/server'
+import { createError, defineEventHandler, readValidatedBody } from 'nuxt/server'
 import { db, schema } from 'hub:db'
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { chatAbilities } from '#shared/abilities/chatAbilities'
-import { authorize } from '#server/utils/core/authorize'
-import { findChat } from '#server/utils/chat/turns'
+import { requireChat } from '#server/utils/chat/access'
 
 const bodySchema = z.object({
 	messageId: z.string().min(1),
@@ -13,10 +11,9 @@ const bodySchema = z.object({
 })
 
 export default defineEventHandler(async (event) => {
-	const chat = await findChat(db, getRouterParam(event, 'id', { decode: true }))
-	await authorize(event, chatAbilities().manageChat, chat)
+	const chat = await requireChat(event, 'manageChat')
 	const { messageId, isUpvoted } = await readValidatedBody(event, bodySchema)
-	const chatId = chat!.id
+	const chatId = chat.id
 
 	const [message] = await db.select({ role: schema.message.role }).from(schema.message)
 		.where(and(eq(schema.message.id, messageId), eq(schema.message.chatId, chatId)))

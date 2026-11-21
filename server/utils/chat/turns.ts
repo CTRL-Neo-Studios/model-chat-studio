@@ -56,10 +56,11 @@ export type TurnRequest = z.infer<typeof turnRequestSchema>
 /** A chat with the ids of the people it is shared with. Ids that are not UUIDs find nothing. */
 export async function findChat(db: Db, id: string | undefined) {
 	if (!z.uuid().safeParse(id).success) return undefined
-	const [chat] = await db.select().from(tables.chat).where(eq(tables.chat.id, id!))
+	const [[chat], shares] = await Promise.all([
+		db.select().from(tables.chat).where(eq(tables.chat.id, id!)),
+		db.select({ userId: tables.chatShare.userId }).from(tables.chatShare).where(eq(tables.chatShare.chatId, id!)),
+	])
 	if (!chat) return undefined
-	const shares = await db.select({ userId: tables.chatShare.userId }).from(tables.chatShare)
-		.where(eq(tables.chatShare.chatId, chat.id))
 	return { ...chat, sharedWith: shares.map(share => share.userId) }
 }
 
@@ -103,22 +104,23 @@ export async function listChatMessages(db: Db, chatId: string, chatModelId?: str
 }
 
 /**
- * Whether a lane's request for an existing user message joins it: the message is the chat's newest user
- * message, it arrives unchanged, and this lane has not answered it yet.
+ * Whether a lane's request for an existing user message joins it: the message is in this chat, it is the
+ * chat's newest user message, it arrives unchanged, and this lane has not answered it yet.
  */
-async function joinsMessage(db: Db, chatId: string, chatModelId: string, message: { id: string, seq: number }, parts: UserMessageParts) {
-	const [stored] = await db.select({ parts: tables.message.parts }).from(tables.message).where(eq(tables.message.id, message.id))
-	if (!stored || !isDeepStrictEqual(stored.parts, parts)) return false
-	const later = await db.select({ id: tables.message.id }).from(tables.message).where(and(
-		eq(tables.message.chatId, chatId),
-		eq(tables.message.role, 'user'),
-		gt(tables.message.seq, message.seq),
-	)).limit(1)
-	const answered = await db.select({ id: tables.message.id }).from(tables.message).where(and(
-		eq(tables.message.chatModelId, chatModelId),
-		eq(tables.message.parentId, message.id),
-	)).limit(1)
-	return !later.length && !answered.length
+async function joinsMessage(db: Db, chatId: string, chatModelId: string, id: string, parts: UserMessageParts) {
+	const [[stored], later, answered] = await Promise.all([
+		db.select({ chatId: tables.message.chatId, role: tables.message.role, parts: tables.message.parts }).from(tables.message).where(eq(tables.message.id, id)),
+		db.select({ id: tables.message.id }).from(tables.message).where(and(
+			eq(tables.message.chatId, chatId),
+			eq(tables.message.role, 'user'),
+			gt(tables.message.seq, db.select({ seq: tables.message.seq }).from(tables.message).where(eq(tables.message.id, id))),
+		)).limit(1),
+		db.select({ id: tables.message.id }).from(tables.message).where(and(
+			eq(tables.message.chatModelId, chatModelId),
+			eq(tables.message.parentId, id),
+		)).limit(1),
+	])
+	return stored?.chatId === chatId && stored.role === 'user' && isDeepStrictEqual(stored.parts, parts) && !later.length && !answered.length
 }
 
 /**
@@ -131,42 +133,41 @@ async function joinsMessage(db: Db, chatId: string, chatModelId: string, message
  *   without a target the newest user message.
  */
 export async function applyTurnTrigger(db: Db, chatId: string, request: TurnRequest): Promise<string> {
-	return await db.transaction(async (tx) => {
-		if (request.trigger === 'submit-message') {
-			const { id, parts } = request.message
-			const [previous] = await tx.select({ id: tables.message.id }).from(tables.message)
-				.where(eq(tables.message.chatId, chatId)).orderBy(sql`${tables.message.seq} desc`).limit(1)
+	if (request.trigger === 'submit-message') {
+		const { id, parts } = request.message
+		const save = async (tx: Db) => {
 			const [saved] = await tx.insert(tables.message)
-				.values({ id, chatId, role: 'user', parts, parentId: previous?.id })
+				.values({
+					id, chatId, role: 'user', parts,
+					// The chat's newest message, in the same statement.
+					parentId: sql`(select ${tables.message.id} from ${tables.message} where ${tables.message.chatId} = ${chatId} order by ${tables.message.seq} desc limit 1)`,
+				})
 				.onConflictDoNothing()
 				.returning({ id: tables.message.id })
-			if (saved) {
-				await attachFiles(tx, chatId, saved.id, parts)
-				return saved.id
-			}
-			// Another lane's request saved it first, or the id is taken.
-			const [existing] = await tx.select({ chatId: tables.message.chatId, role: tables.message.role, seq: tables.message.seq })
-				.from(tables.message).where(eq(tables.message.id, id))
-			if (existing?.chatId === chatId && existing.role === 'user' && await joinsMessage(tx, chatId, request.chatModelId, { id, seq: existing.seq }, parts)) {
-				return id
-			}
-			throw createError({ status: 409, statusText: 'This message id is already in use' })
+			if (saved) await attachFiles(tx, chatId, saved.id, parts)
+			return saved
 		}
+		// Attachments are linked in the same transaction; a text-only message is one statement.
+		const saved = parts.some(part => part.type === 'file') ? await db.transaction(save) : await save(db)
+		if (saved) return saved.id
+		// Another lane's request saved it first, or the id is taken.
+		if (await joinsMessage(db, chatId, request.chatModelId, id, parts)) return id
+		throw createError({ status: 409, statusText: 'This message id is already in use' })
+	}
 
-		const [target] = request.messageId
-			? await tx.select().from(tables.message).where(and(eq(tables.message.id, request.messageId), eq(tables.message.chatId, chatId)))
-			: await tx.select().from(tables.message).where(and(eq(tables.message.chatId, chatId), eq(tables.message.role, 'user')))
-					.orderBy(sql`${tables.message.seq} desc`).limit(1)
-		if (!target) {
-			throw request.messageId
-				? createError({ status: 404, statusText: 'Message not found' })
-				: createError({ status: 400, statusText: 'There is no message to answer' })
-		}
-		if (target.role === 'user') return target.id
-		if (target.role !== 'assistant' || !target.parentId) throw createError({ status: 400, statusText: 'There is no message to answer' })
-		if (target.chatModelId !== request.chatModelId) throw createError({ status: 400, statusText: 'This answer belongs to another model' })
-		return target.parentId
-	})
+	const [target] = request.messageId
+		? await db.select().from(tables.message).where(and(eq(tables.message.id, request.messageId), eq(tables.message.chatId, chatId)))
+		: await db.select().from(tables.message).where(and(eq(tables.message.chatId, chatId), eq(tables.message.role, 'user')))
+				.orderBy(sql`${tables.message.seq} desc`).limit(1)
+	if (!target) {
+		throw request.messageId
+			? createError({ status: 404, statusText: 'Message not found' })
+			: createError({ status: 400, statusText: 'There is no message to answer' })
+	}
+	if (target.role === 'user') return target.id
+	if (target.role !== 'assistant' || !target.parentId) throw createError({ status: 400, statusText: 'There is no message to answer' })
+	if (target.chatModelId !== request.chatModelId) throw createError({ status: 400, statusText: 'This answer belongs to another model' })
+	return target.parentId
 }
 
 /** Which attempt a lane's current answer to a user message is: 0 when it has none, 1 for the first answer. */
@@ -282,23 +283,24 @@ export async function deleteMessage(db: Db, chatId: string, messageId: string) {
  */
 export async function monthlyBudgetStatus(db: Db, user: { id: string, monthlyBudgetUsd: number | null }, now = new Date()) {
 	const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
-	const [row] = await db.select({ total: sum(tables.usageEvent.costUsd) }).from(tables.usageEvent).where(and(
-		eq(tables.usageEvent.userId, user.id),
-		eq(tables.usageEvent.byok, false),
-		gte(tables.usageEvent.createdAt, monthStart),
-	))
+	const [[row], defaultBudget] = await Promise.all([
+		db.select({ total: sum(tables.usageEvent.costUsd) }).from(tables.usageEvent).where(and(
+			eq(tables.usageEvent.userId, user.id),
+			eq(tables.usageEvent.byok, false),
+			gte(tables.usageEvent.createdAt, monthStart),
+		)),
+		getSetting(db, 'defaultMonthlyBudgetUsd'),
+	])
 	return {
 		spentUsd: Number(row?.total ?? 0),
-		budgetUsd: user.monthlyBudgetUsd ?? await getSetting(db, 'defaultMonthlyBudgetUsd'),
+		budgetUsd: user.monthlyBudgetUsd ?? defaultBudget,
 		monthStart,
 	}
 }
 
 /** Answers 402 when a paid call on the instance key would go over the member's monthly budget. */
-export async function assertWithinBudget(db: Db, user: { id: string, monthlyBudgetUsd: number | null }, byok: boolean) {
-	if (byok) return
-	const { spentUsd, budgetUsd } = await monthlyBudgetStatus(db, user)
-	if (budgetUsd !== null && spentUsd >= budgetUsd) {
+export function assertWithinBudget(status: { spentUsd: number, budgetUsd: number | null }, byok: boolean) {
+	if (!byok && status.budgetUsd !== null && status.spentUsd >= status.budgetUsd) {
 		throw createError({ status: 402, statusText: 'You have used this month\'s budget. Add your own API key in the settings to keep chatting.' })
 	}
 }

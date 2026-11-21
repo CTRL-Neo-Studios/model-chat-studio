@@ -4,7 +4,6 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { z } from 'zod'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { deleteStoredFiles } from '#server/utils/chat/files'
-import { useInference } from '#server/utils/inference'
 
 /**
  * Removes an attachment from the prompt before it is sent. A sent attachment belongs to its message
@@ -18,6 +17,6 @@ export default defineEventHandler(async (event) => {
 		.where(and(eq(schema.file.id, id!), eq(schema.file.ownerId, user.id), isNull(schema.file.messageId)))
 	if (!file) throw createError({ status: 404, statusText: 'File not found' })
 
-	await deleteStoredFiles(db, [file.id], await useInference(db, user.id))
+	await deleteStoredFiles(db, [file.id], user.id)
 	return { id: file.id }
 })

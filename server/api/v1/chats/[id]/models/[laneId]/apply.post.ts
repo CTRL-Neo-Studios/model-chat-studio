@@ -1,18 +1,16 @@
 import { createError, defineEventHandler, getRouterParam } from 'nuxt/server'
 import { db, schema } from 'hub:db'
 import { eq } from 'drizzle-orm'
-import { chatAbilities } from '#shared/abilities/chatAbilities'
 import { profileAbilities } from '#shared/abilities/profileAbilities'
 import { authorize } from '#server/utils/core/authorize'
-import { findChat } from '#server/utils/chat/turns'
+import { requireChat } from '#server/utils/chat/access'
 import { findChatModel } from '#server/utils/chat/lanes'
 import { findModelProfile } from '#server/utils/chat/profiles'
 
 /** Owner only: writes a lane's settings back to the profile it was started from. Other chats' lanes keep theirs. */
 export default defineEventHandler(async (event) => {
-	const chat = await findChat(db, getRouterParam(event, 'id', { decode: true }))
-	await authorize(event, chatAbilities().manageChat, chat)
-	const lane = await findChatModel(db, chat!.id, getRouterParam(event, 'laneId', { decode: true }))
+	const chat = await requireChat(event, 'manageChat')
+	const lane = await findChatModel(db, chat.id, getRouterParam(event, 'laneId', { decode: true }))
 	if (!lane) throw createError({ status: 404, statusText: 'Model not found in this chat' })
 	if (!lane.profileId || !lane.modelId || !lane.platform) throw createError({ status: 400, statusText: 'This model was not started from a profile' })
 	const profile = await findModelProfile(db, lane.profileId)

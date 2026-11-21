@@ -5,7 +5,7 @@ import { and, eq, inArray } from 'drizzle-orm'
 import type { UIMessage } from 'ai'
 import { FILE_UPLOAD, FILE_URL_PATTERN } from '#shared/utils/file'
 import type { Db } from '#server/utils/core/settings'
-import type { ActiveInference } from '#server/utils/inference'
+import { type ActiveInference, useInference } from '#server/utils/inference'
 import type { CatalogModel } from '#server/utils/inference/types'
 
 /** Provider-side copies are tied to the account of the key that made them; only a hash of it is stored. */
@@ -15,13 +15,16 @@ function hashApiKey(apiKey: string) {
 
 /**
  * Deletes files: rows first, then each blob (one at a time: the S3 driver's batch delete omits the
- * `Content-MD5` AWS requires), then the platform copies made with the current key. Copies made with
- * another key cannot be deleted here; DeepSeek drops them after 30 days.
+ * `Content-MD5` AWS requires), then the platform copies made with the member's current key. Copies made
+ * with another key cannot be deleted here; DeepSeek drops them after 30 days.
  */
-export async function deleteStoredFiles(db: Db, ids: string[], inference: ActiveInference | null) {
+export async function deleteStoredFiles(db: Db, ids: string[], userId: string) {
 	if (!ids.length) return
-	const rows = await db.select({ blobPath: schema.file.blobPath }).from(schema.file).where(inArray(schema.file.id, ids))
-	const remote = await db.select().from(schema.providerFile).where(inArray(schema.providerFile.fileId, ids))
+	const [rows, remote, inference] = await Promise.all([
+		db.select({ blobPath: schema.file.blobPath }).from(schema.file).where(inArray(schema.file.id, ids)),
+		db.select().from(schema.providerFile).where(inArray(schema.providerFile.fileId, ids)),
+		useInference(db, userId),
+	])
 	await db.delete(schema.file).where(inArray(schema.file.id, ids))
 
 	for (const row of rows) {

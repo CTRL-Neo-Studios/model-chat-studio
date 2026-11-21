@@ -1,13 +1,12 @@
-import {useServerUsers} from "#server/utils/core/useServerUsers";
+import type { RequestEvent } from "nuxt/server";
+import { useServerAuth } from "#server/utils/core/useServerAuth";
 
 export default defineNitroPlugin((nitroApp) => {
 	nitroApp.hooks.hook("request", async (event) => {
 		event.context.$authorization = {
-			resolveServerUser: async () => {
-				const session = await getUserSession(event);
-				// nuxt-authorization treats only `null` as a guest.
-				return (await useServerUsers().getDbUserFromId(session.user?.id)) ?? null;
-			},
+			// nuxt-authorization treats only `null` as a guest. The lookup is shared with the handler's
+			// `requireUser` through the request context; the hook's event has the older h3 type.
+			resolveServerUser: async () => (await useServerAuth().getUser(event as unknown as RequestEvent)) ?? null,
 		};
 	});
 });

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import * as schema from '../server/db/schema'
 import { decryptSecret, encryptSecret, sealSecret } from '../server/utils/core/secrets'
-import { getSetting, setSetting } from '../server/utils/core/settings'
-import { getCatalog, useInference } from '../server/utils/inference'
+import { getSetting, setModelSetting, setSetting, setSettings } from '../server/utils/core/settings'
+import { getCatalog, getPriceOverride, useInference } from '../server/utils/inference'
 import { createTestDb, type TestDb } from './db'
 
 let db: TestDb
@@ -71,11 +71,11 @@ test('switching platform switches the catalog; each keeps its own settings', asy
 	await setSetting(db, 'inference.deepseek', { apiKey: await sealSecret('ds-key'), defaultModel: 'deepseek-flash' })
 
 	await setSetting(db, 'inferencePlatform', 'openrouter')
-	const openrouter = (await useInference(db))!
+	const openrouter = (await useInference(db, userId))!
 	expect((await getCatalog(db, openrouter)).map(m => m.id)).toEqual(['openai/a', 'openai/b'])
 
 	await setSetting(db, 'inferencePlatform', 'deepseek')
-	const deepseek = (await useInference(db))!
+	const deepseek = (await useInference(db, userId))!
 	expect(deepseek.platform.id).toBe('deepseek')
 	expect(deepseek.config.defaultModel).toBe('deepseek-flash')
 	expect((await getCatalog(db, deepseek)).map(m => m.id)).toEqual(['deepseek-flash', 'deepseek-v4-pro'])
@@ -88,16 +88,25 @@ test('the allowlist narrows the catalog only through enabled rows', async () => 
 	fakeCatalogs()
 	await setSetting(db, 'inferencePlatform', 'deepseek')
 	await setSetting(db, 'inference.deepseek', { apiKey: await sealSecret('ds-key') })
-	const inference = (await useInference(db))!
+	const inference = (await useInference(db, userId))!
 
 	// A price override alone allowlists nothing.
-	await db.insert(schema.modelSetting).values({ platform: 'deepseek', modelId: 'deepseek-flash', priceInput: 1, priceOutput: 2 })
+	await setModelSetting(db, { platform: 'deepseek', modelId: 'deepseek-flash', priceInput: 1, priceOutput: 2 })
 	expect(await getCatalog(db, inference)).toHaveLength(2)
+	expect(await getPriceOverride(db, 'deepseek', 'deepseek-flash')).toEqual({ input: 1, cacheRead: undefined, output: 2 })
 
-	await db.insert(schema.modelSetting).values({ platform: 'deepseek', modelId: 'deepseek-v4-pro', enabled: true })
+	await setModelSetting(db, { platform: 'deepseek', modelId: 'deepseek-v4-pro', enabled: true })
 	expect((await getCatalog(db, inference)).map(m => m.id)).toEqual(['deepseek-v4-pro'])
 
 	// Another platform's allowlist does not apply.
-	await db.insert(schema.modelSetting).values({ platform: 'openrouter', modelId: 'openai/a', enabled: true })
+	await setModelSetting(db, { platform: 'openrouter', modelId: 'openai/a', enabled: true })
 	expect((await getCatalog(db, inference)).map(m => m.id)).toEqual(['deepseek-v4-pro'])
+})
+
+test('a write is read back at once, and null restores the default', async () => {
+	await setSettings(db, { maxChatModels: 6, safetyCheck: true })
+	expect(await getSetting(db, 'maxChatModels')).toBe(6)
+	await setSettings(db, { maxChatModels: 3, safetyCheck: null })
+	expect(await getSetting(db, 'maxChatModels')).toBe(3)
+	expect(await getSetting(db, 'safetyCheck')).toBe(false)
 })

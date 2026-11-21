@@ -1,11 +1,9 @@
-import { createError, defineEventHandler, getRouterParam, readValidatedBody } from 'nuxt/server'
+import { createError, defineEventHandler, readValidatedBody } from 'nuxt/server'
 import { db, schema } from 'hub:db'
 import { eq, max } from 'drizzle-orm'
 import { z } from 'zod'
-import { chatAbilities } from '#shared/abilities/chatAbilities'
-import { authorize } from '#server/utils/core/authorize'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
-import { findChat } from '#server/utils/chat/turns'
+import { requireChat } from '#server/utils/chat/access'
 import { assertLaneLimit, countEnabledLanes, findChatModel, newLaneSchema, newLaneValues } from '#server/utils/chat/lanes'
 
 const bodySchema = newLaneSchema.extend({
@@ -15,24 +13,27 @@ const bodySchema = newLaneSchema.extend({
 
 /** Owner only: adds a lane at the end, from fields, a profile, or a copy of another lane. It answers from the next message on. */
 export default defineEventHandler(async (event) => {
+	const chat = await requireChat(event, 'manageChat')
 	const user = await useServerAuth().requireUser(event)
-	const chat = await findChat(db, getRouterParam(event, 'id', { decode: true }))
-	await authorize(event, chatAbilities().manageChat, chat)
 	const { duplicateOf, ...fields } = await readValidatedBody(event, bodySchema)
 
+	const [source, laneFields, enabled, [last]] = await Promise.all([
+		duplicateOf ? findChatModel(db, chat.id, duplicateOf) : undefined,
+		newLaneValues(db, user.id, fields),
+		countEnabledLanes(db, chat.id),
+		db.select({ position: max(schema.chatModel.position) }).from(schema.chatModel).where(eq(schema.chatModel.chatId, chat.id)),
+	])
+	if (duplicateOf && !source) throw createError({ status: 404, statusText: 'Model not found in this chat' })
 	let copied: { enabled?: boolean } = {}
-	if (duplicateOf) {
-		const source = await findChatModel(db, chat!.id, duplicateOf)
-		if (!source) throw createError({ status: 404, statusText: 'Model not found in this chat' })
+	if (source) {
 		const { id: _, position: __, ...rest } = source
 		copied = rest
 	}
-	const values = { ...copied, ...await newLaneValues(db, user.id, fields) }
-	if (values.enabled ?? true) await assertLaneLimit(db, await countEnabledLanes(db, chat!.id) + 1)
-	const [last] = await db.select({ position: max(schema.chatModel.position) }).from(schema.chatModel).where(eq(schema.chatModel.chatId, chat!.id))
+	const values = { ...copied, ...laneFields }
+	if (values.enabled ?? true) await assertLaneLimit(db, enabled + 1)
 	const [lane] = await db.insert(schema.chatModel).values({
 		...values,
-		chatId: chat!.id,
+		chatId: chat.id,
 		position: (last?.position ?? -1) + 1,
 	}).returning()
 	const { chatId: _, createdAt: __, ...view } = lane!

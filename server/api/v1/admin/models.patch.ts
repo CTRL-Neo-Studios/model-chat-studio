@@ -3,6 +3,7 @@ import { db, schema } from 'hub:db'
 import { z } from 'zod'
 import { adminAbilities } from '#shared/abilities/adminAbilities'
 import { authorize } from '#server/utils/core/authorize'
+import { setModelSetting } from '#server/utils/core/settings'
 
 const price = z.number().nonnegative().nullable()
 
@@ -19,9 +20,5 @@ const bodySchema = z.object({
 /** Allowlist membership and price override (USD per 1M tokens) for one model. */
 export default defineEventHandler(async (event) => {
 	await authorize(event, adminAbilities().manageSettings)
-	const { platform, modelId, ...fields } = await readValidatedBody(event, bodySchema)
-	const [row] = await db.insert(schema.modelSetting).values({ platform, modelId, ...fields })
-		.onConflictDoUpdate({ target: [schema.modelSetting.platform, schema.modelSetting.modelId], set: fields })
-		.returning()
-	return row
+	return await setModelSetting(db, await readValidatedBody(event, bodySchema))
 })

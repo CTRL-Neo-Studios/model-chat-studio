@@ -1,17 +1,16 @@
-import { createError, defineEventHandler, getRouterParam, readValidatedBody } from 'nuxt/server'
+import { createError, defineEventHandler, readValidatedBody } from 'nuxt/server'
 import { convertToModelMessages, createUIMessageStreamResponse, generateId, generateText, isStepCount, smoothStream, streamText, toUIMessageStream, type TextStreamPart, type ToolSet, type UIMessage } from 'ai'
 import { db, schema } from 'hub:db'
 import { and, eq, isNull } from 'drizzle-orm'
-import { chatAbilities } from '#shared/abilities/chatAbilities'
 import type { MessageMetadata } from '#shared/utils/chat'
 import { chartTool } from '#shared/utils/tools/chart'
 import { userPreferencesSchema } from '#shared/utils/preferences'
 import { DEFAULT_INSTRUCTIONS } from '#shared/utils/instructions'
-import { authorize } from '#server/utils/core/authorize'
-import { getSetting } from '#server/utils/core/settings'
+import { getInstanceSettings } from '#server/utils/core/settings'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { assertRateLimit } from '#server/utils/core/rateLimit'
-import { answerAttempt, applyTurnTrigger, assertWithinBudget, findChat, listChatMessages, saveAnswer, turnRequestSchema } from '#server/utils/chat/turns'
+import { requireChat } from '#server/utils/chat/access'
+import { answerAttempt, applyTurnTrigger, assertWithinBudget, listChatMessages, monthlyBudgetStatus, saveAnswer, turnRequestSchema } from '#server/utils/chat/turns'
 import { listChatModels } from '#server/utils/chat/lanes'
 import { resolveAttachments } from '#server/utils/chat/files'
 import { getCatalog, getEndpoints, getPriceOverride, useInference } from '#server/utils/inference'
@@ -40,25 +39,24 @@ function fallbackTitle(text: string): string {
  * never the history; the lane sees its own thread.
  */
 export default defineEventHandler(async (event) => {
+	// Reads run in a few parallel groups, each one database round trip, before the model is called.
+	const [chat, { values: settings }] = await Promise.all([requireChat(event, 'manageChat'), getInstanceSettings(db)])
 	const user = await useServerAuth().requireUser(event)
-	const chat = await findChat(db, getRouterParam(event, 'id', { decode: true }))
-	await authorize(event, chatAbilities().manageChat, chat)
 	const request = await readValidatedBody(event, turnRequestSchema)
 	// Each answer costs money; a stuck client or script should not be able to run up the bill.
 	assertRateLimit(`turn:${user.id}`, 20, 60_000, 'messages')
-	const chatId = chat!.id
+	const chatId = chat.id
 
 	const startedAt = Date.now()
-	const inference = await useInference(db, user.id)
+	const [inference, lanes, budget] = await Promise.all([useInference(db, user.id), listChatModels(db, chatId), monthlyBudgetStatus(db, user)])
 	if (!inference) throw createError({ status: 503, statusText: 'No model platform is configured yet. An admin can set one up in the settings.' })
 	const { platform, apiKey, byok, config } = inference
 
-	const lanes = await listChatModels(db, chatId)
 	const lane = lanes.find(lane => lane.id === request.chatModelId)
 	if (!lane) throw createError({ status: 404, statusText: 'Model not found in this chat' })
 	if (!lane.enabled) throw createError({ status: 400, statusText: 'This model is turned off in this chat' })
 	// A limit lowered after the lanes were turned on: only the first ones answer.
-	const maxChatModels = await getSetting(db, 'maxChatModels')
+	const { maxChatModels, maxRegenerations, maxRetries, safetyCheck } = settings
 	if (lanes.filter(entry => entry.enabled).findIndex(entry => entry.id === lane.id) >= maxChatModels) {
 		throw createError({ status: 400, statusText: `Only the first ${maxChatModels} models in a chat answer. Turn one off first.` })
 	}
@@ -79,23 +77,24 @@ export default defineEventHandler(async (event) => {
 	const levels = model.reasoning ? [...model.reasoningLevels, 'none', 'on'] : []
 	const reasoningLevel = chosen && params.reasoningLevel && levels.includes(params.reasoningLevel) ? params.reasoningLevel : undefined
 
-	await assertWithinBudget(db, user, byok)
+	assertWithinBudget(budget, byok)
 
 	const parentId = await applyTurnTrigger(db, chatId, request)
+	const [previousAttempt, thread] = await Promise.all([
+		answerAttempt(db, lane.id, parentId),
+		listChatMessages(db, chatId, lane.id) as Promise<UIMessage<MessageMetadata>[]>,
+	])
 	// Each regenerate is one more attempt at the lane's answer to this message; past the admin's cap it is refused.
-	const attempt = await answerAttempt(db, lane.id, parentId) + 1
-	const maxRegenerations = await getSetting(db, 'maxRegenerations')
+	const attempt = previousAttempt + 1
 	if (attempt > maxRegenerations + 1) {
 		throw createError({ status: 429, statusText: `This answer was regenerated ${maxRegenerations === 1 ? 'once' : `${maxRegenerations} times`}, the most allowed.` })
 	}
 	// The lane's thread up to the message being answered: a regenerated answer does not see what came after.
-	const thread = await listChatMessages(db, chatId, lane.id) as UIMessage<MessageMetadata>[]
 	const history = thread.slice(0, thread.findIndex(message => message.id === parentId) + 1)
 	const firstText = history.find(message => message.role === 'user')?.parts.map(part => part.type === 'text' ? part.text : '').join(' ') ?? ''
 
-	const safetyCheck = await getSetting(db, 'safetyCheck')
 	// The first enabled lane names the chat, so a chat answered by several lanes is named once.
-	const firstTurn = !chat!.title && lanes.find(lane => lane.enabled)?.id === lane.id
+	const firstTurn = !chat.title && lanes.find(lane => lane.enabled)?.id === lane.id
 	/** Appends one row to the spend ledger and returns the usage. */
 	const recordUsage = async (kind: 'chat' | 'title', modelId: string, steps: FinishedStep[], price: Pricing | null = null) => {
 		const usage = platform.usage({ model: modelId, steps, price })
@@ -121,7 +120,7 @@ export default defineEventHandler(async (event) => {
 			})
 		: Promise.resolve(undefined)
 
-	const webSearch = !!chat!.settings.webSearch && model.webSearch
+	const webSearch = !!chat.settings.webSearch && model.webSearch
 	const prepared = platform.prepare({
 		...params, apiKey, model: model.id, providers, reasoningLevel, webSearch,
 		userId: user.id, firstTurn, safetyCheck,
@@ -141,7 +140,7 @@ export default defineEventHandler(async (event) => {
 		messages: await convertToModelMessages(modelHistory, { tools }),
 		stopWhen: isStepCount(5),
 		// Retries rate limits and server errors until the stream starts.
-		maxRetries: await getSetting(db, 'maxRetries'),
+		maxRetries,
 		abortSignal: event.req.signal,
 		experimental_transform: smoothStream(),
 	})
