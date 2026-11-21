@@ -15,6 +15,7 @@ import {
 import {relations} from "drizzle-orm";
 import type {UIMessage} from "ai";
 import type {ChatSettings, MessageMetadata, ModelParams} from "../../shared/utils/chat";
+import type {UserPreferences} from "../../shared/utils/preferences";
 
 const createdAt = timestamp({ withTimezone: true }).defaultNow().notNull()
 
@@ -48,6 +49,8 @@ export const user = pgTable("user", {
 	banExpires: timestamp({ withTimezone: true }),
 	/** `null` falls back to the instance default. */
 	monthlyBudgetUsd: usd(),
+	/** Read through `userPreferencesSchema`, which fills in defaults. */
+	preferences: jsonb().$type<Partial<UserPreferences>>().notNull().default({}),
 
 	...createdUpdatedAtColumns
 });

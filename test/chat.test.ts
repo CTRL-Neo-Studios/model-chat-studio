@@ -96,6 +96,18 @@ test('regenerating answers the question again; the new answer replaces only that
 	expect(await applyTurnTrigger(db, chatId, regenerate())).toBe('u2')
 })
 
+test('a stopped answer can leave the earlier answer in place; a first answer is saved either way', async () => {
+	const save = (id: string, parentId: string) => saveAnswer(db, { id, chatId, parentId, chatModelId: laneA, parts: [{ type: 'text', text: id }], metadata: { platform: 'deepseek', model: 'm' } }, true)
+	await applyTurnTrigger(db, chatId, say('u1'))
+	await answer('a1', 'u1')
+	expect(await save('a1x', 'u1')).toBe(false)
+	expect(await ids()).toEqual(['u1', 'a1'])
+
+	await applyTurnTrigger(db, chatId, say('u2'))
+	expect(await save('a2', 'u2')).toBe(true)
+	expect(await ids()).toEqual(['u1', 'a1', 'u2', 'a2'])
+})
+
 test('a regenerate that does not fit is refused', async () => {
 	await expect(applyTurnTrigger(db, chatId, regenerate())).rejects.toMatchObject({ status: 400 })
 	await applyTurnTrigger(db, chatId, say('u1'))

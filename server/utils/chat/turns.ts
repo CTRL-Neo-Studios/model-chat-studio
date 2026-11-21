@@ -167,15 +167,21 @@ export async function applyTurnTrigger(db: Db, chatId: string, request: TurnRequ
 	})
 }
 
-/** Saves a lane's answer to a user message, replacing the lane's earlier answer to it, if any. */
-export async function saveAnswer(db: Db, answer: { id: string, chatId: string, parentId: string, chatModelId: string, parts: UIMessage['parts'], metadata: MessageMetadata }) {
-	await db.transaction(async (tx) => {
-		await tx.delete(tables.message).where(and(
+/**
+ * Saves a lane's answer to a user message, replacing the lane's earlier answer to it, if any. With
+ * `keepPrevious`, an earlier answer stays and the new one is dropped. Returns whether it was saved.
+ */
+export async function saveAnswer(db: Db, answer: { id: string, chatId: string, parentId: string, chatModelId: string, parts: UIMessage['parts'], metadata: MessageMetadata }, keepPrevious = false) {
+	return await db.transaction(async (tx) => {
+		const previous = and(
 			eq(tables.message.role, 'assistant'),
 			eq(tables.message.parentId, answer.parentId),
 			eq(tables.message.chatModelId, answer.chatModelId),
-		))
+		)
+		if (keepPrevious && (await tx.select({ id: tables.message.id }).from(tables.message).where(previous).limit(1)).length) return false
+		await tx.delete(tables.message).where(previous)
 		await tx.insert(tables.message).values({ ...answer, role: 'assistant' })
+		return true
 	})
 }
 

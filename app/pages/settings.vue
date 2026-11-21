@@ -31,6 +31,15 @@ async function saveKey(id: 'openrouter' | 'deepseek') {
 async function removeKey(id: 'openrouter' | 'deepseek') {
 	if (await act(`/api/v1/me/api-key?platform=${id}`, { method: 'DELETE', success: 'Key removed' })) await refreshMe()
 }
+
+const stoppedRegenerateItems = [
+	{ label: 'Keep the previous answer', value: 'keep-previous', description: 'Stopping a regenerated answer cancels it.' },
+	{ label: 'Keep what was generated', value: 'keep-partial', description: 'The unfinished answer replaces the previous one.' },
+]
+
+async function setStoppedRegenerate(value: string) {
+	if (await act('/api/v1/me/preferences', { method: 'PATCH', body: { stoppedRegenerate: value }, success: 'Saved' })) await refreshMe()
+}
 </script>
 
 <template>
@@ -81,6 +90,15 @@ async function removeKey(id: 'openrouter' | 'deepseek') {
 							</div>
 						</div>
 					</div>
+				</UPageCard>
+
+				<UPageCard title="Chat" description="When you stop an answer that is being regenerated." variant="subtle">
+					<URadioGroup
+						v-if="me"
+						:model-value="me.preferences.stoppedRegenerate"
+						:items="stoppedRegenerateItems"
+						@update:model-value="setStoppedRegenerate"
+					/>
 				</UPageCard>
 			</div>
 		</template>

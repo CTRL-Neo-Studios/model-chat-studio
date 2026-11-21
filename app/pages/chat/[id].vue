@@ -26,6 +26,9 @@ const { data: votes } = await useLazyFetch(`/api/v1/chats/${chatId}/votes`, {
 	default: () => [],
 })
 
+// The member's preferences; until they load, the server's defaults apply.
+const { data: me } = await useLazyFetch('/api/v1/users/me', { immediate: isOwner.value })
+
 await useModels().ready
 const { lane, settings, laneId, flush } = useChatSettings(data.value ?? undefined)
 
@@ -102,7 +105,8 @@ async function regenerateAnswer(messageId?: string) {
 	const question = list[questionIndex]
 	if (!question) return
 	// One lane: a question has at most one answer, right after it.
-	let replacing = list[questionIndex + 1]?.role === 'assistant' ? list[questionIndex + 1]!.id : undefined
+	const previous = list[questionIndex + 1]?.role === 'assistant' ? list[questionIndex + 1] : undefined
+	let replacing = previous?.id
 	const controller = new AbortController()
 	regenerating.value = { id: replacing, controller }
 	try {
@@ -128,6 +132,10 @@ async function regenerateAnswer(messageId?: string) {
 		if (!controller.signal.aborted) toast.add({ description: describeError(error as Error), icon: 'i-lucide-alert-circle', color: 'error', duration: 0 })
 	}
 	finally {
+		// The server keeps the answer that was being replaced when this one is stopped, if the member chose that.
+		if (controller.signal.aborted && previous && (me.value?.preferences.stoppedRegenerate ?? 'keep-previous') === 'keep-previous') {
+			messages.value = messages.value.map(message => message.id === replacing ? previous : message)
+		}
 		regenerating.value = null
 	}
 }

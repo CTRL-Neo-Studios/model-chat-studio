@@ -5,6 +5,7 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { chatAbilities } from '#shared/abilities/chatAbilities'
 import type { MessageMetadata } from '#shared/utils/chat'
 import { chartTool } from '#shared/utils/tools/chart'
+import { userPreferencesSchema } from '#shared/utils/preferences'
 import { authorize } from '#server/utils/core/authorize'
 import { getSetting } from '#server/utils/core/settings'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
@@ -166,13 +167,15 @@ export default defineEventHandler(async (event) => {
 				return 'The model could not answer. Try again.'
 			},
 			// Runs before the response closes, so a client that refreshes on finish sees the title.
-			onEnd: async ({ responseMessage, finishReason }) => {
+			onEnd: async ({ responseMessage, finishReason, isAborted }) => {
 				try {
 					const usage = await recordUsage('chat', model.id, steps, price)
 					const stored = metadata(finishReason)
 					const parts = stored.refused ? [{ type: 'text' as const, text: REFUSAL }] : responseMessage.parts
+					// A stopped answer replaces the lane's earlier one unless the member chose to keep the earlier one.
+					const keepPrevious = isAborted && userPreferencesSchema.parse(user.preferences).stoppedRegenerate === 'keep-previous'
 					if (parts.length) {
-						await saveAnswer(db, { id: responseMessage.id, chatId, parentId, chatModelId: lane.id, parts, metadata: stored })
+						await saveAnswer(db, { id: responseMessage.id, chatId, parentId, chatModelId: lane.id, parts, metadata: stored }, keepPrevious)
 					}
 					if (firstTurn) {
 						const title = (await titlePromise) ?? usage.title ?? fallbackTitle(firstText)
