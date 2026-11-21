@@ -33,9 +33,7 @@ watch([recording, transcribing], ([isRecording, isTranscribing]) => {
 })
 
 function fail(cause: unknown) {
-	const description = typeof cause === 'object' && cause !== null && 'data' in cause && typeof cause.data === 'object' && cause.data !== null && 'message' in cause.data
-		? String(cause.data.message)
-		: cause instanceof Error ? cause.message : String(cause)
+	const description = serverMessage(cause) ?? (cause instanceof Error ? cause.message : String(cause))
 	toast.add({ title: 'Dictation failed', description, icon: 'i-lucide-alert-circle', color: 'error' })
 }
 

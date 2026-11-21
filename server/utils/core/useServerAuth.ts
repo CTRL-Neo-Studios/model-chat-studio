@@ -48,7 +48,11 @@ export function useServerAuth() {
 	) {
 		const user = await getDbUserFromSession(event);
 
-		// Without options this still rejects a banned user.
+		// A ban ends the session at the next request, so the app sends them to sign-in, which explains it.
+		if (user && !satisfies(user)) {
+			await clearUserSession(event);
+			throw createError({ status: 403, statusText: "This account is banned" });
+		}
 		if (!user || !satisfies(user, opts)) {
 			throw createError({ status: 403, statusText: "Unauthorized" });
 		}

@@ -5,7 +5,7 @@ import { adminAbilities } from '#shared/abilities/adminAbilities'
 import { authorize } from '#server/utils/core/authorize'
 import { sealSecret } from '#server/utils/core/secrets'
 import { adminSettingsView, getSetting, setSetting, type InferencePlatformId, type PlatformConfig } from '#server/utils/core/settings'
-import { platformAdapters } from '#server/utils/inference'
+import { platformAdapters, platformCapabilities } from '#server/utils/inference'
 
 // For each field: absent leaves it alone, `null` clears it.
 const platformPatch = z.object({
@@ -59,5 +59,5 @@ export default defineEventHandler(async (event) => {
 		}
 	})
 
-	return await adminSettingsView(db)
+	return { ...await adminSettingsView(db), capabilities: platformCapabilities }
 })

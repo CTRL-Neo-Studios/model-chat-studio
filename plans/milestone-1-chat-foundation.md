@@ -350,6 +350,7 @@ Fixes to rules that exist today:
 - Done in phase 2: an expired ban no longer counts. A new ban also clears any old expiry; before, a ban without an expiry kept the previous one and could be void from the start.
 - Done in phase 2: `app/plugins/authorization-resolver.ts` reads `useUserSession().user`.
 - Done in phase 4: `requireUser` rejects a banned user even without role options. Before, only routes that went through an ability did, so a member banned mid-session could still list models or manage their API key.
+- Done in phase 8: that rejection also clears the session, so the next page load lands on `/signin`.
 
 Known ceilings:
 
@@ -387,9 +388,12 @@ Done in phase 6, except where noted:
 - Attachment controls follow `inputModalities` in phase 7.
 - Reply footer: model name, provider, tokens in and out, reasoning tokens, cost; cached tokens in a tooltip. An answer with `metadata.refused` shows a "withheld" notice instead of its parts.
 - `/signin` with the GitHub button and `/invite/[code]` (done in phase 2).
-- `/settings`: month usage against budget, personal API key (phase 8).
-- `/admin/users`, `/admin/invites`, `/admin/models`, `/admin/settings` (phase 8).
-- `/admin/settings` holds the signup mode, the default budget, the active inference platform, and for each platform its API key and default, title and speech-to-text models.
+- `/settings` (phase 8): this month's spend on the instance key against the budget (the month named in UTC, as budgets run), and a personal key per platform, marked when it belongs to the active one.
+- `/admin/users`, `/admin/invites`, `/admin/models`, `/admin/settings` (phase 8), under one `AdminPanel` with tabs. Moderators see only Users, and only ban and unban on lower roles; pages declare `definePageMeta({ minRole })`, which `auth.global.ts` checks (cosmetic: the API decides).
+  - Users: search, role and ban badges, budget; actions per row by the role rules (ban with reason and optional days, unban, budget, make or remove moderator, delete).
+  - Invites: uses and expiry, the link shown once with a copy button, status (active, expired, used up, revoked), revoke.
+  - Models: the active platform's full catalog with an "allowed" switch per model, a note on whether the allowlist is on, search, and (DeepSeek only, since OpenRouter reports costs) price overrides. Shows the first 100 matches.
+- `/admin/settings` holds the signup mode, the default budget, the active inference platform, and for each platform its API key (checked before saving), default model and, where the platform needs them, title and speech-to-text models; model fields suggest the active platform's catalog. The DeepSeek card holds the safety check switch. `GET /admin/settings` reports each platform's `capabilities` for this. The home page notice links admins here.
 
 The safety check switch on `/admin/settings` appears only when `capabilities.safetyCheck` is true. It is off by default and carries this warning:
 
@@ -421,7 +425,7 @@ Phase P is done. Phases 2 and 3 are independent once phase 1 is done, and phases
 | 5 | Frontend port | Done. Section 7 "Ported" on the new API | create, stream, edit, regenerate, vote, rename, delete and link sharing checked in the browser against a fixture upstream (OpenRouter-shaped, slowed to stream word by word), including a chart tool turn, a guest on a shared and on a private chat, and the 402 budget toast |
 | 6 | Extended chat UI | Done. Model and provider pickers, `PromptMenu` with web search and reasoning, settings panel, reply footer and refusal notice, share dialog | checked in the browser against a fixture OpenRouter (catalog, endpoints, answers naming the provider): switching from Baidu to Together changed `metadata.provider` on the next reply, and the request carried the chosen model, providers, fallback, effort, temperature, web search and system prompt; a listed person read the private chat without send or share controls and a stranger got 404; a `content_filter` finish showed the notice. The DeepSeek slider lock is not exercised (no DeepSeek fixture in the browser) |
 | 7 | Files and dictation | Done. File routes on `hub:blob`, attachments by media type, DeepSeek PDF upload flow, WAV dictation; file parts in `userMessageSchema`; deleting blobs, remote files and file rows on chat delete and on truncation | checked against fixture platforms that report what they received: on OpenRouter an image and a PDF arrived inline (with the parser plugin) and a CSV as text; on DeepSeek the image inline and the PDF uploaded (`purpose` first) and sent as `file_id`, uploaded once across a regenerate and deleted remotely with the chat; dictation in Chromium, with a `say` recording standing in for the microphone, sent a 4.1 s 16 kHz WAV and put the transcript in the prompt on both platforms. Live on both platforms (`scripts/attachments-smoke.ts`): an image and a PDF reached the model and a spoken sentence came back word for word (section 10) |
-| 8 | Admin and settings | Admin pages, `/settings`, the platform switch and keys, the safety check switch | an admin can invite, ban, set a budget, disable a model, switch signup mode and switch platform from the UI |
+| 8 | Admin and settings | Done. Admin pages, `/settings`, the platform switch and keys, the safety check switch | checked in Chromium against fixture platforms, from the home notice onward: a rejected and then an accepted OpenRouter key; platform switched to OpenRouter and later to DeepSeek (a chat then answered with DeepSeek's default model); default model picked from the catalog; signup set to open; default budget $5; two models allowed and one disallowed again, with the members' picker following; an invite created, its link leading to GitHub sign-in, revoked and then refused; a member given a $2 budget and made moderator, another banned (signed out on the next load); the moderator saw only Users and only Unban; the safety check saved with its warning; a member's own key saved |
 | 9 | Hardening | Rate limits on stream and transcription, CSP review, full smoke run per platform | smoke run passes on OpenRouter and on DeepSeek |
 
 Phase 0 dependencies:

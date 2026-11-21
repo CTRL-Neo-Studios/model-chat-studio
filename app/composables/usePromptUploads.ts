@@ -10,12 +10,6 @@ export interface PromptUpload {
 	error?: string
 }
 
-/** The message the server sent with an error response, if any. */
-function serverMessage(error: unknown): string | undefined {
-	const data = typeof error === 'object' && error !== null && 'data' in error ? error.data : undefined
-	return typeof data === 'object' && data !== null && 'message' in data && typeof data.message === 'string' ? data.message : undefined
-}
-
 /**
  * Attachments in the prompt: each file uploads as soon as it is added, and one removed from the
  * prompt before sending is deleted on the server. Once sent, files belong to their message.

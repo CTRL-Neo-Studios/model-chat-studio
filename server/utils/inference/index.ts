@@ -12,6 +12,11 @@ export const platformAdapters: Record<InferencePlatformId, InferencePlatform> = 
 	deepseek: deepseekPlatform,
 }
 
+/** What each platform supports, for the admin settings page. */
+export const platformCapabilities = Object.fromEntries(
+	Object.entries(platformAdapters).map(([id, adapter]) => [id, adapter.capabilities]),
+) as Record<InferencePlatformId, InferencePlatform['capabilities']>
+
 export interface ActiveInference {
 	platform: InferencePlatform
 	apiKey: string

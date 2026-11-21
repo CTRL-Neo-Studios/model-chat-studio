@@ -78,6 +78,7 @@ const quickChats = [
 						icon="i-lucide-plug-zap"
 						title="Chat is not set up yet"
 						:description="isAdmin ? 'Choose a model platform and add its API key in the admin settings.' : 'An admin needs to choose a model platform first.'"
+						:actions="isAdmin ? [{ label: 'Open settings', to: '/admin/settings', color: 'warning', variant: 'solid' }] : undefined"
 					/>
 
 					<ChatPrompt

@@ -20,6 +20,12 @@ const items = computed<DropdownMenuItem[][]>(() => ([[{
 		alt: user.value?.name || user.value?.username,
 	},
 }], [{
+	label: 'Settings',
+	icon: 'i-lucide-user-cog',
+	to: '/settings',
+}, ...(getRoleLevel(user.value?.role) >= getRoleLevel('moderator')
+	? [{ label: 'Admin', icon: 'i-lucide-shield', to: '/admin/users' }]
+	: [])], [{
 	label: 'Theme',
 	icon: 'i-lucide-palette',
 	children: [{
