@@ -1,10 +1,11 @@
 import { beforeEach, expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
+import type { UIMessage } from 'ai'
 import * as schema from '../server/db/schema'
 import { chatAbilities, type ChatAccess } from '../shared/abilities/chatAbilities'
 import { authorize } from '../server/utils/core/authorize'
 import { setSetting } from '../server/utils/core/settings'
-import { applyTurnTrigger, listChatMessages, monthlyBudgetStatus, type TurnRequest } from '../server/utils/chat/turns'
+import { applyTurnTrigger, deleteMessage, editMessage, listChatMessages, monthlyBudgetStatus, saveAnswer, type TurnRequest } from '../server/utils/chat/turns'
 import { createTestDb, type TestDb } from './db'
 
 let db: TestDb
@@ -27,8 +28,9 @@ beforeEach(async () => {
 const say = (id: string, text = id, chatModelId = laneA): TurnRequest => ({ trigger: 'submit-message', message: { id, role: 'user', parts: [{ type: 'text', text }] }, chatModelId })
 const regenerate = (messageId?: string, chatModelId = laneA): TurnRequest => ({ trigger: 'regenerate-message', messageId, chatModelId })
 
-async function answer(id: string, parentId?: string, chatModelId = laneA) {
-	await db.insert(schema.message).values({ id, chatId, parentId, chatModelId, role: 'assistant', parts: [{ type: 'text', text: id }] })
+/** Saves an answer the way the turn route does. */
+async function answer(id: string, parentId: string, chatModelId = laneA, parts: UIMessage['parts'] = [{ type: 'text', text: id }]) {
+	await saveAnswer(db, { id, chatId, parentId, chatModelId, parts, metadata: { platform: 'deepseek', model: 'm' } })
 }
 
 async function ids(chatModelId?: string) {
@@ -43,90 +45,63 @@ test('messages come back in the order they were saved, whatever their ids or tim
 	expect(await ids()).toEqual(['z', 'a', 'm'])
 })
 
-test('a new message is saved and answered; it replies to the previous message', async () => {
-	expect(await applyTurnTrigger(db, chatId, say('u1'))).toMatchObject({ parentId: 'u1' })
-	await answer('a1')
-	expect(await applyTurnTrigger(db, chatId, say('u2'))).toMatchObject({ parentId: 'u2' })
+test('a new message is saved and answered; it follows the previous message', async () => {
+	expect(await applyTurnTrigger(db, chatId, say('u1'))).toBe('u1')
+	await answer('a1', 'u1')
+	expect(await applyTurnTrigger(db, chatId, say('u2'))).toBe('u2')
 	const [saved] = await db.select().from(schema.message).where(eq(schema.message.id, 'u2'))
 	expect(saved?.parentId).toBe('a1')
 	expect(await ids()).toEqual(['u1', 'a1', 'u2'])
-})
-
-test('editing a message replaces its text and drops everything after it', async () => {
-	await applyTurnTrigger(db, chatId, say('u1'))
-	await answer('a1')
-	await applyTurnTrigger(db, chatId, say('u2'))
-	await answer('a2')
-
-	expect(await applyTurnTrigger(db, chatId, say('u1', 'edited'))).toMatchObject({ parentId: 'u1' })
-	const messages = await listChatMessages(db, chatId)
-	expect(messages.map(message => message.id)).toEqual(['u1'])
-	expect(messages[0]!.parts).toEqual([{ type: 'text', text: 'edited' }])
-})
-
-test('regenerating replaces the target answer and everything after it', async () => {
-	await applyTurnTrigger(db, chatId, say('u1'))
-	await answer('a1')
-	await applyTurnTrigger(db, chatId, say('u2'))
-	await answer('a2')
-
-	expect(await applyTurnTrigger(db, chatId, regenerate('a1'))).toMatchObject({ parentId: 'u1' })
-	expect(await ids()).toEqual(['u1'])
-})
-
-test('regenerating from a user message keeps it; without a target, the last answer is replaced', async () => {
-	await applyTurnTrigger(db, chatId, say('u1'))
-	await answer('a1')
-	expect(await applyTurnTrigger(db, chatId, regenerate('u1'))).toMatchObject({ parentId: 'u1' })
-	expect(await ids()).toEqual(['u1'])
-
-	await answer('a1b')
-	expect(await applyTurnTrigger(db, chatId, regenerate())).toMatchObject({ parentId: 'u1' })
-	expect(await ids()).toEqual(['u1'])
-	// The first answer of a new chat: the last message is the user's, nothing is dropped.
-	expect(await applyTurnTrigger(db, chatId, regenerate())).toMatchObject({ parentId: 'u1' })
-	expect(await ids()).toEqual(['u1'])
-})
-
-test('a trigger that does not fit changes nothing', async () => {
-	await expect(applyTurnTrigger(db, chatId, regenerate())).rejects.toMatchObject({ status: 400 })
-	await applyTurnTrigger(db, chatId, say('u1'))
-	await answer('a1')
-
-	await expect(applyTurnTrigger(db, chatId, say('a1'))).rejects.toMatchObject({ status: 400 })
-	await expect(applyTurnTrigger(db, chatId, regenerate('missing'))).rejects.toMatchObject({ status: 404 })
-	// A message id from someone else's chat is not taken over.
-	const [other] = await db.insert(schema.chat).values({ userId }).returning()
-	await expect(applyTurnTrigger(db, other!.id, say('u1'))).rejects.toMatchObject({ status: 409 })
-	expect(await ids()).toEqual(['u1', 'a1'])
-	expect(await listChatMessages(db, other!.id)).toEqual([])
 })
 
 test('another lane sending the same message joins it: nothing is saved twice or dropped', async () => {
 	await applyTurnTrigger(db, chatId, say('u1'))
 	await answer('a1', 'u1', laneA)
 
-	expect(await applyTurnTrigger(db, chatId, say('u1', 'u1', laneB))).toEqual({ parentId: 'u1', removedFileIds: [] })
-	expect(await ids()).toEqual(['u1', 'a1'])
+	expect(await applyTurnTrigger(db, chatId, say('u1', 'u1', laneB))).toBe('u1')
 	// Again from lane B, before it has answered (a retry after a failed answer): still a join.
-	expect(await applyTurnTrigger(db, chatId, say('u1', 'u1', laneB))).toEqual({ parentId: 'u1', removedFileIds: [] })
+	expect(await applyTurnTrigger(db, chatId, say('u1', 'u1', laneB))).toBe('u1')
 	expect(await ids()).toEqual(['u1', 'a1'])
 })
 
-test('resending a message is an edit when its text changed, the lane already answered it, or a newer message exists', async () => {
+test('resending a message that is not a join is refused: it changed, the lane answered it, or a newer message exists', async () => {
 	await applyTurnTrigger(db, chatId, say('u1'))
 	await answer('a1', 'u1', laneA)
-	await applyTurnTrigger(db, chatId, say('u1', 'u1', laneA))
-	expect(await ids()).toEqual(['u1'])
-
-	await answer('a1', 'u1', laneA)
-	await applyTurnTrigger(db, chatId, say('u1', 'changed', laneB))
-	expect(await ids()).toEqual(['u1'])
-
-	await answer('a1', 'u1', laneA)
+	await expect(applyTurnTrigger(db, chatId, say('u1', 'u1', laneA))).rejects.toMatchObject({ status: 409 })
+	await expect(applyTurnTrigger(db, chatId, say('u1', 'changed', laneB))).rejects.toMatchObject({ status: 409 })
 	await applyTurnTrigger(db, chatId, say('u2'))
-	await applyTurnTrigger(db, chatId, say('u1', 'changed', laneB))
-	expect(await ids()).toEqual(['u1'])
+	await expect(applyTurnTrigger(db, chatId, say('u1', 'u1', laneB))).rejects.toMatchObject({ status: 409 })
+	// A message id from someone else's chat is not taken over.
+	const [other] = await db.insert(schema.chat).values({ userId }).returning()
+	await expect(applyTurnTrigger(db, other!.id, say('u1'))).rejects.toMatchObject({ status: 409 })
+	expect(await ids()).toEqual(['u1', 'a1', 'u2'])
+	expect(await listChatMessages(db, other!.id)).toEqual([])
+})
+
+test('regenerating answers the question again; the new answer replaces only that lane\'s answer, under its question', async () => {
+	await applyTurnTrigger(db, chatId, say('u1'))
+	await answer('a1', 'u1', laneA)
+	await answer('b1', 'u1', laneB)
+	await applyTurnTrigger(db, chatId, say('u2'))
+	await answer('a2', 'u2', laneA)
+
+	expect(await applyTurnTrigger(db, chatId, regenerate('a1'))).toBe('u1')
+	// Nothing is deleted until the new answer is saved, so a failed turn keeps the old one.
+	expect(await ids()).toEqual(['u1', 'a1', 'b1', 'u2', 'a2'])
+	await answer('a1x', 'u1', laneA)
+	expect(await ids()).toEqual(['u1', 'b1', 'a1x', 'u2', 'a2'])
+	expect(await ids(laneA)).toEqual(['u1', 'a1x', 'u2', 'a2'])
+
+	expect(await applyTurnTrigger(db, chatId, regenerate('u1', laneB))).toBe('u1')
+	expect(await applyTurnTrigger(db, chatId, regenerate())).toBe('u2')
+})
+
+test('a regenerate that does not fit is refused', async () => {
+	await expect(applyTurnTrigger(db, chatId, regenerate())).rejects.toMatchObject({ status: 400 })
+	await applyTurnTrigger(db, chatId, say('u1'))
+	await answer('b1', 'u1', laneB)
+	await expect(applyTurnTrigger(db, chatId, regenerate('b1', laneA))).rejects.toMatchObject({ status: 400 })
+	await expect(applyTurnTrigger(db, chatId, regenerate('missing'))).rejects.toMatchObject({ status: 404 })
 })
 
 test('a lane sees every user message and only its own answers; a lane added late sees questions without answers', async () => {
@@ -144,7 +119,59 @@ test('a lane sees every user message and only its own answers; a lane added late
 	expect(await ids(late!.id)).toEqual(['u1', 'u2'])
 })
 
-test('attachments link to their message once, only from the chat owner, and are reported when their message is dropped', async () => {
+test('editing a message changes only its text; with dropAfter its answers and the later turns go', async () => {
+	await applyTurnTrigger(db, chatId, say('u1'))
+	await answer('a1', 'u1')
+	await applyTurnTrigger(db, chatId, say('u2'))
+	await answer('a2', 'u2')
+	await applyTurnTrigger(db, chatId, say('u3'))
+	await answer('a3', 'u3')
+	// Regenerated last, so saved after everything else, but it answers u1.
+	await answer('a1x', 'u1')
+
+	const { message } = await editMessage(db, chatId, 'u2', { text: 'new' })
+	expect(message.parts).toEqual([{ type: 'text', text: 'new' }])
+	expect(await ids()).toEqual(['u1', 'a1x', 'u2', 'a2', 'u3', 'a3'])
+
+	await editMessage(db, chatId, 'u2', { text: 'again', dropAfter: true })
+	expect(await ids()).toEqual(['u1', 'a1x', 'u2'])
+})
+
+test('editing an answer replaces its text, keeps its other parts and marks it edited', async () => {
+	await applyTurnTrigger(db, chatId, say('u1'))
+	await answer('a1', 'u1', laneA, [
+		{ type: 'reasoning', text: 'thinking' },
+		{ type: 'text', text: 'old' },
+		{ type: 'source-url', sourceId: 's', url: 'https://example.com' },
+		{ type: 'text', text: 'more' },
+	])
+	const { message } = await editMessage(db, chatId, 'a1', { text: 'new' })
+	expect(message.parts).toEqual([
+		{ type: 'reasoning', text: 'thinking' },
+		{ type: 'text', text: 'new' },
+		{ type: 'source-url', sourceId: 's', url: 'https://example.com' },
+	])
+	expect(message.metadata).toMatchObject({ model: 'm', edited: true })
+	await expect(editMessage(db, chatId, 'a1', { text: 'x', dropAfter: true })).rejects.toMatchObject({ status: 400 })
+	await expect(editMessage(db, chatId, 'missing', { text: 'x' })).rejects.toMatchObject({ status: 404 })
+})
+
+test('deleting removes an answer alone, or a user message with its answers', async () => {
+	await applyTurnTrigger(db, chatId, say('u1'))
+	await answer('a1', 'u1', laneA)
+	await answer('b1', 'u1', laneB)
+	await applyTurnTrigger(db, chatId, say('u2'))
+	await answer('a2', 'u2', laneA)
+
+	expect((await deleteMessage(db, chatId, 'b1')).ids).toEqual(['b1'])
+	expect(await ids()).toEqual(['u1', 'a1', 'u2', 'a2'])
+	expect((await deleteMessage(db, chatId, 'u1')).ids).toEqual(['u1', 'a1'])
+	expect(await ids()).toEqual(['u2', 'a2'])
+	const [other] = await db.insert(schema.chat).values({ userId }).returning()
+	await expect(deleteMessage(db, other!.id, 'u2')).rejects.toMatchObject({ status: 404 })
+})
+
+test('attachments link to their message once, only from the chat owner, and are reported when their message is deleted', async () => {
 	const [stranger] = await db.insert(schema.user).values({ githubId: 2, username: 'u2' }).returning()
 	const upload = async (ownerId: string) => (await db.insert(schema.file).values({ ownerId, chatId, blobPath: 'x', mediaType: 'image/png', size: 1 }).returning())[0]!.id
 	const withFile = (id: string, fileId: string): TurnRequest => ({
@@ -155,7 +182,7 @@ test('attachments link to their message once, only from the chat owner, and are 
 	const mine = await upload(userId)
 	const theirs = await upload(stranger!.id)
 	await applyTurnTrigger(db, chatId, say('u0'))
-	await answer('a0')
+	await answer('a0', 'u0')
 
 	await expect(applyTurnTrigger(db, chatId, withFile('u1', theirs))).rejects.toMatchObject({ status: 400 })
 	expect(await ids()).toEqual(['u0', 'a0'])
@@ -163,13 +190,14 @@ test('attachments link to their message once, only from the chat owner, and are 
 	await applyTurnTrigger(db, chatId, withFile('u1', mine))
 	const [linked] = await db.select().from(schema.file).where(eq(schema.file.id, mine))
 	expect(linked?.messageId).toBe('u1')
-	await answer('a1')
+	await answer('a1', 'u1')
 	// Already part of u1, so another message cannot take it.
 	await expect(applyTurnTrigger(db, chatId, withFile('u2', mine))).rejects.toMatchObject({ status: 400 })
+	// The editor cannot show attachments.
+	await expect(editMessage(db, chatId, 'u1', { text: 'x' })).rejects.toMatchObject({ status: 400 })
 
-	expect(await applyTurnTrigger(db, chatId, regenerate('a1'))).toEqual({ parentId: 'u1', removedFileIds: [] })
-	// Editing u0 drops a0 and u1, and with it u1's attachment.
-	expect(await applyTurnTrigger(db, chatId, say('u0', 'edited'))).toEqual({ parentId: 'u0', removedFileIds: [mine] })
+	// Resending u0 drops u1, and with it u1's attachment.
+	expect((await editMessage(db, chatId, 'u0', { text: 'edited', dropAfter: true })).removedFileIds).toEqual([mine])
 })
 
 test('the budget counts this month on the instance key only; a member budget wins over the default', async () => {

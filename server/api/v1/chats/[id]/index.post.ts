@@ -9,9 +9,9 @@ import { authorize } from '#server/utils/core/authorize'
 import { getSetting } from '#server/utils/core/settings'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { assertRateLimit } from '#server/utils/core/rateLimit'
-import { applyTurnTrigger, assertWithinBudget, findChat, listChatMessages, turnRequestSchema } from '#server/utils/chat/turns'
+import { applyTurnTrigger, assertWithinBudget, findChat, listChatMessages, saveAnswer, turnRequestSchema } from '#server/utils/chat/turns'
 import { listChatModels } from '#server/utils/chat/lanes'
-import { deleteStoredFiles, resolveAttachments } from '#server/utils/chat/files'
+import { resolveAttachments } from '#server/utils/chat/files'
 import { getCatalog, getEndpoints, getPriceOverride, useInference } from '#server/utils/inference'
 import type { FinishedStep, Pricing } from '#server/utils/inference/types'
 
@@ -83,10 +83,10 @@ export default defineEventHandler(async (event) => {
 
 	await assertWithinBudget(db, user, byok)
 
-	const { parentId, removedFileIds } = await applyTurnTrigger(db, chatId, request)
-	// Attachments of the messages an edit or regenerate dropped.
-	await deleteStoredFiles(db, removedFileIds, inference)
-	const history = await listChatMessages(db, chatId, lane.id) as UIMessage<MessageMetadata>[]
+	const parentId = await applyTurnTrigger(db, chatId, request)
+	// The lane's thread up to the message being answered: a regenerated answer does not see what came after.
+	const thread = await listChatMessages(db, chatId, lane.id) as UIMessage<MessageMetadata>[]
+	const history = thread.slice(0, thread.findIndex(message => message.id === parentId) + 1)
 	const firstText = history.find(message => message.role === 'user')?.parts.map(part => part.type === 'text' ? part.text : '').join(' ') ?? ''
 
 	const safetyCheck = await getSetting(db, 'safetyCheck')
@@ -172,7 +172,7 @@ export default defineEventHandler(async (event) => {
 					const stored = metadata(finishReason)
 					const parts = stored.refused ? [{ type: 'text' as const, text: REFUSAL }] : responseMessage.parts
 					if (parts.length) {
-						await db.insert(schema.message).values({ id: responseMessage.id, chatId, parentId, chatModelId: lane.id, role: 'assistant', parts, metadata: stored })
+						await saveAnswer(db, { id: responseMessage.id, chatId, parentId, chatModelId: lane.id, parts, metadata: stored })
 					}
 					if (firstTurn) {
 						const title = (await titlePromise) ?? usage.title ?? fallbackTitle(firstText)

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useChat } from '@ai-sdk/vue'
-import { DefaultChatTransport } from 'ai'
+import { DefaultChatTransport, readUIMessageStream } from 'ai'
 import type { UIMessage } from 'ai'
+import { LazyModalConfirm } from '#components'
 
 // Readable by guests when link access is on; the server decides who sees what.
 definePageMeta({ auth: false })
@@ -42,47 +43,98 @@ function describeError(error: Error): string {
 	}
 }
 
-const { messages, status, error, sendMessage, regenerate, stop } = useChat({
+// The server keeps the history: send only the new message, or what to regenerate, and the lane that answers.
+const transport = new DefaultChatTransport({
+	api: `/api/v1/chats/${chatId}`,
+	headers: { [headerName]: csrf },
+	prepareSendMessagesRequest: ({ messages, trigger, messageId }) => ({
+		body: trigger === 'submit-message'
+			? { trigger, message: messages[messages.length - 1], chatModelId: laneId }
+			: { trigger, messageId, chatModelId: laneId },
+	}),
+})
+
+// The server names the chat at the end of the first answer.
+async function refreshTitle() {
+	if (title.value) return
+	await refreshNuxtData('chats')
+	const chats = useNuxtData<{ id: string, label: string }[]>('chats')
+	const label = chats.data.value?.find(chat => chat.id === chatId)?.label
+	if (label && label !== 'Untitled') title.value = label
+}
+
+const { messages, status, error, sendMessage, stop } = useChat({
 	id: chatId,
 	messages: data.value?.messages as UIMessage[] | undefined,
-	transport: new DefaultChatTransport({
-		api: `/api/v1/chats/${chatId}`,
-		headers: { [headerName]: csrf },
-		// The server keeps the history: send only the new message, or what to regenerate, and the lane that answers.
-		prepareSendMessagesRequest: ({ messages, trigger, messageId }) => ({
-			body: trigger === 'submit-message'
-				? { trigger, message: messages[messages.length - 1], chatModelId: laneId }
-				: { trigger, messageId, chatModelId: laneId },
-		}),
-	}),
-	async onFinish() {
-		// The server names the chat at the end of the first answer.
-		if (title.value) return
-		await refreshNuxtData('chats')
-		const chats = useNuxtData<{ id: string, label: string }[]>('chats')
-		const label = chats.data.value?.find(chat => chat.id === chatId)?.label
-		if (label && label !== 'Untitled') title.value = label
-	},
+	transport,
+	onFinish: refreshTitle,
 	onError(error) {
 		toast.add({ description: describeError(error), icon: 'i-lucide-alert-circle', color: 'error', duration: 0 })
 	},
 })
+
+/** The answer being regenerated in place, and how to stop it. */
+const regenerating = shallowRef<{ id?: string, controller: AbortController } | null>(null)
+const busy = computed(() => !!regenerating.value || status.value === 'submitted' || status.value === 'streaming')
 
 // Settings changed just before sending are saved first, so the turn uses them.
 async function handleSubmit(e: Event) {
 	e.preventDefault()
 	const text = input.value
 	const files = fileParts.value
-	if ((!text.trim() && !files.length) || uploading.value) return
+	if ((!text.trim() && !files.length) || uploading.value || busy.value) return
 	input.value = ''
 	clearFiles()
 	await flush()
 	sendMessage(text.trim() ? { text, files } : { files })
 }
 
+/**
+ * Answers a message again, in place: the question of `messageId` (an answer or a user message), or the
+ * newest user message. Later messages stay; `chat.regenerate()` would drop them on the client.
+ */
 async function regenerateAnswer(messageId?: string) {
+	if (busy.value) return
 	await flush()
-	regenerate(messageId ? { messageId } : undefined)
+	const list = messages.value
+	const target = messageId ? list.findIndex(message => message.id === messageId) : list.length - 1
+	const questionIndex = list.slice(0, target + 1).findLastIndex(message => message.role === 'user')
+	const question = list[questionIndex]
+	if (!question) return
+	// One lane: a question has at most one answer, right after it.
+	let replacing = list[questionIndex + 1]?.role === 'assistant' ? list[questionIndex + 1]!.id : undefined
+	const controller = new AbortController()
+	regenerating.value = { id: replacing, controller }
+	try {
+		const stream = await transport.sendMessages({
+			trigger: 'regenerate-message',
+			chatId,
+			messageId: messageId ?? question.id,
+			messages: list.slice(0, questionIndex + 1),
+			abortSignal: controller.signal,
+		})
+		for await (const answer of readUIMessageStream({ stream, terminateOnError: true })) {
+			const current = messages.value
+			const at = replacing ? current.findIndex(message => message.id === replacing) : -1
+			messages.value = at === -1
+				? current.toSpliced(current.findIndex(message => message.id === question.id) + 1, 0, answer)
+				: current.toSpliced(at, 1, answer)
+			replacing = answer.id
+			regenerating.value = { id: answer.id, controller }
+		}
+		await refreshTitle()
+	}
+	catch (error) {
+		if (!controller.signal.aborted) toast.add({ description: describeError(error as Error), icon: 'i-lucide-alert-circle', color: 'error', duration: 0 })
+	}
+	finally {
+		regenerating.value = null
+	}
+}
+
+function stopAnswer() {
+	if (regenerating.value) regenerating.value.controller.abort()
+	else stop()
 }
 
 const editingMessageId = ref<string | null>(null)
@@ -91,11 +143,40 @@ function startEdit(message: UIMessage) {
 	if (!editingMessageId.value) editingMessageId.value = message.id
 }
 
-// Sending a message under an existing id is an edit: the server replaces it and drops what followed.
-async function saveEdit(message: UIMessage, text: string) {
+/** Replaces a message's text. "Save and resend" also drops what followed and answers the message again. */
+async function saveEdit(message: UIMessage, text: string, resend: boolean) {
 	editingMessageId.value = null
-	await flush()
-	sendMessage({ text, messageId: message.id })
+	try {
+		const updated = await $fetch(`/api/v1/chats/${chatId}/messages/${message.id}`, {
+			method: 'PATCH',
+			headers: { [headerName]: csrf },
+			body: { text, dropAfter: resend || undefined },
+		})
+		const index = messages.value.findIndex(entry => entry.id === message.id)
+		const next = messages.value.map(entry => entry.id === message.id ? { ...entry, parts: updated.parts, metadata: updated.metadata ?? undefined } : entry)
+		messages.value = resend ? next.slice(0, index + 1) : next
+	}
+	catch (error) {
+		toast.add({ description: serverMessage(error) ?? 'Failed to save the message', icon: 'i-lucide-alert-circle', color: 'error' })
+		return
+	}
+	if (resend) await regenerateAnswer(message.id)
+}
+
+const deleteModal = useOverlay().create(LazyModalConfirm)
+
+async function deleteMessage(message: UIMessage) {
+	const confirmed = await deleteModal.open(message.role === 'user'
+		? { title: 'Delete message', description: 'This message and its answers will be deleted. This cannot be undone.', color: 'error' }
+		: { title: 'Delete response', description: 'This response will be deleted. This cannot be undone.', color: 'error' }).result
+	if (!confirmed) return
+	try {
+		const { ids } = await $fetch(`/api/v1/chats/${chatId}/messages/${message.id}`, { method: 'DELETE', headers: { [headerName]: csrf } })
+		messages.value = messages.value.filter(entry => !ids.includes(entry.id))
+	}
+	catch (error) {
+		toast.add({ description: serverMessage(error) ?? 'Failed to delete the message', icon: 'i-lucide-alert-circle', color: 'error' })
+	}
 }
 
 function getVote(messageId: string) {
@@ -126,7 +207,7 @@ async function vote(message: UIMessage, isUpvoted: boolean) {
 
 // A chat created on the home page arrives with only its first message.
 onMounted(() => {
-	if (isOwner.value && data.value?.messages.length === 1) regenerate()
+	if (isOwner.value && data.value?.messages.length === 1) regenerateAnswer()
 })
 </script>
 
@@ -188,7 +269,7 @@ onMounted(() => {
 						<template #content="{ message, streaming }">
 							<ChatMessageContent
 								:message="message"
-								:streaming="streaming"
+								:streaming="streaming || message.id === regenerating?.id"
 								:editing="isOwner && editingMessageId === message.id"
 								@save="saveEdit"
 								@cancel-edit="editingMessageId = null"
@@ -198,12 +279,13 @@ onMounted(() => {
 						<template v-if="isOwner" #actions="{ message }">
 							<ChatMessageActions
 								:message="message"
-								:streaming="status === 'streaming' && message.id === messages[messages.length - 1]?.id"
+								:streaming="(status === 'streaming' && message.id === messages[messages.length - 1]?.id) || message.id === regenerating?.id"
 								:editing="editingMessageId === message.id"
 								:vote="getVote(message.id)"
 								@vote="vote"
 								@edit="startEdit"
 								@regenerate="message => regenerateAnswer(message.id)"
+								@delete="deleteMessage"
 							/>
 						</template>
 
@@ -215,11 +297,11 @@ onMounted(() => {
 								v-model:files="promptFiles"
 								:uploads="uploads"
 								:uploading="uploading"
-								:status="status"
+								:status="regenerating ? 'streaming' : status"
 								:error="error"
 								class="[view-transition-name:chat-prompt] rounded-b-none backdrop-blur-sm"
 								@submit="handleSubmit"
-								@stop="stop()"
+								@stop="stopAnswer"
 								@reload="regenerateAnswer()"
 							/>
 						</template>

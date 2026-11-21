@@ -53,4 +53,6 @@ export interface MessageMetadata {
 	costUsd?: number | null
 	/** The safety check withheld the answer; the stored text is a notice. */
 	refused?: boolean
+	/** The answer's text was edited by hand. */
+	edited?: boolean
 }

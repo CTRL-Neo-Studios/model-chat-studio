@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { getToolName, isReasoningUIPart, isTextUIPart, isToolUIPart } from 'ai'
 import type { UIMessage } from 'ai'
-import { isPartStreaming } from '@nuxt/ui/utils/ai'
+import { getTextFromMessage, isPartStreaming } from '@nuxt/ui/utils/ai'
 import type { ChartUIToolInvocation } from '#shared/utils/tools/chart'
 import type { MessageMetadata } from '#shared/utils/chat'
 
@@ -14,7 +14,7 @@ const props = defineProps<{
 const metadata = computed(() => props.message.metadata as MessageMetadata | null | undefined)
 
 const emit = defineEmits<{
-	save: [message: UIMessage, text: string]
+	save: [message: UIMessage, text: string, resend: boolean]
 	cancelEdit: []
 }>()
 </script>
@@ -28,6 +28,14 @@ const emit = defineEmits<{
 		variant="subtle"
 		title="Answer withheld"
 		description="This answer was withheld by the content safety check."
+	/>
+	<!-- An answer's text is edited as one piece; its reasoning, sources and charts stay as they are. -->
+	<ChatMessageEdit
+		v-else-if="editing && message.role === 'assistant'"
+		:message="message"
+		:text="getTextFromMessage(message)"
+		@save="(msg, text) => emit('save', msg, text, false)"
+		@cancel="emit('cancelEdit')"
 	/>
 	<template v-else>
 		<template v-for="(part, index) in getMergedParts(message.parts)" :key="`${message.id}-${part.type}-${index}`">
@@ -56,7 +64,8 @@ const emit = defineEmits<{
 						v-if="editing"
 						:message="message"
 						:text="part.text"
-						@save="(msg, text) => emit('save', msg, text)"
+						resend
+						@save="(msg, text, resend) => emit('save', msg, text, resend)"
 						@cancel="emit('cancelEdit')"
 					/>
 					<p v-else class="whitespace-pre-wrap">

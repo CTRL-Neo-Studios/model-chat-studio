@@ -11,6 +11,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
 	edit: [message: UIMessage]
+	delete: [message: UIMessage]
 	regenerate: [message: UIMessage]
 	vote: [message: UIMessage, isUpvoted: boolean]
 }>()
@@ -29,7 +30,7 @@ const { copy, copied } = useClipboard({ copiedDuring: 2000 })
 </script>
 
 <template>
-	<template v-if="message.role === 'assistant' && !streaming">
+	<template v-if="message.role === 'assistant' && !streaming && !editing">
 		<UTooltip text="Copy response">
 			<UButton
 				size="sm"
@@ -73,6 +74,28 @@ const { copy, copied } = useClipboard({ copiedDuring: 2000 })
 				@click="emit('regenerate', message)"
 			/>
 		</UTooltip>
+
+		<UTooltip text="Edit response">
+			<UButton
+				size="sm"
+				color="neutral"
+				variant="ghost"
+				icon="i-lucide-pencil"
+				aria-label="Edit response"
+				@click="emit('edit', message)"
+			/>
+		</UTooltip>
+
+		<UTooltip text="Delete response">
+			<UButton
+				size="sm"
+				color="neutral"
+				variant="ghost"
+				icon="i-lucide-trash"
+				aria-label="Delete response"
+				@click="emit('delete', message)"
+			/>
+		</UTooltip>
 	</template>
 
 	<template v-if="message.role === 'user' && !streaming && !editing">
@@ -91,6 +114,17 @@ const { copy, copied } = useClipboard({ copiedDuring: 2000 })
 				icon="i-lucide-pencil"
 				aria-label="Edit message"
 				@click="emit('edit', message)"
+			/>
+		</UTooltip>
+
+		<UTooltip text="Delete message">
+			<UButton
+				size="sm"
+				color="neutral"
+				variant="ghost"
+				icon="i-lucide-trash"
+				aria-label="Delete message"
+				@click="emit('delete', message)"
 			/>
 		</UTooltip>
 	</template>

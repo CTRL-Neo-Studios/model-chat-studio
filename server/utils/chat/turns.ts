@@ -1,9 +1,12 @@
 import { isDeepStrictEqual } from 'node:util'
 import { createError } from 'nuxt/server'
-import { and, asc, eq, gt, gte, inArray, isNull, ne, or, sum } from 'drizzle-orm'
+import { and, asc, eq, gt, gte, inArray, isNull, ne, or, sql, sum } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
+import type { UIMessage } from 'ai'
 import { z } from 'zod'
 // Relative, not `hub:db`, so this module also loads in `bun test`.
 import * as tables from '../../db/schema'
+import type { MessageMetadata } from '../../../shared/utils/chat'
 import { FILE_URL_PATTERN } from '../../../shared/utils/file'
 import { type Db, getSetting } from '../core/settings'
 
@@ -42,8 +45,7 @@ export async function attachFiles(db: Db, chatId: string, messageId: string, par
 
 /**
  * The body of `POST /chats/:id`: one answer from one lane (`chatModelId`). The client sends only the new
- * message, never the history. Submitting a message whose id already exists in the chat joins it (another
- * lane answering the same message) or edits it; see `applyTurnTrigger`.
+ * message or what to answer again, never the history. Edits and deletions are message routes.
  */
 export const turnRequestSchema = z.discriminatedUnion('trigger', [
 	z.object({ trigger: z.literal('submit-message'), message: userMessageSchema, chatModelId: z.uuid() }),
@@ -74,9 +76,12 @@ export async function listChatShares(db: Db, chatId: string) {
 		.orderBy(asc(tables.chatShare.createdAt))
 }
 
+const question = alias(tables.message, 'question')
+
 /**
- * A chat's messages in the order they were saved. With a lane, only that lane's thread: every message
- * except the other lanes' answers.
+ * A chat's messages in reading order: each user message in the order saved, followed by its answers. An
+ * answer regenerated later still sits under its question. With a lane, only that lane's thread: every
+ * message except the other lanes' answers.
  */
 export async function listChatMessages(db: Db, chatId: string, chatModelId?: string) {
 	return await db.select({
@@ -87,16 +92,17 @@ export async function listChatMessages(db: Db, chatId: string, chatModelId?: str
 		chatModelId: tables.message.chatModelId,
 		createdAt: tables.message.createdAt,
 	}).from(tables.message)
+		.leftJoin(question, and(eq(tables.message.role, 'assistant'), eq(question.id, tables.message.parentId)))
 		.where(and(
 			eq(tables.message.chatId, chatId),
 			chatModelId ? or(ne(tables.message.role, 'assistant'), eq(tables.message.chatModelId, chatModelId)) : undefined,
 		))
-		.orderBy(asc(tables.message.seq))
+		.orderBy(sql`coalesce(${question.seq}, ${tables.message.seq})`, asc(tables.message.seq))
 }
 
 /**
- * Whether a lane's request for an existing user message joins it instead of editing it: the message is the
- * chat's newest user message, it arrives unchanged, and this lane has not answered it yet.
+ * Whether a lane's request for an existing user message joins it: the message is the chat's newest user
+ * message, it arrives unchanged, and this lane has not answered it yet.
  */
 async function joinsMessage(db: Db, chatId: string, chatModelId: string, message: { id: string, seq: number }, parts: UserMessageParts) {
 	const [stored] = await db.select({ parts: tables.message.parts }).from(tables.message).where(eq(tables.message.id, message.id))
@@ -114,70 +120,140 @@ async function joinsMessage(db: Db, chatId: string, chatModelId: string, message
 }
 
 /**
- * Applies a turn's trigger before the model is called, in one transaction:
- * - a new message is saved;
- * - a message that another lane saved for the same send is joined (`joinsMessage`): nothing changes;
- * - an edit replaces the message's parts and deletes everything after it;
- * - a regenerate deletes the target assistant message and everything after it, or everything after
- *   a target user message. Without a target it starts from the last message.
- *
- * Returns the id of the user message the answer replies to, and the attachments of the deleted messages,
- * which the caller deletes from storage once this has committed.
+ * Applies a turn's trigger before the model is called and returns the user message the answer replies to.
+ * Nothing is deleted: the answer replaces this lane's earlier answer to that message when it is saved
+ * (`saveAnswer`), so a failed turn keeps the old one.
+ * - `submit-message` saves a new message, or joins one that another lane saved for the same send
+ *   (`joinsMessage`). Any other existing id is refused; edits are `PATCH /chats/:id/messages/:id`.
+ * - `regenerate-message` answers the target answer's question again, or the target user message, or
+ *   without a target the newest user message.
  */
-export async function applyTurnTrigger(db: Db, chatId: string, request: TurnRequest): Promise<{ parentId: string, removedFileIds: string[] }> {
+export async function applyTurnTrigger(db: Db, chatId: string, request: TurnRequest): Promise<string> {
 	return await db.transaction(async (tx) => {
-		const rows = await tx.select({ id: tables.message.id, role: tables.message.role, seq: tables.message.seq })
-			.from(tables.message)
-			.where(eq(tables.message.chatId, chatId))
-			.orderBy(asc(tables.message.seq))
-
-		const targetId = request.trigger === 'submit-message' ? request.message.id : request.messageId
-		const target = rows.find(row => row.id === targetId)
-
-		if (request.trigger === 'submit-message' && !target) {
+		if (request.trigger === 'submit-message') {
 			const { id, parts } = request.message
+			const [previous] = await tx.select({ id: tables.message.id }).from(tables.message)
+				.where(eq(tables.message.chatId, chatId)).orderBy(sql`${tables.message.seq} desc`).limit(1)
 			const [saved] = await tx.insert(tables.message)
-				.values({ id, chatId, role: 'user', parts, parentId: rows.at(-1)?.id })
+				.values({ id, chatId, role: 'user', parts, parentId: previous?.id })
 				.onConflictDoNothing()
 				.returning({ id: tables.message.id })
-			if (!saved) {
-				// Another lane's request saved it after `rows` was read, or the id belongs to another chat.
-				const [existing] = await tx.select({ chatId: tables.message.chatId, role: tables.message.role, seq: tables.message.seq })
-					.from(tables.message).where(eq(tables.message.id, id))
-				if (existing?.chatId === chatId && existing.role === 'user' && await joinsMessage(tx, chatId, request.chatModelId, { id, seq: existing.seq }, parts)) {
-					return { parentId: id, removedFileIds: [] }
-				}
-				throw createError({ status: 409, statusText: 'This message id is already in use' })
+			if (saved) {
+				await attachFiles(tx, chatId, saved.id, parts)
+				return saved.id
 			}
-			await attachFiles(tx, chatId, saved.id, parts)
-			return { parentId: saved.id, removedFileIds: [] }
-		}
-		if (targetId !== undefined && !target) throw createError({ status: 404, statusText: 'Message not found' })
-		const pivot = target ?? rows.at(-1)
-		if (!pivot) throw createError({ status: 400, statusText: 'There is no message to answer' })
-		if (request.trigger === 'submit-message') {
-			if (pivot.role !== 'user') throw createError({ status: 400, statusText: 'Only your own messages can be edited' })
-			if (await joinsMessage(tx, chatId, request.chatModelId, pivot, request.message.parts)) {
-				return { parentId: pivot.id, removedFileIds: [] }
+			// Another lane's request saved it first, or the id is taken.
+			const [existing] = await tx.select({ chatId: tables.message.chatId, role: tables.message.role, seq: tables.message.seq })
+				.from(tables.message).where(eq(tables.message.id, id))
+			if (existing?.chatId === chatId && existing.role === 'user' && await joinsMessage(tx, chatId, request.chatModelId, { id, seq: existing.seq }, parts)) {
+				return id
 			}
-			await tx.update(tables.message).set({ parts: request.message.parts }).where(eq(tables.message.id, pivot.id))
-			await attachFiles(tx, chatId, pivot.id, request.message.parts)
+			throw createError({ status: 409, statusText: 'This message id is already in use' })
 		}
 
-		// A user message keeps its place; an assistant message is replaced.
-		const keepPivot = pivot.role === 'user'
-		const removed = and(
-			eq(tables.message.chatId, chatId),
-			keepPivot ? gt(tables.message.seq, pivot.seq) : gte(tables.message.seq, pivot.seq),
-		)
-		const removedFiles = await tx.select({ id: tables.file.id }).from(tables.file)
-			.innerJoin(tables.message, eq(tables.file.messageId, tables.message.id))
-			.where(removed)
-		await tx.delete(tables.message).where(removed)
+		const [target] = request.messageId
+			? await tx.select().from(tables.message).where(and(eq(tables.message.id, request.messageId), eq(tables.message.chatId, chatId)))
+			: await tx.select().from(tables.message).where(and(eq(tables.message.chatId, chatId), eq(tables.message.role, 'user')))
+					.orderBy(sql`${tables.message.seq} desc`).limit(1)
+		if (!target) {
+			throw request.messageId
+				? createError({ status: 404, statusText: 'Message not found' })
+				: createError({ status: 400, statusText: 'There is no message to answer' })
+		}
+		if (target.role === 'user') return target.id
+		if (target.role !== 'assistant' || !target.parentId) throw createError({ status: 400, statusText: 'There is no message to answer' })
+		if (target.chatModelId !== request.chatModelId) throw createError({ status: 400, statusText: 'This answer belongs to another model' })
+		return target.parentId
+	})
+}
 
-		const last = keepPivot ? pivot : rows.filter(row => row.seq < pivot.seq).at(-1)
-		if (last?.role !== 'user') throw createError({ status: 400, statusText: 'There is no message to answer' })
-		return { parentId: last.id, removedFileIds: removedFiles.map(file => file.id) }
+/** Saves a lane's answer to a user message, replacing the lane's earlier answer to it, if any. */
+export async function saveAnswer(db: Db, answer: { id: string, chatId: string, parentId: string, chatModelId: string, parts: UIMessage['parts'], metadata: MessageMetadata }) {
+	await db.transaction(async (tx) => {
+		await tx.delete(tables.message).where(and(
+			eq(tables.message.role, 'assistant'),
+			eq(tables.message.parentId, answer.parentId),
+			eq(tables.message.chatModelId, answer.chatModelId),
+		))
+		await tx.insert(tables.message).values({ ...answer, role: 'assistant' })
+	})
+}
+
+/** Deletes messages and returns their attachments, which the caller deletes from storage once this has committed. */
+async function deleteMessageRows(db: Db, ids: string[]) {
+	if (!ids.length) return []
+	const files = await db.select({ id: tables.file.id }).from(tables.file).where(inArray(tables.file.messageId, ids))
+	await db.delete(tables.message).where(inArray(tables.message.id, ids))
+	return files.map(file => file.id)
+}
+
+async function findMessage(db: Db, chatId: string, messageId: string) {
+	const [message] = await db.select().from(tables.message).where(and(eq(tables.message.id, messageId), eq(tables.message.chatId, chatId)))
+	if (!message) throw createError({ status: 404, statusText: 'Message not found' })
+	return message
+}
+
+/**
+ * Replaces a message's text in place; nothing else changes. A user message is replaced whole, unless it has
+ * attachments, which the editor cannot show. An answer keeps its reasoning, sources and tool parts, and is
+ * marked edited. `dropAfter` (user messages) also deletes the message's answers and everything after it,
+ * so it can be answered again.
+ *
+ * Returns the updated message and the attachments of deleted messages, which the caller deletes from storage.
+ */
+export async function editMessage(db: Db, chatId: string, messageId: string, edit: { text: string, dropAfter?: boolean }) {
+	return await db.transaction(async (tx) => {
+		const message = await findMessage(tx, chatId, messageId)
+		let parts: UIMessage['parts']
+		let metadata = message.metadata
+		if (message.role === 'user') {
+			if (message.parts.some(part => part.type === 'file')) throw createError({ status: 400, statusText: 'A message with attachments cannot be edited' })
+			parts = [{ type: 'text', text: edit.text }]
+		}
+		else if (message.role === 'assistant' && !edit.dropAfter) {
+			const first = message.parts.findIndex(part => part.type === 'text')
+			parts = message.parts.filter(part => part.type !== 'text')
+			parts.splice(first === -1 ? parts.length : first, 0, { type: 'text', text: edit.text })
+			metadata = metadata && { ...metadata, edited: true }
+		}
+		else {
+			throw createError({ status: 400, statusText: 'Only your own messages can be answered again' })
+		}
+
+		const [updated] = await tx.update(tables.message).set({ parts, metadata }).where(eq(tables.message.id, message.id))
+			.returning({ id: tables.message.id, role: tables.message.role, parts: tables.message.parts, metadata: tables.message.metadata })
+
+		let removedFileIds: string[] = []
+		if (edit.dropAfter) {
+			const later = await tx.select({ id: tables.message.id }).from(tables.message).where(and(
+				eq(tables.message.chatId, chatId),
+				ne(tables.message.role, 'assistant'),
+				gt(tables.message.seq, message.seq),
+			))
+			const questions = [message.id, ...later.map(row => row.id)]
+			const answers = await tx.select({ id: tables.message.id }).from(tables.message).where(and(
+				eq(tables.message.role, 'assistant'),
+				inArray(tables.message.parentId, questions),
+			))
+			removedFileIds = await deleteMessageRows(tx, [...later, ...answers].map(row => row.id))
+		}
+		return { message: updated!, removedFileIds }
+	})
+}
+
+/**
+ * Deletes one message: an answer alone, or a user message with its answers. Everything else stays.
+ * Returns the deleted ids and their attachments, which the caller deletes from storage.
+ */
+export async function deleteMessage(db: Db, chatId: string, messageId: string) {
+	return await db.transaction(async (tx) => {
+		const message = await findMessage(tx, chatId, messageId)
+		const answers = message.role === 'user'
+			? await tx.select({ id: tables.message.id }).from(tables.message)
+					.where(and(eq(tables.message.role, 'assistant'), eq(tables.message.parentId, message.id)))
+			: []
+		const ids = [message.id, ...answers.map(row => row.id)]
+		return { ids, removedFileIds: await deleteMessageRows(tx, ids) }
 	})
 }
 
