@@ -1,3 +1,4 @@
+import security from '@comark/vue/plugins/security'
 import shiki from '@comark/vue/plugins/shiki'
 import html from '@shikijs/langs/html'
 import css from '@shikijs/langs/css'
@@ -22,6 +23,9 @@ import SourceLink from './SourceLink.vue'
 export default defineMarkdownComponent({
 	name: 'ChatComark',
 	plugins: [
+		// Answers are untrusted (a web page can inject instructions) and shared chats show them to others:
+		// raw HTML that embeds or submits elsewhere is dropped, and unsafe URLs and props are removed.
+		security({ blockedTags: ['iframe', 'frame', 'embed', 'object', 'form', 'input', 'button', 'textarea', 'select', 'style', 'link', 'meta', 'base'] }),
 		shiki({
 			languages: [html, css, python, sql, go, rust, java, c, cpp, ruby, php, swift, kotlin, diff, dockerfile, xml, toml, graphql],
 		}),

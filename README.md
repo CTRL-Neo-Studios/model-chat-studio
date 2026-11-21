@@ -56,3 +56,25 @@ Two things to know before deploying:
 - **Migrations do not run on their own.** Apply them with `DATABASE_URL=… bunx nuxt db migrate` before starting a new version.
 
 The session cookie is `Secure`, so anything other than `localhost` needs HTTPS.
+
+## Smoke runs
+
+Against the platforms directly, with API keys:
+
+```bash
+OPENROUTER_API_KEY=… DEEPSEEK_API_KEY=… bun scripts/inference-smoke.ts        # turns, routing, search, platform switch
+OPENROUTER_API_KEY=… DEEPSEEK_API_KEY=… bun scripts/attachments-smoke.ts     # image, PDF, speech to text
+```
+
+Through a running instance, as an admin (it switches the active platform for the run and back):
+
+```bash
+SESSION=<nuxt-auth-session cookie> BASE_URL=http://localhost:3000 bun scripts/app-smoke.ts [--search]
+```
+
+It runs, on each platform with an instance key: a turn, an image and a PDF, a regenerate, dictation, the spend ledger, and deleting the chat. `--search` adds a web search turn (about $0.02 on OpenRouter). The test files are made with macOS tools; elsewhere pass `--wav`, `--image` and `--pdf`.
+
+## Limits
+
+- Each member can request 20 answers and 20 transcriptions a minute; one address can make 600 requests a minute in total. The counters live in the server process.
+- Attachments are at most 8 MB, recordings at most 2 minutes.

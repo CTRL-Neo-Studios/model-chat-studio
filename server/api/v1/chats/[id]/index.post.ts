@@ -8,6 +8,7 @@ import { chartTool } from '#shared/utils/tools/chart'
 import { authorize } from '#server/utils/core/authorize'
 import { getSetting } from '#server/utils/core/settings'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
+import { assertRateLimit } from '#server/utils/core/rateLimit'
 import { applyTurnTrigger, assertWithinBudget, findChat, listChatMessages, turnRequestSchema } from '#server/utils/chat/turns'
 import { deleteStoredFiles, resolveAttachments } from '#server/utils/chat/files'
 import { getCatalog, getEndpoints, getPriceOverride, useInference } from '#server/utils/inference'
@@ -47,6 +48,8 @@ export default defineEventHandler(async (event) => {
 	const chat = await findChat(db, getRouterParam(event, 'id', { decode: true }))
 	await authorize(event, chatAbilities().manageChat, chat)
 	const request = await readValidatedBody(event, turnRequestSchema)
+	// Each answer costs money; a stuck client or script should not be able to run up the bill.
+	assertRateLimit(`turn:${user.id}`, 20, 60_000, 'messages')
 	const chatId = chat!.id
 
 	const inference = await useInference(db, user.id)

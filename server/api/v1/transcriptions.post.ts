@@ -1,6 +1,7 @@
 import { createError, defineEventHandler } from 'nuxt/server'
 import { db, schema } from 'hub:db'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
+import { assertRateLimit } from '#server/utils/core/rateLimit'
 import { assertWithinBudget } from '#server/utils/chat/turns'
 import { useInference } from '#server/utils/inference'
 import { wavDurationSeconds } from '#server/utils/inference/wav'
@@ -12,6 +13,7 @@ const MAX_SECONDS = 120
 /** Dictation: a 16-bit PCM WAV clip (form field `file`) in, `{ text }` out, on the active platform. */
 export default defineEventHandler(async (event) => {
 	const user = await useServerAuth().requireUser(event)
+	assertRateLimit(`stt:${user.id}`, 20, 60_000, 'recordings')
 	const audio = (await event.req.formData()).get('file')
 	if (!(audio instanceof File)) throw createError({ status: 400, statusText: 'Send the recording in the `file` field' })
 	if (audio.size > MAX_BYTES) throw createError({ status: 413, statusText: 'Recordings can be at most 8 MB' })

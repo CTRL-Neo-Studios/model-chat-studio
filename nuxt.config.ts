@@ -63,15 +63,36 @@ export default defineNuxtConfig({
 		headers: {
 			contentSecurityPolicy: {
 				'img-src': ["'self'", 'data:', 'https:', 'blob:'],
+				// Nothing embeds other sites; Nuxt DevTools embeds itself in dev.
+				'frame-src': ["'self'"],
 			},
 			crossOriginEmbedderPolicy: false, // TODO: Find a better solution than disabling this security measure.
+			// The default `microphone=()` blocks dictation in every browser; the rest stay off.
+			permissionsPolicy: {
+				'camera': [],
+				'display-capture': [],
+				'fullscreen': [],
+				'geolocation': [],
+				'microphone': ['self'],
+			},
 		},
 		csrf: {
 			methodsToProtect: ['POST', 'PUT', 'PATCH', 'DELETE'],
 		},
+		// A guard against floods from one address, loose enough for a group behind one NAT. The costly
+		// routes (answers, transcription) also have per-member limits in their handlers.
 		rateLimiter: {
-			interval: 100000,
-		}
+			tokensPerInterval: 600,
+			interval: 60_000,
+		},
+		// Attachments are at most 8 MiB; this leaves room for the multipart envelope so the upload
+		// route can answer with its own message.
+		requestSizeLimiter: {
+			maxUploadFileRequestInBytes: 9 * 1024 * 1024,
+		},
+		// Off: it rejects any request whose body or query contains HTML, which includes every chat
+		// message that quotes code. Output is escaped by Vue, and the CSP blocks injected script.
+		xssValidator: false,
 	},
 
 	$development: {

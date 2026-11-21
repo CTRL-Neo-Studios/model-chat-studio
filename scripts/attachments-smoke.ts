@@ -3,45 +3,17 @@
 //
 //   OPENROUTER_API_KEY=… DEEPSEEK_API_KEY=… bun scripts/attachments-smoke.ts
 //
-// macOS makes the test files itself (`say`, `cupsfilter`, `sips`). Elsewhere pass `--wav file.wav` (16-bit PCM),
-// `--image file.png` and `--pdf file.pdf`; the image and PDF should each contain a secret word.
+// The test files come from `scripts/smoke-files.ts` (macOS makes them; elsewhere `--wav`, `--image`, `--pdf`).
 // Optional: OPENROUTER_MODEL (must read images), OPENROUTER_STT_MODEL, DEEPSEEK_MODEL.
-import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { convertToModelMessages, streamText, type UIMessage } from 'ai'
 import { deepseekPlatform } from '../server/utils/inference/deepseek'
 import { openrouterPlatform } from '../server/utils/inference/openrouter'
 import type { InferencePlatform } from '../server/utils/inference/types'
 import { wavDurationSeconds } from '../server/utils/inference/wav'
+import { IMAGE_WORD, makeSmokeFiles, PDF_WORD, SENTENCE } from './smoke-files'
 
-const arg = (name: string) => {
-	const index = process.argv.indexOf(`--${name}`)
-	return index === -1 ? undefined : process.argv[index + 1]
-}
-
-const dir = mkdtempSync(join(tmpdir(), 'attachments-smoke-'))
-function makeFiles() {
-	const sentence = 'Please summarize the attached report in three bullet points.'
-	const wav = arg('wav') ?? join(dir, 'speech.wav')
-	if (!arg('wav')) execFileSync('say', ['-o', wav, '--data-format=LEI16@16000', sentence])
-	const pdf = arg('pdf') ?? join(dir, 'secret.pdf')
-	if (!arg('pdf')) {
-		writeFileSync(join(dir, 'pdf.txt'), 'The secret word in this PDF is mango.\n')
-		writeFileSync(pdf, execFileSync('cupsfilter', [join(dir, 'pdf.txt')], { stdio: ['ignore', 'pipe', 'ignore'] }))
-	}
-	const image = arg('image') ?? join(dir, 'secret.png')
-	if (!arg('image')) {
-		writeFileSync(join(dir, 'image.txt'), 'The secret word in this image is pineapple.\n')
-		writeFileSync(join(dir, 'image.pdf'), execFileSync('cupsfilter', [join(dir, 'image.txt')], { stdio: ['ignore', 'pipe', 'ignore'] }))
-		execFileSync('sips', ['-s', 'format', 'png', join(dir, 'image.pdf'), '--out', image], { stdio: 'ignore' })
-	}
-	return { sentence, wav: new Uint8Array(readFileSync(wav)), pdf: new Uint8Array(readFileSync(pdf)), image: new Uint8Array(readFileSync(image)) }
-}
-
-const files = makeFiles()
-console.log(`WAV: ${wavDurationSeconds(files.wav)?.toFixed(1)} s; PDF ${files.pdf.length} B; PNG ${files.image.length} B (in ${dir})`)
+const files = makeSmokeFiles()
+console.log(`WAV: ${wavDurationSeconds(files.wav)?.toFixed(1)} s; PDF ${files.pdf.length} B; PNG ${files.image.length} B (in ${files.dir})`)
 
 const runs: { platform: InferencePlatform, apiKey?: string, model: string, sttModel?: string }[] = [
 	{ platform: openrouterPlatform, apiKey: process.env.OPENROUTER_API_KEY, model: process.env.OPENROUTER_MODEL ?? 'deepseek/deepseek-v4.1-flash', sttModel: process.env.OPENROUTER_STT_MODEL ?? 'openai/whisper-1' },
@@ -61,7 +33,7 @@ for (const { platform, apiKey, model, sttModel } of runs) {
 	try {
 		const speech = await platform.transcribe({ apiKey, wav: files.wav, model: sttModel })
 		console.log(`  speech: ${JSON.stringify(speech.text)} (cost ${speech.costUsd})`)
-		console.log(`  said:   ${JSON.stringify(files.sentence)}`)
+		console.log(`  said:   ${JSON.stringify(SENTENCE)}`)
 	}
 	catch (error) {
 		console.log(`  speech FAILED: ${(error as Error).message}`)
@@ -88,7 +60,7 @@ for (const { platform, apiKey, model, sttModel } of runs) {
 		const result = streamText({ ...prepared, messages: await convertToModelMessages(messages), maxRetries: 0 })
 		const text = await result.text
 		const usage = platform.usage({ model, steps: await result.steps })
-		const ok = /pineapple/i.test(text) && /mango/i.test(text)
+		const ok = text.toLowerCase().includes(IMAGE_WORD) && text.toLowerCase().includes(PDF_WORD)
 		console.log(`  answer: ${JSON.stringify(text.trim())} → ${ok ? 'both words found' : 'MISSING a word'}`)
 		console.log(`  usage: ${usage.inputTokens} in, ${usage.outputTokens} out, cost ${usage.costUsd}, provider ${usage.provider ?? '-'}`)
 		if (!ok) process.exitCode = 1
