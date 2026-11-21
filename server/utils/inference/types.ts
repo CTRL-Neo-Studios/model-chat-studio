@@ -91,6 +91,8 @@ export interface InferencePlatform {
 		safetyCheck: boolean
 		/** Titles come with the first turn instead of from a separate call. */
 		nativeTitle: boolean
+		/** Speech to text needs a model chosen in the settings (`sttModel`). */
+		sttModel: boolean
 	}
 	/** Resolves false for a key the platform rejects; throws when the platform cannot be reached. */
 	checkKey(apiKey: string): Promise<boolean>
@@ -99,4 +101,16 @@ export interface InferencePlatform {
 	prepare(input: TurnInput): PreparedTurn
 	/** `price` is an admin override for platforms that report no cost. */
 	usage(input: { model: string, steps: FinishedStep[], price?: Pricing | null, at?: Date }): TurnUsage
+	/**
+	 * For platforms that take no PDF inline: upload it once (billed once) and refer to it by id.
+	 * Remote ids belong to the account of the key that uploaded them.
+	 */
+	pdfUpload?: {
+		upload(apiKey: string, pdf: { bytes: Uint8Array, name: string }): Promise<{ remoteId: string, expiresAt: Date | null }>
+		/** The fields of a UI file part that refer to an uploaded PDF. */
+		reference(remoteId: string): { mediaType: string, providerReference: Record<string, string> }
+		remove(apiKey: string, remoteId: string): Promise<void>
+	}
+	/** Speech to text for a 16-bit PCM WAV clip; `model` is the `sttModel` setting where one is needed. */
+	transcribe(input: { apiKey: string, wav: Uint8Array, model?: string }): Promise<{ text: string, costUsd: number | null }>
 }

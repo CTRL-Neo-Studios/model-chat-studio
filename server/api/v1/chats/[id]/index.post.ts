@@ -8,7 +8,8 @@ import { chartTool } from '#shared/utils/tools/chart'
 import { authorize } from '#server/utils/core/authorize'
 import { getSetting } from '#server/utils/core/settings'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
-import { applyTurnTrigger, findChat, listChatMessages, monthlyBudgetStatus, turnRequestSchema } from '#server/utils/chat/turns'
+import { applyTurnTrigger, assertWithinBudget, findChat, listChatMessages, turnRequestSchema } from '#server/utils/chat/turns'
+import { deleteStoredFiles, resolveAttachments } from '#server/utils/chat/files'
 import { getCatalog, getEndpoints, getPriceOverride, useInference } from '#server/utils/inference'
 import type { FinishedStep, Pricing } from '#server/utils/inference/types'
 
@@ -63,14 +64,11 @@ export default defineEventHandler(async (event) => {
 	const levels = model.reasoning ? [...model.reasoningLevels, 'none', 'on'] : []
 	const reasoningLevel = chosen && params.reasoningLevel && levels.includes(params.reasoningLevel) ? params.reasoningLevel : undefined
 
-	if (!byok) {
-		const { spentUsd, budgetUsd } = await monthlyBudgetStatus(db, user)
-		if (budgetUsd !== null && spentUsd >= budgetUsd) {
-			throw createError({ status: 402, statusText: 'You have used this month\'s budget. Add your own API key in the settings to keep chatting.' })
-		}
-	}
+	await assertWithinBudget(db, user, byok)
 
-	const parentId = await applyTurnTrigger(db, chatId, request)
+	const { parentId, removedFileIds } = await applyTurnTrigger(db, chatId, request)
+	// Attachments of the messages an edit or regenerate dropped.
+	await deleteStoredFiles(db, removedFileIds, inference)
 	const history = await listChatMessages(db, chatId) as UIMessage<MessageMetadata>[]
 	const firstText = history.find(message => message.role === 'user')?.parts.map(part => part.type === 'text' ? part.text : '').join(' ') ?? ''
 
@@ -108,12 +106,16 @@ export default defineEventHandler(async (event) => {
 	})
 	const tools: ToolSet = { ...prepared.tools, chart: chartTool }
 	const price = await getPriceOverride(db, platform.id, model.id)
+	const modelHistory = await resolveAttachments({ db, inference, model, userId: user.id, chatId }, history).catch((error) => {
+		console.error('[chat] attachment failed', error)
+		throw createError({ status: 502, statusText: `${platform.id} did not accept an attachment. Try again, or remove it.` })
+	})
 
 	const result = streamText({
 		...prepared,
 		tools,
 		instructions: chat!.systemPrompt ? `${INSTRUCTIONS}\n\n${chat!.systemPrompt}` : INSTRUCTIONS,
-		messages: await convertToModelMessages(history, { tools }),
+		messages: await convertToModelMessages(modelHistory, { tools }),
 		stopWhen: isStepCount(5),
 		abortSignal: event.req.signal,
 		experimental_transform: smoothStream(),

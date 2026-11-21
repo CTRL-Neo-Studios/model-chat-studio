@@ -1,16 +1,43 @@
 import { createError } from 'nuxt/server'
-import { and, asc, eq, gt, gte, sum } from 'drizzle-orm'
+import { and, asc, eq, gt, gte, inArray, isNull, or, sum } from 'drizzle-orm'
 import { z } from 'zod'
 // Relative, not `hub:db`, so this module also loads in `bun test`.
 import * as tables from '../../db/schema'
+import { FILE_URL_PATTERN } from '../../../shared/utils/file'
 import { type Db, getSetting } from '../core/settings'
 
-// ponytail: text only until phase 7 adds file parts that reference uploaded files (never arbitrary URLs).
+const textPartSchema = z.object({ type: z.literal('text'), text: z.string().min(1).max(100_000) })
+/** An attachment uploaded with `PUT /chats/:id/files`; never an arbitrary URL, which the server would fetch. */
+const filePartSchema = z.object({
+	type: z.literal('file'),
+	mediaType: z.string().max(100),
+	url: z.string().regex(FILE_URL_PATTERN),
+	filename: z.string().max(255).optional(),
+})
+
 export const userMessageSchema = z.object({
 	id: z.string().min(1).max(64),
 	role: z.literal('user'),
-	parts: z.array(z.object({ type: z.literal('text'), text: z.string().min(1).max(100_000) })).min(1),
+	parts: z.array(z.discriminatedUnion('type', [textPartSchema, filePartSchema])).min(1).max(20),
 })
+
+type UserMessageParts = z.infer<typeof userMessageSchema>['parts']
+
+/**
+ * Links a message's attachments to it. Each must have been uploaded by the chat's owner to this chat
+ * and not belong to another message, so a message cannot pull in someone else's file.
+ */
+export async function attachFiles(db: Db, chatId: string, messageId: string, parts: UserMessageParts) {
+	const ids = [...new Set(parts.flatMap(part => part.type === 'file' ? [FILE_URL_PATTERN.exec(part.url)![1]!] : []))]
+	if (!ids.length) return
+	const linked = await db.update(tables.file).set({ messageId }).where(and(
+		inArray(tables.file.id, ids),
+		eq(tables.file.chatId, chatId),
+		inArray(tables.file.ownerId, db.select({ id: tables.chat.userId }).from(tables.chat).where(eq(tables.chat.id, chatId))),
+		or(isNull(tables.file.messageId), eq(tables.file.messageId, messageId)),
+	)).returning({ id: tables.file.id })
+	if (linked.length !== ids.length) throw createError({ status: 400, statusText: 'An attachment was not found' })
+}
 
 /**
  * The body of `POST /chats/:id`. The client sends only the new message, never the history.
@@ -66,9 +93,10 @@ export async function listChatMessages(db: Db, chatId: string) {
  * - a regenerate deletes the target assistant message and everything after it, or everything after
  *   a target user message. Without a target it starts from the last message.
  *
- * Returns the id of the user message the answer replies to.
+ * Returns the id of the user message the answer replies to, and the attachments of the deleted
+ * messages, which the caller deletes from storage once this has committed.
  */
-export async function applyTurnTrigger(db: Db, chatId: string, request: TurnRequest): Promise<string> {
+export async function applyTurnTrigger(db: Db, chatId: string, request: TurnRequest): Promise<{ parentId: string, removedFileIds: string[] }> {
 	return await db.transaction(async (tx) => {
 		const rows = await tx.select({ id: tables.message.id, role: tables.message.role, seq: tables.message.seq })
 			.from(tables.message)
@@ -86,7 +114,8 @@ export async function applyTurnTrigger(db: Db, chatId: string, request: TurnRequ
 				.returning({ id: tables.message.id })
 			// The id exists in another chat.
 			if (!saved) throw createError({ status: 409, statusText: 'This message id is already in use' })
-			return saved.id
+			await attachFiles(tx, chatId, saved.id, parts)
+			return { parentId: saved.id, removedFileIds: [] }
 		}
 		if (targetId !== undefined && !target) throw createError({ status: 404, statusText: 'Message not found' })
 		const pivot = target ?? rows.at(-1)
@@ -94,18 +123,23 @@ export async function applyTurnTrigger(db: Db, chatId: string, request: TurnRequ
 		if (request.trigger === 'submit-message') {
 			if (pivot.role !== 'user') throw createError({ status: 400, statusText: 'Only your own messages can be edited' })
 			await tx.update(tables.message).set({ parts: request.message.parts }).where(eq(tables.message.id, pivot.id))
+			await attachFiles(tx, chatId, pivot.id, request.message.parts)
 		}
 
 		// A user message keeps its place; an assistant message is replaced.
 		const keepPivot = pivot.role === 'user'
-		await tx.delete(tables.message).where(and(
+		const removed = and(
 			eq(tables.message.chatId, chatId),
 			keepPivot ? gt(tables.message.seq, pivot.seq) : gte(tables.message.seq, pivot.seq),
-		))
+		)
+		const removedFiles = await tx.select({ id: tables.file.id }).from(tables.file)
+			.innerJoin(tables.message, eq(tables.file.messageId, tables.message.id))
+			.where(removed)
+		await tx.delete(tables.message).where(removed)
 
 		const last = keepPivot ? pivot : rows.filter(row => row.seq < pivot.seq).at(-1)
 		if (last?.role !== 'user') throw createError({ status: 400, statusText: 'There is no message to answer' })
-		return last.id
+		return { parentId: last.id, removedFileIds: removedFiles.map(file => file.id) }
 	})
 }
 
@@ -125,5 +159,14 @@ export async function monthlyBudgetStatus(db: Db, user: { id: string, monthlyBud
 		spentUsd: Number(row?.total ?? 0),
 		budgetUsd: user.monthlyBudgetUsd ?? await getSetting(db, 'defaultMonthlyBudgetUsd'),
 		monthStart,
+	}
+}
+
+/** Answers 402 when a paid call on the instance key would go over the member's monthly budget. */
+export async function assertWithinBudget(db: Db, user: { id: string, monthlyBudgetUsd: number | null }, byok: boolean) {
+	if (byok) return
+	const { spentUsd, budgetUsd } = await monthlyBudgetStatus(db, user)
+	if (budgetUsd !== null && spentUsd >= budgetUsd) {
+		throw createError({ status: 402, statusText: 'You have used this month\'s budget. Add your own API key in the settings to keep chatting.' })
 	}
 }

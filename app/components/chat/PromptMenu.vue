@@ -5,7 +5,13 @@ import type { CatalogModelView } from '~/composables/useModels'
 const props = defineProps<{
 	/** The model in use; its catalog entry decides which controls apply. */
 	model?: CatalogModelView
+	/** Opens the file picker of the prompt. */
+	open: () => void
 }>()
+
+defineShortcuts({
+	meta_u: { usingInput: true, handler: () => props.open() },
+})
 
 const webSearch = defineModel<boolean | undefined>('webSearch')
 /** `none` is off, `on` is on at the model's default effort, unset is the model's default. */
@@ -59,7 +65,12 @@ const reasoningItem = computed<DropdownMenuItem | undefined>(() => {
 	}
 })
 
-const items = computed<DropdownMenuItem[][]>(() => [[
+const items = computed<DropdownMenuItem[][]>(() => [[{
+	label: 'Add files or photos',
+	icon: 'i-lucide-paperclip',
+	kbds: ['meta', 'U'],
+	onSelect: () => props.open(),
+}], [
 	...(props.model?.webSearch
 		? [{
 				label: 'Web search',
@@ -73,12 +84,11 @@ const items = computed<DropdownMenuItem[][]>(() => [[
 			}]
 		: []),
 	...(reasoningItem.value ? [reasoningItem.value] : []),
-]])
+]].filter(group => group.length))
 </script>
 
 <template>
 	<UDropdownMenu
-		v-if="items[0]!.length"
 		:items="items"
 		:content="{ side: 'top', align: 'start', alignOffset: -4 }"
 		:ui="{ content: 'w-52' }"
@@ -93,5 +103,4 @@ const items = computed<DropdownMenuItem[][]>(() => [[
 			class="data-[state=open]:bg-elevated"
 		/>
 	</UDropdownMenu>
-	<div v-else />
 </template>

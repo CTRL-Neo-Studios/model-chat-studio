@@ -39,9 +39,9 @@ test('messages come back in the order they were saved, whatever their ids or tim
 })
 
 test('a new message is saved and answered; it replies to the previous message', async () => {
-	expect(await applyTurnTrigger(db, chatId, say('u1'))).toBe('u1')
+	expect(await applyTurnTrigger(db, chatId, say('u1'))).toMatchObject({ parentId: 'u1' })
 	await answer('a1')
-	expect(await applyTurnTrigger(db, chatId, say('u2'))).toBe('u2')
+	expect(await applyTurnTrigger(db, chatId, say('u2'))).toMatchObject({ parentId: 'u2' })
 	const [saved] = await db.select().from(schema.message).where(eq(schema.message.id, 'u2'))
 	expect(saved?.parentId).toBe('a1')
 	expect(await ids()).toEqual(['u1', 'a1', 'u2'])
@@ -53,7 +53,7 @@ test('editing a message replaces its text and drops everything after it', async 
 	await applyTurnTrigger(db, chatId, say('u2'))
 	await answer('a2')
 
-	expect(await applyTurnTrigger(db, chatId, say('u1', 'edited'))).toBe('u1')
+	expect(await applyTurnTrigger(db, chatId, say('u1', 'edited'))).toMatchObject({ parentId: 'u1' })
 	const messages = await listChatMessages(db, chatId)
 	expect(messages.map(message => message.id)).toEqual(['u1'])
 	expect(messages[0]!.parts).toEqual([{ type: 'text', text: 'edited' }])
@@ -65,21 +65,21 @@ test('regenerating replaces the target answer and everything after it', async ()
 	await applyTurnTrigger(db, chatId, say('u2'))
 	await answer('a2')
 
-	expect(await applyTurnTrigger(db, chatId, regenerate('a1'))).toBe('u1')
+	expect(await applyTurnTrigger(db, chatId, regenerate('a1'))).toMatchObject({ parentId: 'u1' })
 	expect(await ids()).toEqual(['u1'])
 })
 
 test('regenerating from a user message keeps it; without a target, the last answer is replaced', async () => {
 	await applyTurnTrigger(db, chatId, say('u1'))
 	await answer('a1')
-	expect(await applyTurnTrigger(db, chatId, regenerate('u1'))).toBe('u1')
+	expect(await applyTurnTrigger(db, chatId, regenerate('u1'))).toMatchObject({ parentId: 'u1' })
 	expect(await ids()).toEqual(['u1'])
 
 	await answer('a1b')
-	expect(await applyTurnTrigger(db, chatId, regenerate())).toBe('u1')
+	expect(await applyTurnTrigger(db, chatId, regenerate())).toMatchObject({ parentId: 'u1' })
 	expect(await ids()).toEqual(['u1'])
 	// The first answer of a new chat: the last message is the user's, nothing is dropped.
-	expect(await applyTurnTrigger(db, chatId, regenerate())).toBe('u1')
+	expect(await applyTurnTrigger(db, chatId, regenerate())).toMatchObject({ parentId: 'u1' })
 	expect(await ids()).toEqual(['u1'])
 })
 
@@ -95,6 +95,33 @@ test('a trigger that does not fit changes nothing', async () => {
 	await expect(applyTurnTrigger(db, other!.id, say('u1'))).rejects.toMatchObject({ status: 409 })
 	expect(await ids()).toEqual(['u1', 'a1'])
 	expect(await listChatMessages(db, other!.id)).toEqual([])
+})
+
+test('attachments link to their message once, only from the chat owner, and are reported when their message is dropped', async () => {
+	const [stranger] = await db.insert(schema.user).values({ githubId: 2, username: 'u2' }).returning()
+	const upload = async (ownerId: string) => (await db.insert(schema.file).values({ ownerId, chatId, blobPath: 'x', mediaType: 'image/png', size: 1 }).returning())[0]!.id
+	const withFile = (id: string, fileId: string): TurnRequest => ({
+		trigger: 'submit-message',
+		message: { id, role: 'user', parts: [{ type: 'text', text: 'see' }, { type: 'file', mediaType: 'image/png', url: `/api/v1/files/${fileId}` }] },
+	})
+	const mine = await upload(userId)
+	const theirs = await upload(stranger!.id)
+	await applyTurnTrigger(db, chatId, say('u0'))
+	await answer('a0')
+
+	await expect(applyTurnTrigger(db, chatId, withFile('u1', theirs))).rejects.toMatchObject({ status: 400 })
+	expect(await ids()).toEqual(['u0', 'a0'])
+
+	await applyTurnTrigger(db, chatId, withFile('u1', mine))
+	const [linked] = await db.select().from(schema.file).where(eq(schema.file.id, mine))
+	expect(linked?.messageId).toBe('u1')
+	await answer('a1')
+	// Already part of u1, so another message cannot take it.
+	await expect(applyTurnTrigger(db, chatId, withFile('u2', mine))).rejects.toMatchObject({ status: 400 })
+
+	expect(await applyTurnTrigger(db, chatId, regenerate('a1'))).toEqual({ parentId: 'u1', removedFileIds: [] })
+	// Editing u0 drops a0 and u1, and with it u1's attachment.
+	expect(await applyTurnTrigger(db, chatId, say('u0', 'edited'))).toEqual({ parentId: 'u0', removedFileIds: [mine] })
 })
 
 test('the budget counts this month on the instance key only; a member budget wins over the default', async () => {

@@ -82,7 +82,8 @@ const { copy, copied } = useClipboard({ copiedDuring: 2000 })
 			</time>
 		</UTooltip>
 
-		<UTooltip text="Edit message">
+		<!-- The editor only edits text; a message with attachments is regenerated instead. -->
+		<UTooltip v-if="!message.parts.some(part => part.type === 'file')" text="Edit message">
 			<UButton
 				size="sm"
 				color="neutral"

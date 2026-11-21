@@ -53,7 +53,8 @@ export function toOpenRouterModel(model: OpenRouterModel): CatalogModel {
 		vendor: model.id.split('/')[0]!,
 		contextLength: model.context_length,
 		maxOutputTokens: model.top_provider.max_completion_tokens,
-		inputModalities: model.architecture.input_modalities.filter(m => ['text', 'image', 'file'].includes(m)),
+		// `file` (PDFs) for every model: OpenRouter's file-parser plugin turns PDFs into text when the model cannot read them.
+		inputModalities: [...model.architecture.input_modalities.filter(m => m === 'text' || m === 'image'), 'file'],
 		// The `openrouter:web_search` server tool goes through tool calling.
 		webSearch: model.supported_parameters.includes('tools'),
 		supportedParameters: model.supported_parameters,
@@ -100,7 +101,7 @@ interface OpenRouterMetadata {
 
 export const openrouterPlatform: InferencePlatform = {
 	id: 'openrouter',
-	capabilities: { providerRouting: true, safetyCheck: false, nativeTitle: false },
+	capabilities: { providerRouting: true, safetyCheck: false, nativeTitle: false, sttModel: true },
 
 	async checkKey(apiKey) {
 		const response = await fetch(`${BASE_URL}/key`, { headers: { Authorization: `Bearer ${apiKey}` } })
@@ -125,7 +126,8 @@ export const openrouterPlatform: InferencePlatform = {
 		// Options must stay unset: the helper flattens them, while OpenRouter expects them under `parameters`.
 		const tools: ToolSet = input.webSearch ? { web_search: openrouter.tools.webSearch({}) } : {}
 		return {
-			model: openrouter.chat(input.model),
+			// PDFs are parsed with the free `cloudflare-ai` engine; the default `mistral-ocr` is billed per page.
+			model: openrouter.chat(input.model, { plugins: [{ id: 'file-parser', pdf: { engine: 'cloudflare-ai' } }] }),
 			tools,
 			providerOptions: {
 				openrouter: {
@@ -151,5 +153,17 @@ export const openrouterPlatform: InferencePlatform = {
 			provider = metadata?.provider ?? provider
 		}
 		return { provider, costUsd, ...sumTokens(steps) }
+	},
+
+	// https://openrouter.ai/docs/guides/overview/multimodal/stt: JSON with base64 audio; the response carries the cost.
+	async transcribe({ apiKey, wav, model }) {
+		const response = await fetch(`${BASE_URL}/audio/transcriptions`, {
+			method: 'POST',
+			headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ model, input_audio: { data: Buffer.from(wav).toString('base64'), format: 'wav' } }),
+		})
+		if (!response.ok) throw new Error(`OpenRouter transcription answered ${response.status}: ${await response.text()}`)
+		const { text, usage } = await response.json() as { text: string, usage?: { cost?: number } }
+		return { text, costUsd: typeof usage?.cost === 'number' ? usage.cost : null }
 	},
 }

@@ -99,7 +99,7 @@ export interface InferencePlatform {
 }
 ```
 
-`attachPdf` and `transcribe` join the interface in phase 7, where files and dictation are built and checked end to end.
+Phase 7 added `pdfUpload` (upload, reference, remove; DeepSeek only), `transcribe` (both) and `capabilities.sttModel` (OpenRouter needs the `sttModel` setting) to the interface.
 
 `TurnInput` carries `apiKey`, `model`, `providers`, `allowFallbacks`, sampling params, `reasoningLevel`, `webSearch`, `userId`, `firstTurn` and `safetyCheck`. `reasoningLevel` is `none` (off), `on` (on at the model's default effort, for toggle-only models), or one of the model's `reasoningLevels`; unset leaves the model's default.
 
@@ -126,7 +126,7 @@ The catalog is cached in memory for an hour per platform, endpoints for ten minu
 | Reasoning | `reasoning` provider option | `thinking` and `reasoningEffort`; levels are `none` plus the model's `effort.supported_levels` |
 | Title | separate call with the `titleModel` setting | `title` flag on the first turn, free |
 | Images | models whose input modalities include `image` | `deepseek-flash` only |
-| PDF | inline, any model | upload to `/files`, reference by `file_id`, `deepseek-flash` only |
+| PDF | inline, any model (the catalog lists `file` for every model) | upload to `/files`, reference by `file_id`, `deepseek-flash` only |
 | Dictation | `POST /api/v1/audio/transcriptions`, model from the `sttModel` setting | `POST /v1/tools/asr` |
 
 ### Switching platforms
@@ -234,8 +234,8 @@ All under `/api/v1`, all requiring a user unless noted.
 | `GET /users/search?q=` | find people to share with: `id`, `username`, `name`, `avatarUrl`; at least 2 characters, 10 results |
 | `GET /models` | `{ platform: { id, capabilities, safetyCheck } \| null, defaultModel, models }`: the allowlisted catalog, cached one hour. `safetyCheck` is the admin setting, reported where the platform has one |
 | `GET /models/endpoints?id=` | upstream providers for one allowlisted model (ids contain slashes, so a query parameter) |
-| `PUT /files/:chatId`, `GET /files/:id`, `DELETE /files/:id` | upload, serve, delete; reading follows the chat's access |
-| `POST /transcriptions` | WAV in, text out |
+| `PUT /chats/:id/files`, `GET /files/:id`, `DELETE /files/:id` | upload one file (field `file`; the chat may not exist yet, but if it does only its owner may add files), serve (follows the chat's access; before the chat exists, the uploader only), delete (the uploader, only while not part of a message). Under `/chats/:id` because `/files/:chatId` and `/files/:id` collide in the router. |
+| `POST /transcriptions` | 16-bit PCM WAV in (field `file`, at most 8 MB and 120 s, read from the header before any call), `{ text }` out; budget-checked and recorded as `stt` |
 | `GET /users/me`, `GET /me/usage`, `PUT /me/api-key`, `DELETE /me/api-key?platform=` | profile (with `apiKeys`: the platforms that have a personal key), month spend against budget, personal key (checked before saving) |
 | `/users/**` | existing user management, migrated to `nuxt/server`, plus budget |
 | `GET /admin/invites`, `POST /admin/invites`, `DELETE /admin/invites/:id` | admin only. Create takes `maxUses` (default 1) and `expiresInDays` (default 7, `null` never expires) and returns the link once; only a hash of the code is stored. Delete revokes. |
@@ -265,15 +265,17 @@ Attachments by media type:
 
 | Type | OpenRouter | DeepSeek |
 |---|---|---|
-| Images | inline, when the model accepts images | inline, `deepseek-flash` only |
-| PDF | inline, any model | `attachPdf()`: upload once, reference by `file_id`, `deepseek-flash` only |
-| CSV and other text | decoded on the server, sent as text | decoded on the server, sent as text |
+| Images | inline (data URL), when the model accepts images | inline, `deepseek-flash` only |
+| PDF | inline (data URL), any model, parsed by the free `cloudflare-ai` engine | `pdfUpload`: upload once per key (cached in `providerFile`, 30-day expiry, recorded as `parse` with unknown cost), reference by `file_id`, `deepseek-flash` only |
+| CSV, Markdown, plain text | decoded on the server, sent as `<file name="…">…</file>` text | same |
+
+A type the model cannot read is replaced by a note in the prompt (`[Attachment "x" left out: …]`), so a chat keeps working after a model switch. Message file parts may only carry `/api/v1/files/<uuid>`, and each file must have been uploaded by the chat's owner to that chat and not belong to another message (`attachFiles`).
 
 Uploads:
 
-- Read with `event.req.formData()`, check with `ensureBlob()` (which answers 400), store with `blob.put()` under `<userId>/<chatId>/<uuid>.<ext>`. The original name lives only in the `file` row. `blob.handleUpload()` is not used: it stores the client's filename and turns rejections into 500.
-- Serve with `Cache-Control: private`, and `Content-Disposition: attachment` for anything that is not an allowed image or PDF type. Otherwise an uploaded HTML or SVG file would render on the app's own origin.
-- Delete blobs one at a time. The S3 driver's batch delete sends no `Content-MD5`, which AWS requires.
+- Read with `event.req.formData()` and checked by hand (400 for the type, 413 over 8 MB): PNG, JPEG, GIF, WebP, PDF, CSV, Markdown, plain text. SVG is refused. `.csv`, `.md` and `.txt` are typed by extension, since browsers often send none. `ensureBlob()` is not used: it checks only the client's type. Stored with `blob.put()` under `<userId>/<chatId>/<uuid>.<ext>`; the original name lives only in the `file` row.
+- Served with `Cache-Control: private, max-age=3600`, `Content-Security-Policy: sandbox`, and `Content-Disposition: attachment` for anything that is not an image or PDF.
+- Deleted on chat delete, on truncation (after the trigger's transaction commits), and when removed from the prompt: rows first, then each blob one at a time (the S3 driver's batch delete sends no `Content-MD5`, which AWS requires), then the DeepSeek copies made with the current key. Copies made with another key expire after 30 days.
 
 Differences from the template, on purpose:
 
@@ -361,8 +363,8 @@ Known ceilings:
 Done in phase 5, except where noted:
 
 - `layouts/default.vue`, `pages/index.vue`, `pages/chat/[id].vue`, `middleware/transitions.global.ts`. The chat page is open to guests (`auth: false`) for link access; guests get no chat list and a sign-in button. `/signin` has no layout.
-- `components/`: `Navbar`, `UserMenu` (the template's links removed; sign-out goes to `/signin`), `ModalConfirm`, `ModalRename`, and under `chat/`: `Prompt` (text only), `ChatTitle`, `ChatVisibility` (link access only), `Indicator`, `SourceLink`, `Comark.ts`, `message/*`, `tool/Chart`. `PromptMenu` moves to phase 6 with the settings it toggles; `DictateButton` to phase 7.
-- `composables/`: `useChats`, `useChatActions`. `useFileUpload` moves to phase 7.
+- `components/`: `Navbar`, `UserMenu` (the template's links removed; sign-out goes to `/signin`), `ModalConfirm`, `ModalRename`, and under `chat/`: `Prompt`, `ChatTitle`, `ChatVisibility`, `Indicator`, `SourceLink`, `Comark.ts`, `message/*`, `tool/Chart`. `PromptMenu` came in phase 6, `DictateButton` in phase 7.
+- `composables/`: `useChats`, `useChatActions`; in phase 7, the template's upload composable as `usePromptUploads` (Nuxt UI auto-imports a `useFileUpload` of its own). The prompt accepts text files always, images and PDFs when the model reads them; a message with attachments cannot be edited, only regenerated.
 - `utils/`: `ai.ts` (citations become inline links, one per URL), `url.ts`; `shared/utils/tools/chart.ts`. `tool/Sources`, `getSources()` and the weather tool are gone: neither platform sends search tool parts, only `source-url` parts.
 - The template's CSS additions in `main.css`; `@comark/vue` registered as a module; view transitions on.
 - The home page shows a notice and disables the prompt while `/models` reports no platform.
@@ -372,7 +374,7 @@ Done in phase 5, except where noted:
 - `useModels` and `ModelSelect` (done in phase 6): catalog from `/models` (skipped for guests), search over name and id, vendor groups, price, context length, extra input types. `resolveModel()` gives a chat's model, falling back to the platform default as the server does.
 - `useChatSettings` (done in phase 6): per-chat `params` and system prompt. A saved chat stores changes with `PATCH /chats/:id`, debounced; every send, edit and regenerate calls `flush()` first so the turn sees them. A new chat starts from the settings last used (cookie `chat-params`) and sends them, with the system prompt, in `POST /chats`. Changing the model clears the chosen providers.
 - `ChatVisibility` (done in phase 6): the share dialog. A people picker backed by `/users/search`, the people with access (removable), a link access switch, and the copy-link button. The share button shows a dot while the chat is shared.
-- `useDictation`: keeps the microphone capture and level meter, collects samples, encodes 16 kHz mono 16-bit WAV on stop and posts it. `SAMPLE_RATE` and `MAX_DURATION` stay as constants. 120 s at 16 kHz is 3.84 MB; at 48 kHz it would be 11.5 MB, over DeepSeek's 8 MiB limit.
+- `useDictation` (done in phase 7): captures the microphone at the device's rate, resamples to 16 kHz as it goes, shows the level meter, encodes a 16-bit mono WAV on stop and posts it to `/transcriptions`. `SAMPLE_RATE` and `MAX_DURATION` stay as constants. 120 s at 16 kHz is 3.84 MB; at 48 kHz it would be 11.5 MB, over DeepSeek's 8 MiB limit.
 - The chat transport (done in phase 5): `prepareSendMessagesRequest` sends `{ trigger: 'submit-message', message }` (the last message) or `{ trigger: 'regenerate-message', messageId }`, with the CSRF header. An edit is `sendMessage({ text, messageId })`; the template's separate delete call is gone. `regenerate()` without an id (the first answer, the retry button) matches the server's rule: both drop a trailing answer, if any.
 
 ### New
@@ -418,7 +420,7 @@ Phase P is done. Phases 2 and 3 are independent once phase 1 is done, and phases
 | 4 | Chat backend | Done. Chat, vote, share, search, usage and admin model routes; the turn route with policy checks, ledger, titles and truncation; `chatAbilities.ts` | ordering, quota, truncation and chat access tests pass (`test/chat.test.ts`); turns streamed through `curl` against fixture upstreams on both platforms (below) |
 | 5 | Frontend port | Done. Section 7 "Ported" on the new API | create, stream, edit, regenerate, vote, rename, delete and link sharing checked in the browser against a fixture upstream (OpenRouter-shaped, slowed to stream word by word), including a chart tool turn, a guest on a shared and on a private chat, and the 402 budget toast |
 | 6 | Extended chat UI | Done. Model and provider pickers, `PromptMenu` with web search and reasoning, settings panel, reply footer and refusal notice, share dialog | checked in the browser against a fixture OpenRouter (catalog, endpoints, answers naming the provider): switching from Baidu to Together changed `metadata.provider` on the next reply, and the request carried the chosen model, providers, fallback, effort, temperature, web search and system prompt; a listed person read the private chat without send or share controls and a stranger got 404; a `content_filter` finish showed the notice. The DeepSeek slider lock is not exercised (no DeepSeek fixture in the browser) |
-| 7 | Files and dictation | File routes on `hub:blob`, attachments by media type, DeepSeek PDF upload flow, WAV dictation; file parts in `userMessageSchema` (text only until then); deleting blobs, remote files and file rows on chat delete and on truncation | an image and a PDF reach a model on each platform; a spoken sentence lands in the prompt on both |
+| 7 | Files and dictation | Done. File routes on `hub:blob`, attachments by media type, DeepSeek PDF upload flow, WAV dictation; file parts in `userMessageSchema`; deleting blobs, remote files and file rows on chat delete and on truncation | checked against fixture platforms that report what they received: on OpenRouter an image and a PDF arrived inline (with the parser plugin) and a CSV as text; on DeepSeek the image inline and the PDF uploaded (`purpose` first) and sent as `file_id`, uploaded once across a regenerate and deleted remotely with the chat; dictation in Chromium, with a `say` recording standing in for the microphone, sent a 4.1 s 16 kHz WAV and put the transcript in the prompt on both platforms. Live: `scripts/attachments-smoke.ts` (section 10) |
 | 8 | Admin and settings | Admin pages, `/settings`, the platform switch and keys, the safety check switch | an admin can invite, ban, set a budget, disable a model, switch signup mode and switch platform from the UI |
 | 9 | Hardening | Rate limits on stream and transcription, CSP review, full smoke run per platform | smoke run passes on OpenRouter and on DeepSeek |
 
@@ -491,8 +493,7 @@ These live checks are still open; none of them blocks phase 4, but the first row
 | Credential | Checks | Command |
 |---|---|---|
 | Both keys | why DeepSeek does not search when continuing an OpenRouter reasoning-model conversation | `OPENROUTER_API_KEY=… DEEPSEEK_API_KEY=… bun scripts/inference-smoke.ts` (forward order; the `request:` lines show what was sent) |
-| OpenRouter key | speech to text, PDF, CSV | `OPENROUTER_API_KEY=… bun scripts/spikes/openrouter/live.ts` (in `../model-chat-studio-prep`) |
-| DeepSeek key | speech to text, file upload | `rest.ts --live` in `../model-chat-studio-prep/scripts/spikes/deepseek/` |
+| Both keys, or one | an image and a PDF reach a model, and a spoken sentence is transcribed, per platform | `OPENROUTER_API_KEY=… DEEPSEEK_API_KEY=… bun scripts/attachments-smoke.ts` (macOS makes the files; elsewhere `--wav`, `--image`, `--pdf`; `OPENROUTER_STT_MODEL` defaults to `openai/whisper-1`) |
 | S3 bucket | put, get, list, private access, batch delete | `S3_ACCESS_KEY_ID=… S3_SECRET_ACCESS_KEY=… S3_BUCKET=… S3_REGION=… [S3_ENDPOINT=…] bun scripts/spikes/nuxt/s3-live.ts` (in `../model-chat-studio-prep`) |
 
 ## 11. Out of scope

@@ -28,6 +28,12 @@ const PEAK_PRICES: Record<string, Required<Pricing>> = {
 	'deepseek-v4-pro': { cacheRead: 0.044, input: 1.32, output: 3.96 },
 }
 
+/** List price of speech to text (the ASR guide also shows a limited-time half price with no end date). */
+const ASR_USD_PER_HOUR = 0.116
+
+/** Uploaded PDFs expire after 30 days, the longest DeepSeek allows, so a lost delete cleans itself up. */
+const PDF_LIFETIME_SECONDS = 30 * 24 * 3600
+
 /**
  * Peak is 01:00–04:00 and 06:00–10:00 UTC, Monday to Friday. Chinese public holidays are off-peak too;
  * they are ignored here, which overcounts slightly and never undercounts.
@@ -137,7 +143,7 @@ function deepseekModel(input: TurnInput) {
 
 export const deepseekPlatform: InferencePlatform = {
 	id: 'deepseek',
-	capabilities: { providerRouting: false, safetyCheck: true, nativeTitle: true },
+	capabilities: { providerRouting: false, safetyCheck: true, nativeTitle: true, sttModel: false },
 
 	async checkKey(apiKey) {
 		const response = await fetch(`${BASE_URL}/models`, { headers: { Authorization: `Bearer ${apiKey}` } })
@@ -184,5 +190,38 @@ export const deepseekPlatform: InferencePlatform = {
 			if (typeof value === 'string') title = value
 		}
 		return { ...tokens, costUsd, title }
+	},
+
+	// https://api-docs.deepseek.com/guides/document_parsing: chat takes a parsed document by `file_id` only.
+	pdfUpload: {
+		async upload(apiKey, pdf) {
+			const form = new FormData()
+			// `purpose` must come before `file`, else DeepSeek answers 400.
+			form.append('purpose', 'text_recognition')
+			form.append('expires_after[anchor]', 'created_at')
+			form.append('expires_after[seconds]', String(PDF_LIFETIME_SECONDS))
+			form.append('file', new Blob([pdf.bytes as Uint8Array<ArrayBuffer>], { type: 'application/pdf' }), pdf.name)
+			const response = await fetch(`${BASE_URL}/files`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form })
+			if (!response.ok) throw new Error(`DeepSeek /files answered ${response.status}: ${await response.text()}`)
+			const { id } = await response.json() as { id: string }
+			return { remoteId: id, expiresAt: new Date(Date.now() + PDF_LIFETIME_SECONDS * 1000) }
+		},
+		// `@ai-sdk/deepseek` emits `{ type: 'file', file_id }` only for image references, which is exactly
+		// the block DeepSeek expects for a parsed document.
+		reference: remoteId => ({ mediaType: 'image', providerReference: { deepseek: remoteId } }),
+		async remove(apiKey, remoteId) {
+			const response = await fetch(`${BASE_URL}/files/${encodeURIComponent(remoteId)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${apiKey}` } })
+			if (!response.ok && response.status !== 404) throw new Error(`DeepSeek DELETE /files answered ${response.status}`)
+		},
+	},
+
+	// https://api-docs.deepseek.com/guides/asr: at most 120 s and 8 MiB, billed per started second.
+	async transcribe({ apiKey, wav }) {
+		const form = new FormData()
+		form.append('file', new Blob([wav as Uint8Array<ArrayBuffer>], { type: 'audio/wav' }), 'speech.wav')
+		const response = await fetch(`${BASE_URL}/v1/tools/asr`, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form })
+		if (!response.ok) throw new Error(`DeepSeek ASR answered ${response.status}: ${await response.text()}`)
+		const { text, duration_ms } = await response.json() as { text: string, duration_ms: number }
+		return { text, costUsd: Math.ceil(duration_ms / 1000) * ASR_USD_PER_HOUR / 3600 }
 	},
 }

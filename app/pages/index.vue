@@ -22,8 +22,11 @@ const greeting = computed(() => {
 	return name ? `${timeGreeting}, ${name}` : timeGreeting
 })
 
+// Files upload to the new chat's id before the chat exists; creating it links them to the first message.
+const { uploads, promptFiles, uploading, parts: fileParts } = usePromptUploads(chatId)
+
 async function createChat(prompt: string) {
-	if (!prompt.trim() || loading.value) return
+	if ((!prompt.trim() && !fileParts.value.length) || uploading.value || loading.value) return
 	input.value = prompt
 	loading.value = true
 	try {
@@ -32,7 +35,7 @@ async function createChat(prompt: string) {
 			headers: { [headerName]: csrf },
 			body: {
 				id: chatId,
-				message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: prompt }] },
+				message: { id: crypto.randomUUID(), role: 'user', parts: [...(prompt.trim() ? [{ type: 'text', text: prompt }] : []), ...fileParts.value] },
 				params: params.value,
 				systemPrompt: systemPrompt.value || undefined,
 			},
@@ -81,6 +84,9 @@ const quickChats = [
 						v-model="input"
 						v-model:params="params"
 						v-model:system-prompt="systemPrompt"
+						v-model:files="promptFiles"
+						:uploads="uploads"
+						:uploading="uploading"
 						:disabled="loading || unavailable"
 						class="[view-transition-name:chat-prompt]"
 						@submit="createChat(input)"

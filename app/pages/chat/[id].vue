@@ -29,6 +29,7 @@ await useModels().ready
 const { params, systemPrompt, flush } = useChatSettings(data.value ?? undefined)
 
 const input = ref('')
+const { uploads, promptFiles, uploading, parts: fileParts, clear: clearFiles } = usePromptUploads(chatId)
 
 /** The body of an error response, as the server describes it. */
 function describeError(error: Error): string {
@@ -71,10 +72,12 @@ const { messages, status, error, sendMessage, regenerate, stop } = useChat({
 async function handleSubmit(e: Event) {
 	e.preventDefault()
 	const text = input.value
-	if (!text.trim()) return
+	const files = fileParts.value
+	if ((!text.trim() && !files.length) || uploading.value) return
 	input.value = ''
+	clearFiles()
 	await flush()
-	sendMessage({ text })
+	sendMessage(text.trim() ? { text, files } : { files })
 }
 
 async function regenerateAnswer(messageId?: string) {
@@ -171,6 +174,17 @@ onMounted(() => {
 							</div>
 						</template>
 
+						<template #files="{ message, parts }">
+							<UChatAttachment
+								v-for="(part, index) in parts"
+								:key="`${message.id}-${index}`"
+								:name="part.filename ?? 'file'"
+								:type="part.mediaType"
+								:url="part.url"
+								:icon="getFileIcon(part.mediaType)"
+							/>
+						</template>
+
 						<template #content="{ message, streaming }">
 							<ChatMessageContent
 								:message="message"
@@ -198,6 +212,9 @@ onMounted(() => {
 								v-model="input"
 								v-model:params="params"
 								v-model:system-prompt="systemPrompt"
+								v-model:files="promptFiles"
+								:uploads="uploads"
+								:uploading="uploading"
 								:status="status"
 								:error="error"
 								class="[view-transition-name:chat-prompt] rounded-b-none backdrop-blur-sm"

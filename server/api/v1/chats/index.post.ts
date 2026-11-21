@@ -3,7 +3,7 @@ import { db, schema } from 'hub:db'
 import { z } from 'zod'
 import { chatParamsSchema } from '#shared/utils/chat'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
-import { userMessageSchema } from '#server/utils/chat/turns'
+import { attachFiles, userMessageSchema } from '#server/utils/chat/turns'
 
 const bodySchema = z.object({
 	id: z.uuid(),
@@ -23,6 +23,7 @@ export default defineEventHandler(async (event) => {
 			? await tx.insert(schema.message).values({ id: message.id, chatId: id, role: 'user', parts: message.parts }).onConflictDoNothing().returning()
 			: []
 		if (!chat || !saved) throw createError({ status: 409, statusText: 'This id is already in use' })
+		await attachFiles(tx, id, saved.id, message.parts)
 		const { userId: _, ...view } = chat
 		return view
 	})

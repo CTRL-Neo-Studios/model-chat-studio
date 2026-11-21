@@ -1,15 +1,19 @@
 <script setup lang="ts">
 import type { ChatStatus } from 'ai'
 import type { ChatParams } from '#shared/utils/chat'
+import type { PromptUpload } from '~/composables/usePromptUploads'
 
-// ponytail: attachments and dictation arrive in phase 7.
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
 	status?: ChatStatus
 	error?: Error
 	disabled?: boolean
+	/** The upload state of the files, in the same order as `v-model:files`. */
+	uploads?: PromptUpload[]
+	uploading?: boolean
 }>(), {
 	status: 'ready',
 	error: undefined,
+	uploads: () => [],
 })
 
 const emit = defineEmits<{
@@ -19,34 +23,75 @@ const emit = defineEmits<{
 }>()
 
 const input = defineModel<string>({ default: '' })
+const files = defineModel<File[]>('files', { default: () => [] })
 const params = defineModel<ChatParams>('params', { required: true })
 const systemPrompt = defineModel<string>('systemPrompt', { required: true })
 
 const { platform, resolveModel } = useModels()
 const model = computed(() => resolveModel(params.value.model))
+// Text files always; images and PDFs when the model reads them.
+const accept = computed(() => fileAcceptPattern({
+	images: !!model.value?.inputModalities.includes('image'),
+	pdf: !!model.value?.inputModalities.includes('file'),
+}))
 
 // Provider choices belong to one model.
 function setModel(id: string) {
 	params.value = { ...params.value, model: id, providers: undefined }
+}
+
+// A model no longer offered falls back to the default without its provider and reasoning choices,
+// as on the server; clearing them keeps the pickers from showing choices that are ignored.
+watch(model, (current) => {
+	if (current && params.value.model && params.value.model !== current.id) {
+		params.value = { ...params.value, model: current.id, providers: undefined, reasoningLevel: undefined }
+	}
+}, { immediate: true })
+
+const dictation = ref<'idle' | 'recording' | 'transcribing'>('idle')
+const placeholder = computed(() => ({ idle: undefined, recording: 'Listening...', transcribing: 'Transcribing...' })[dictation.value])
+// The microphone replaces the send button while the prompt is empty.
+const canDictate = computed(() => dictation.value !== 'idle' || (props.status === 'ready' && !input.value.trim() && !files.value.length))
+
+function appendTranscript(text: string) {
+	input.value = input.value.trim() ? `${input.value.trimEnd()} ${text}` : text
 }
 </script>
 
 <template>
 	<UChatPrompt
 		v-model="input"
+		v-model:files="files"
+		:accept="accept"
 		:status="status"
 		:error="error"
 		:disabled="disabled"
+		:placeholder="placeholder"
 		color="neutral"
 		variant="subtle"
-		:ui="{ base: 'px-1.5' }"
+		:ui="{ base: ['px-1.5', dictation !== 'idle' && 'placeholder:italic'] }"
 		@submit="emit('submit', $event)"
 	>
-		<template #footer>
+		<template #files="{ remove }">
+			<UChatAttachment
+				v-for="(upload, index) in uploads"
+				:key="upload.id"
+				:file="upload.file"
+				:icon="getFileIcon(upload.file.type)"
+				:status="upload.status === 'uploaded' ? 'idle' : upload.status"
+				:description="upload.error"
+				size="sm"
+				removable
+				@remove="remove(index)"
+			/>
+		</template>
+
+		<template #footer="{ open }">
 			<ChatPromptMenu
 				v-model:web-search="params.webSearch"
 				v-model:reasoning-level="params.reasoningLevel"
 				:model="model"
+				:open="open"
 			/>
 
 			<div class="flex items-center gap-1 min-w-0">
@@ -61,9 +106,16 @@ function setModel(id: string) {
 
 				<ChatSettingsPanel v-model:params="params" v-model:system-prompt="systemPrompt" :model="model" />
 
+				<ChatDictateButton
+					v-if="canDictate"
+					v-model:state="dictation"
+					:disabled="uploading || disabled"
+					@transcript="appendTranscript"
+				/>
 				<UChatPromptSubmit
+					v-else
 					:status="status"
-					:disabled="disabled"
+					:disabled="uploading || disabled"
 					color="neutral"
 					size="sm"
 					@stop="emit('stop')"

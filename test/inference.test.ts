@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { streamText } from 'ai'
+import { convertToModelMessages, streamText, type UIMessage } from 'ai'
 import { deepseekPlatform, deepseekPrice, isPeak } from '../server/utils/inference/deepseek'
 import { openrouterPlatform, toOpenRouterModel } from '../server/utils/inference/openrouter'
-import type { TurnInput } from '../server/utils/inference/types'
+import type { InferencePlatform, TurnInput } from '../server/utils/inference/types'
+import { wavDurationSeconds } from '../server/utils/inference/wav'
 import { deepseekChunks, openrouterChunks, sseResponse } from './fixtures/sse'
 
 const realFetch = globalThis.fetch
@@ -78,7 +79,7 @@ describe('OpenRouter', () => {
 		const toggleOnly = toOpenRouterModel({ ...base, reasoning: { mandatory: false, default_enabled: true } })
 		expect(toggleOnly.pricing!.input).toBeCloseTo(0.65)
 		expect(toggleOnly.pricing!.cacheRead).toBeCloseTo(0.15)
-		expect(toggleOnly.inputModalities).toEqual(['text', 'image'])
+		expect(toggleOnly.inputModalities).toEqual(['text', 'image', 'file'])
 		expect(toggleOnly.webSearch).toBe(true)
 		expect(toggleOnly.reasoningLevels).toEqual([])
 		expect(toggleOnly.reasoning).toEqual({ mandatory: false, defaultEnabled: true })
@@ -141,5 +142,67 @@ describe('DeepSeek', () => {
 		expect(offPeak.output).toBeCloseTo(1.98)
 		expect(deepseekPrice('deepseek-v4-pro', new Date(), { input: 1, output: 2 })).toEqual({ input: 1, output: 2, cacheRead: 1 })
 		expect(deepseekPrice('deepseek-next', new Date())).toBeNull()
+	})
+})
+
+describe('Attachments and speech', () => {
+	async function requestFor(platform: InferencePlatform, model: string, part: UIMessage['parts'][number]) {
+		const bodies = captureFetch(platform === openrouterPlatform ? openrouterChunks() : deepseekChunks)
+		const messages: UIMessage[] = [{ id: 'm', role: 'user', parts: [part, { type: 'text', text: 'Summarize.' }] }]
+		await streamText({ ...platform.prepare(turn({ model })), messages: await convertToModelMessages(messages), maxRetries: 0 }).consumeStream()
+		return bodies[0] as { messages: { content: unknown }[], plugins?: unknown }
+	}
+
+	test('a DeepSeek PDF goes by file id; OpenRouter gets it inline with the free parser', async () => {
+		const reference = deepseekPlatform.pdfUpload!.reference('file-api-1')
+		const deepseek = await requestFor(deepseekPlatform, 'deepseek-flash', { type: 'file', url: '/api/v1/files/x', ...reference })
+		expect(deepseek.messages.at(-1)!.content).toContainEqual({ type: 'file', file_id: 'file-api-1' })
+
+		const openrouter = await requestFor(openrouterPlatform, 'openai/gpt-5-mini', { type: 'file', mediaType: 'application/pdf', filename: 'a.pdf', url: 'data:application/pdf;base64,JVBERi0xLjQ=' })
+		expect(openrouter.plugins).toEqual([{ id: 'file-parser', pdf: { engine: 'cloudflare-ai' } }])
+		expect(JSON.stringify(openrouter.messages.at(-1)!.content)).toContain('JVBERi0xLjQ=')
+	})
+
+	test('DeepSeek uploads a PDF with `purpose` before `file`, and bills speech per started second', async () => {
+		const forms: FormData[] = []
+		globalThis.fetch = (async (url: string, init?: RequestInit) => {
+			forms.push(await new Request(url, init).formData())
+			return url.endsWith('/files') ? Response.json({ id: 'file-api-1' }) : Response.json({ text: 'hello', duration_ms: 3200 })
+		}) as typeof fetch
+
+		expect(await deepseekPlatform.pdfUpload!.upload('sk-test', { bytes: new Uint8Array([37, 80, 68, 70]), name: 'a.pdf' })).toMatchObject({ remoteId: 'file-api-1' })
+		expect([...forms[0]!.keys()]).toEqual(['purpose', 'expires_after[anchor]', 'expires_after[seconds]', 'file'])
+
+		const speech = await deepseekPlatform.transcribe({ apiKey: 'sk-test', wav: new Uint8Array(44) })
+		expect(speech.text).toBe('hello')
+		expect(speech.costUsd).toBeCloseTo(4 * 0.116 / 3600, 12)
+	})
+
+	test('OpenRouter sends speech as base64 WAV to the chosen model and reads the cost', async () => {
+		let body: { model?: string, input_audio?: { data: string, format: string } } = {}
+		globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+			body = JSON.parse(String(init?.body))
+			return Response.json({ text: ' hello ', usage: { seconds: 1, cost: 0.0000075 } })
+		}) as typeof fetch
+		expect(await openrouterPlatform.transcribe({ apiKey: 'sk-test', wav: new Uint8Array([1, 2, 3]), model: 'openai/whisper-1' })).toEqual({ text: ' hello ', costUsd: 0.0000075 })
+		expect(body).toEqual({ model: 'openai/whisper-1', input_audio: { data: 'AQID', format: 'wav' } })
+	})
+
+	test('reads the duration of a 16-bit PCM WAV and rejects anything else', () => {
+		const wav = (bits: number, seconds: number, rate = 16000) => {
+			const dataSize = seconds * rate * bits / 8
+			const bytes = new Uint8Array(44 + dataSize)
+			const view = new DataView(bytes.buffer)
+			const ascii = (at: number, text: string) => [...text].forEach((c, i) => view.setUint8(at + i, c.charCodeAt(0)))
+			ascii(0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); ascii(8, 'WAVE')
+			ascii(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true)
+			view.setUint32(24, rate, true); view.setUint32(28, rate * bits / 8, true); view.setUint16(32, bits / 8, true); view.setUint16(34, bits, true)
+			ascii(36, 'data'); view.setUint32(40, dataSize, true)
+			return bytes
+		}
+		expect(wavDurationSeconds(wav(16, 3))).toBe(3)
+		expect(wavDurationSeconds(wav(16, 1, 48000))).toBe(1)
+		expect(wavDurationSeconds(wav(8, 1))).toBeNull()
+		expect(wavDurationSeconds(new TextEncoder().encode('not a wav at all'))).toBeNull()
 	})
 })
