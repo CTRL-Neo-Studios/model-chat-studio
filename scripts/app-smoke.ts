@@ -86,6 +86,11 @@ const settings = await api<Settings>('GET', '/admin/settings')
 const original = settings.inferencePlatform
 const platforms = (['openrouter', 'deepseek'] as const).filter(id => settings.platforms[id].hasKey)
 console.log(`${BASE}: instance keys for ${platforms.join(', ') || 'no platform'}; active: ${original ?? 'none'}`)
+if (!platforms.length) {
+	// Nothing ran, so nothing passed.
+	console.error('No platform has an instance key. Add one under /admin/settings (or PATCH /api/v1/admin/settings), then run again.')
+	process.exit(1)
+}
 
 try {
 	for (const platform of platforms) {
