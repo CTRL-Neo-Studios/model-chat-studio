@@ -5,7 +5,7 @@ definePageMeta({ minRole: 'admin' })
 useHead({ title: 'Models' })
 
 const act = useApiAction()
-const { data, refresh } = await useFetch('/api/v1/admin/models')
+const { data, error, refresh } = await useFetch('/api/v1/admin/models')
 type Row = NonNullable<typeof data.value>['models'][number]
 
 const platform = computed(() => data.value?.platform ?? null)
@@ -56,7 +56,9 @@ const columns = computed<TableColumn<Row>[]>(() => [
 
 <template>
 	<AdminPanel title="Models">
-		<UAlert v-if="!platform" color="warning" variant="subtle" icon="i-lucide-plug-zap" title="No platform is active" description="Choose a platform and add its key in the settings first." />
+		<UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-alert-circle" title="The models could not be loaded" :description="serverMessage(error)" :actions="[{ label: 'Retry', color: 'error', variant: 'outline', onClick: () => refresh() }]" />
+		<UAlert v-else-if="!platform" color="warning" variant="subtle" icon="i-lucide-plug-zap" title="No platform is active" description="Choose a platform and add its key in the settings first." />
+		<UAlert v-else-if="!data?.hasKey" color="warning" variant="subtle" icon="i-lucide-key-round" title="The active platform has no key" description="Add its key in the settings to list its models." />
 
 		<template v-else>
 			<UAlert

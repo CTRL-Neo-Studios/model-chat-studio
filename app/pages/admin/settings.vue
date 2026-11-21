@@ -1,16 +1,43 @@
 <script setup lang="ts">
+import type { BrowsableModel } from '~/composables/useModels'
+
 definePageMeta({ minRole: 'admin' })
 useHead({ title: 'Admin settings' })
 
 type PlatformId = 'openrouter' | 'deepseek'
 
 const act = useApiAction()
+const queryCache = useQueryCache()
 const { data: settings } = await useFetch('/api/v1/admin/settings')
-// The active platform's full catalog, for the model fields.
-const { data: catalog, refresh: refreshCatalog } = await useLazyFetch('/api/v1/admin/models', { server: false })
 
 const platformNames: Record<PlatformId, string> = { openrouter: 'OpenRouter', deepseek: 'DeepSeek' }
 const platformIds: PlatformId[] = ['openrouter', 'deepseek']
+
+type CatalogKind = 'chat' | 'stt'
+// Each platform's catalog with its own key, active or not. Loaded in the browser: catalogs are large.
+function useAdminCatalog(platform: PlatformId, kind: CatalogKind) {
+	return useQuery({
+		key: ['admin', 'catalog', platform, kind],
+		// Typed by hand: the inferred route type is too deep for `useQuery`.
+		query: () => $fetch<{ models: BrowsableModel[] }>('/api/v1/admin/models', { query: { platform, kind } }),
+		enabled: () => import.meta.client && !!settings.value?.platforms[platform].hasKey
+			&& (kind === 'chat' || settings.value.capabilities[platform].sttModel),
+		staleTime: 5 * 60_000,
+	})
+}
+const catalogs = Object.fromEntries(platformIds.map(id => [id, { chat: useAdminCatalog(id, 'chat'), stt: useAdminCatalog(id, 'stt') }])) as Record<PlatformId, Record<CatalogKind, ReturnType<typeof useAdminCatalog>>>
+
+/** Props for a `ModelField` choosing from one platform's catalog. */
+function picker(id: PlatformId, kind: CatalogKind) {
+	const { data, status, asyncStatus, error } = catalogs[id][kind]
+	return {
+		models: data.value?.models ?? [],
+		// A retry after an error is loading again.
+		status: asyncStatus.value === 'loading' ? 'pending' as const : status.value,
+		error: error.value ? serverMessage(error.value) ?? error.value.message : undefined,
+		disabledReason: settings.value?.platforms[id].hasKey ? undefined : 'Add a key first',
+	}
+}
 
 // Form state, filled from the server and refilled from each save's response.
 const general = reactive({ signupMode: 'invite' as 'invite' | 'open' | 'closed', defaultMonthlyBudgetUsd: null as number | null })
@@ -40,8 +67,8 @@ async function save(section: string, body: Record<string, unknown>) {
 	saving.value = null
 	if (view) {
 		fill(view)
-		// The model picker and the home page notice follow the active platform.
-		await Promise.all([refreshCatalog(), refreshNuxtData('models')])
+		// The pickers follow the keys (a failed catalog shows in its picker); the model picker and the home page notice follow the active platform.
+		await Promise.all([queryCache.invalidateQueries({ key: ['admin', 'catalog'] }).catch(() => {}), refreshNuxtData('models')])
 	}
 }
 
@@ -75,8 +102,6 @@ const platformChoices = computed(() => [
 		description: settings.value?.platforms[id].hasKey ? 'Instance key set.' : 'No instance key: only members with their own key can chat.',
 	})),
 ])
-
-const catalogFor = (id: PlatformId) => catalog.value?.platform === id ? catalog.value.models : []
 </script>
 
 <template>
@@ -139,26 +164,35 @@ const catalogFor = (id: PlatformId) => catalog.value?.platform === id ? catalog.
 
 				<UFormField label="Default model" description="For new chats, and for chats whose model is no longer offered.">
 					<ModelField
+						v-bind="picker(id, 'chat')"
 						:model-value="platformForms[id].defaultModel || null"
-						:models="catalogFor(id)"
 						placeholder="Choose the default model"
 						clearable
 						@update:model-value="platformForms[id].defaultModel = $event ?? ''"
+						@retry="catalogs[id].chat.refetch()"
 					/>
 				</UFormField>
 
 				<UFormField v-if="!settings.capabilities[id].nativeTitle" label="Title model" description="Names new chats with a short call; empty uses the start of the first message.">
 					<ModelField
+						v-bind="picker(id, 'chat')"
 						:model-value="platformForms[id].titleModel || null"
-						:models="catalogFor(id)"
 						placeholder="None: the start of the first message"
 						clearable
 						@update:model-value="platformForms[id].titleModel = $event ?? ''"
+						@retry="catalogs[id].chat.refetch()"
 					/>
 				</UFormField>
 
-				<UFormField v-if="settings.capabilities[id].sttModel" label="Speech-to-text model" description="Dictation is off until one is set, e.g. openai/whisper-1.">
-					<UInput v-model="platformForms[id].sttModel" placeholder="openai/whisper-1" class="w-full" />
+				<UFormField v-if="settings.capabilities[id].sttModel" label="Speech-to-text model" description="Dictation is off until one is set.">
+					<ModelField
+						v-bind="picker(id, 'stt')"
+						:model-value="platformForms[id].sttModel || null"
+						placeholder="None: dictation is off"
+						clearable
+						@update:model-value="platformForms[id].sttModel = $event ?? ''"
+						@retry="catalogs[id].stt.refetch()"
+					/>
 				</UFormField>
 
 				<template v-if="settings.capabilities[id].safetyCheck">

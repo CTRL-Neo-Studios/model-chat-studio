@@ -7,15 +7,31 @@ const props = withDefaults(defineProps<{
 	placeholder?: string
 	/** Offers to clear the choice, which means `null`. */
 	clearable?: boolean
-}>(), { placeholder: 'Choose a model' })
+	/** The list's request, shown in the browser while it is open. */
+	status?: 'pending' | 'error' | 'success'
+	error?: string
+	/** Why no model can be chosen; disables the field and shows instead of the placeholder. */
+	disabledReason?: string
+}>(), { placeholder: 'Choose a model', status: 'success', error: undefined, disabledReason: undefined })
+
+const emit = defineEmits<{ retry: [] }>()
 
 const model = defineModel<string | null>({ default: null })
 
 const browser = useOverlay().create(LazyModelBrowser)
 const current = computed(() => props.models.find(entry => entry.id === model.value))
 
+// The list may still be loading when the browser opens; it follows the list until closed.
+const list = computed(() => ({ models: props.models, status: props.status, error: props.error }))
+let open = false
+watch(list, (value) => {
+	if (open) browser.patch(value)
+})
+
 async function choose() {
-	const id = await browser.open({ models: props.models, selected: model.value }).result
+	open = true
+	const id = await browser.open({ ...list.value, selected: model.value, onRetry: () => emit('retry') }).result
+	open = false
 	if (id) model.value = id
 }
 </script>
@@ -27,6 +43,7 @@ async function choose() {
 			variant="outline"
 			trailing-icon="i-lucide-chevrons-up-down"
 			class="flex-1 min-w-0"
+			:disabled="!!disabledReason"
 			:ui="{ trailingIcon: 'ms-auto text-dimmed' }"
 			@click="choose"
 		>
@@ -34,7 +51,7 @@ async function choose() {
 				<span class="truncate">{{ current?.name ?? model }}</span>
 				<span v-if="current" class="text-xs text-muted font-mono truncate">{{ model }}</span>
 			</span>
-			<span v-else class="text-dimmed truncate">{{ placeholder }}</span>
+			<span v-else class="text-dimmed truncate">{{ disabledReason ?? placeholder }}</span>
 		</UButton>
 		<UButton
 			v-if="clearable && model"

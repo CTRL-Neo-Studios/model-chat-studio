@@ -29,19 +29,24 @@ export interface ActiveInference {
  * The active platform and the key to use for this user: their own key for that platform, else the instance key.
  * `null` until an admin has chosen a platform and either key exists.
  */
-export async function useInference(db: Db, userId?: string): Promise<ActiveInference | null> {
+export async function useInference(db: Db, userId: string): Promise<ActiveInference | null> {
 	const id = await getSetting(db, 'inferencePlatform')
 	if (!id) return null
 	const config = await getSetting(db, `inference.${id}`)
 
-	const [own] = userId
-		? await db.select({ ciphertext: tables.userApiKey.ciphertext }).from(tables.userApiKey)
-				.where(and(eq(tables.userApiKey.userId, userId), eq(tables.userApiKey.platform, id)))
-		: []
+	const [own] = await db.select({ ciphertext: tables.userApiKey.ciphertext }).from(tables.userApiKey)
+		.where(and(eq(tables.userApiKey.userId, userId), eq(tables.userApiKey.platform, id)))
 	const sealed = own?.ciphertext ?? config.apiKey
 	if (!sealed) return null
 
 	return { platform: platformAdapters[id], apiKey: await openSecret(sealed), byok: !!own, config }
+}
+
+/** A platform with its instance key, active or not; `null` without a key. For the admin pages. */
+export async function instanceInference(db: Db, id: InferencePlatformId): Promise<ActiveInference | null> {
+	const config = await getSetting(db, `inference.${id}`)
+	if (!config.apiKey) return null
+	return { platform: platformAdapters[id], apiKey: await openSecret(config.apiKey), byok: false, config }
 }
 
 interface CacheEntry<T> { expires: number, value: Promise<T> }
@@ -64,6 +69,14 @@ function cached<T>(cache: Map<string, CacheEntry<T>>, key: string, ttlMs: number
 export async function getFullCatalog(inference: ActiveInference): Promise<CatalogModel[]> {
 	const { platform, apiKey } = inference
 	return await cached(catalogCache, platform.id, 60 * 60_000, () => platform.listModels(apiKey))
+}
+
+/** The platform's speech-to-text models, cached for an hour; empty where none is chosen. */
+export async function getSttCatalog(inference: ActiveInference): Promise<CatalogModel[]> {
+	const { platform, apiKey } = inference
+	const list = platform.listSttModels
+	if (!list) return []
+	return await cached(catalogCache, `${platform.id}:stt`, 60 * 60_000, () => list(apiKey))
 }
 
 /** The platform's models, narrowed to the admin allowlist when it has entries. */

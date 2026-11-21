@@ -116,6 +116,18 @@ export const openrouterPlatform: InferencePlatform = {
 		return data.filter(m => m.architecture.output_modalities.includes('text')).map(toOpenRouterModel)
 	},
 
+	async listSttModels(apiKey) {
+		const { data } = await get<{ data: OpenRouterModel[] }>('/models?output_modalities=transcription', apiKey)
+		// OpenRouter prices transcription per second of audio, in `pricing.prompt`.
+		return data.map(model => ({
+			...toOpenRouterModel(model),
+			inputModalities: ['audio'],
+			outputModalities: ['text'],
+			pricing: null,
+			pricePerMinute: model.pricing.prompt ? Number(model.pricing.prompt) * 60 : null,
+		}))
+	},
+
 	async listEndpoints(apiKey, modelId) {
 		const { data } = await get<{ data: { endpoints: OpenRouterEndpoint[] } }>(`/models/${modelId}/endpoints`, apiKey)
 		return data.endpoints.map(toOpenRouterEndpoint)

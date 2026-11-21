@@ -28,6 +28,8 @@ export interface CatalogModel {
 	reasoningLevels: string[]
 	defaultReasoningLevel: string | null
 	pricing: Pricing | null
+	/** Speech-to-text models only: USD per minute of audio. */
+	pricePerMinute?: number | null
 }
 
 /** An upstream provider serving one OpenRouter model. */
@@ -102,6 +104,8 @@ export interface InferencePlatform {
 	/** Resolves false for a key the platform rejects; throws when the platform cannot be reached. */
 	checkKey(apiKey: string): Promise<boolean>
 	listModels(apiKey: string): Promise<CatalogModel[]>
+	/** Speech-to-text models, for platforms where one is chosen (`capabilities.sttModel`). */
+	listSttModels?(apiKey: string): Promise<CatalogModel[]>
 	listEndpoints?(apiKey: string, modelId: string): Promise<CatalogEndpoint[]>
 	prepare(input: TurnInput): PreparedTurn
 	/** `price` is an admin override for platforms that report no cost. */

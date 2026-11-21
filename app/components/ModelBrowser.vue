@@ -9,10 +9,16 @@ const props = withDefaults(defineProps<{
 	models: Entry[]
 	selected?: string | null
 	title?: string
-}>(), { selected: null, title: 'Choose a model' })
+	/** The list's request; `pending` with no models shows placeholder rows. */
+	status?: 'pending' | 'error' | 'success'
+	error?: string
+}>(), { selected: null, title: 'Choose a model', status: 'success', error: undefined })
 
 /** The chosen model id, or nothing when dismissed. */
-const emit = defineEmits<{ close: [id?: string] }>()
+const emit = defineEmits<{ close: [id?: string], retry: [] }>()
+
+// Speech-to-text models: priced per minute of audio, and the input filter does not apply.
+const perMinute = computed(() => props.models.some(entry => entry.pricePerMinute !== undefined))
 
 const UIcon = resolveComponent('UIcon')
 const UTooltip = resolveComponent('UTooltip')
@@ -26,16 +32,16 @@ const inputFilters = [
 	{ label: 'Reads images', value: 'image' },
 	{ label: 'Reads PDFs', value: 'file' },
 ]
-const sorts = [
+const sorts = computed(() => [
 	{ label: 'By name', value: 'name' },
 	{ label: 'Cheapest first', value: 'price' },
-	{ label: 'Largest context', value: 'context' },
-]
+	...(perMinute.value ? [] : [{ label: 'Largest context', value: 'context' }]),
+])
 
 // Every word must appear in the name, id or vendor.
 const rows = computed(() => {
 	const words = search.value.toLowerCase().split(/\s+/).filter(Boolean)
-	const price = (entry: Entry) => entry.pricing ? entry.pricing.input + entry.pricing.output : Number.POSITIVE_INFINITY
+	const price = (entry: Entry) => entry.pricePerMinute ?? (entry.pricing ? entry.pricing.input + entry.pricing.output : null) ?? Number.POSITIVE_INFINITY
 	return props.models
 		.filter(entry => input.value === 'any' || entry.inputModalities.includes(input.value))
 		.filter((entry) => {
@@ -59,7 +65,7 @@ const modalities = (list: string[]) => h('div', { class: 'flex gap-1 text-muted'
 	h(UTooltip, { text: modalityIcons[m]!.label }, () => h(UIcon, { name: modalityIcons[m]!.icon, class: 'size-4' })),
 ))
 
-const columns: TableColumn<Entry>[] = [{
+const columns = computed<TableColumn<Entry>[]>(() => [{
 	accessorKey: 'name',
 	header: 'Model',
 	cell: ({ row }) => h('div', { class: 'flex flex-col min-w-0' }, [
@@ -75,22 +81,29 @@ const columns: TableColumn<Entry>[] = [{
 	id: 'output',
 	header: 'Output',
 	cell: ({ row }) => modalities(row.original.outputModalities),
-}, {
-	accessorKey: 'contextLength',
-	header: 'Context',
-	cell: ({ row }) => row.original.contextLength ? formatTokens(row.original.contextLength) : '–',
-	meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } },
-}, {
-	accessorKey: 'maxOutputTokens',
-	header: 'Max output',
-	cell: ({ row }) => row.original.maxOutputTokens ? formatTokens(row.original.maxOutputTokens) : '–',
-	meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } },
-}, {
-	id: 'price',
-	header: 'Price per 1M (in / out)',
-	cell: ({ row }) => row.original.pricing ? `${formatUsd(row.original.pricing.input)} / ${formatUsd(row.original.pricing.output)}` : 'Unknown',
-	meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } },
-}]
+}, ...(perMinute.value
+	? [{
+			id: 'price',
+			header: 'Price per minute',
+			cell: ({ row }) => row.original.pricePerMinute != null ? formatUsd(row.original.pricePerMinute) : 'Unknown',
+			meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } },
+		} satisfies TableColumn<Entry>]
+	: [{
+			accessorKey: 'contextLength',
+			header: 'Context',
+			cell: ({ row }) => row.original.contextLength ? formatTokens(row.original.contextLength) : '–',
+			meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } },
+		}, {
+			accessorKey: 'maxOutputTokens',
+			header: 'Max output',
+			cell: ({ row }) => row.original.maxOutputTokens ? formatTokens(row.original.maxOutputTokens) : '–',
+			meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } },
+		}, {
+			id: 'price',
+			header: 'Price per 1M (in / out)',
+			cell: ({ row }) => row.original.pricing ? `${formatUsd(row.original.pricing.input)} / ${formatUsd(row.original.pricing.output)}` : 'Unknown',
+			meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } },
+		}] satisfies TableColumn<Entry>[])])
 
 function choose(_event: Event, row: TableRow<Entry>) {
 	emit('close', row.original.id)
@@ -106,10 +119,23 @@ function choose(_event: Event, row: TableRow<Entry>) {
 						<span class="text-xs text-muted tabular-nums">{{ rows.length }} models</span>
 					</template>
 				</UInput>
-				<USelect v-model="input" :items="inputFilters" class="w-40" />
+				<USelect v-if="!perMinute" v-model="input" :items="inputFilters" class="w-40" />
 				<USelect v-model="sort" :items="sorts" class="w-40" />
 			</div>
+			<UAlert
+				v-if="status === 'error' && !models.length"
+				color="error"
+				variant="subtle"
+				icon="i-lucide-alert-circle"
+				title="The models could not be loaded"
+				:description="error"
+				:actions="[{ label: 'Retry', color: 'error', variant: 'outline', onClick: () => emit('retry') }]"
+			/>
+			<div v-else-if="status === 'pending' && !models.length" class="h-[60vh] flex flex-col gap-3 p-2" aria-busy="true" aria-label="Loading models">
+				<USkeleton v-for="n in 8" :key="n" class="h-9 w-full" />
+			</div>
 			<UTable
+				v-else
 				sticky
 				virtualize
 				:data="rows"
