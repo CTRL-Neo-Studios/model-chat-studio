@@ -169,6 +169,16 @@ export async function applyTurnTrigger(db: Db, chatId: string, request: TurnRequ
 	})
 }
 
+/** Which attempt a lane's current answer to a user message is: 0 when it has none, 1 for the first answer. */
+export async function answerAttempt(db: Db, chatModelId: string, parentId: string) {
+	const [previous] = await db.select({ metadata: tables.message.metadata }).from(tables.message).where(and(
+		eq(tables.message.role, 'assistant'),
+		eq(tables.message.parentId, parentId),
+		eq(tables.message.chatModelId, chatModelId),
+	)).limit(1)
+	return previous ? previous.metadata?.attempt ?? 1 : 0
+}
+
 /**
  * Saves a lane's answer to a user message, replacing the lane's earlier answer to it, if any. With
  * `keepPrevious`, an earlier answer stays and the new one is dropped. Returns whether it was saved.

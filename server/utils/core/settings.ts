@@ -25,6 +25,12 @@ const settingSchemas = {
 	/** USD per member per month on the instance key; `null` is unlimited. A member's own budget wins. */
 	defaultMonthlyBudgetUsd: z.number().nonnegative().nullable().catch(null),
 	inferencePlatform: z.enum(tables.inferencePlatforms).nullable().catch(null),
+	/** Models that answer each message in one chat. */
+	maxChatModels: z.number().int().min(1).max(12).catch(4),
+	/** Times one answer can be regenerated. */
+	maxRegenerations: z.number().int().min(1).max(1000).catch(50),
+	/** Retries of a platform call that failed before any text arrived (rate limits, server errors). */
+	maxRetries: z.number().int().min(0).max(10).catch(5),
 	'inference.openrouter': platformConfigSchema.catch({}),
 	'inference.deepseek': platformConfigSchema.catch({}),
 }
@@ -59,6 +65,9 @@ export async function adminSettingsView(db: Db) {
 		safetyCheck: await getSetting(db, 'safetyCheck'),
 		defaultMonthlyBudgetUsd: await getSetting(db, 'defaultMonthlyBudgetUsd'),
 		inferencePlatform: await getSetting(db, 'inferencePlatform'),
+		maxChatModels: await getSetting(db, 'maxChatModels'),
+		maxRegenerations: await getSetting(db, 'maxRegenerations'),
+		maxRetries: await getSetting(db, 'maxRetries'),
 		platforms,
 	}
 }

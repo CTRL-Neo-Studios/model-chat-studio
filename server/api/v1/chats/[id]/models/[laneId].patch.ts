@@ -6,7 +6,7 @@ import { chatAbilities } from '#shared/abilities/chatAbilities'
 import { laneFieldsSchema } from '#shared/utils/chat'
 import { authorize } from '#server/utils/core/authorize'
 import { findChat } from '#server/utils/chat/turns'
-import { findChatModel, laneValues } from '#server/utils/chat/lanes'
+import { assertLaneLimit, countEnabledLanes, findChatModel, laneValues } from '#server/utils/chat/lanes'
 
 const bodySchema = laneFieldsSchema.partial().extend({
 	/** Display order; the client swaps two lanes' positions to move one. */
@@ -21,6 +21,7 @@ export default defineEventHandler(async (event) => {
 	const lane = await findChatModel(db, chat!.id, getRouterParam(event, 'laneId', { decode: true }))
 	if (!lane) throw createError({ status: 404, statusText: 'Model not found in this chat' })
 	const fields = await readValidatedBody(event, bodySchema)
+	if (fields.enabled && !lane.enabled) await assertLaneLimit(db, await countEnabledLanes(db, chat!.id) + 1)
 
 	const [updated] = await db.update(schema.chatModel).set(await laneValues(db, fields))
 		.where(eq(schema.chatModel.id, lane.id))

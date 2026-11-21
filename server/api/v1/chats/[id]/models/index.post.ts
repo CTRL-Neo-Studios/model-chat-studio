@@ -6,7 +6,7 @@ import { chatAbilities } from '#shared/abilities/chatAbilities'
 import { authorize } from '#server/utils/core/authorize'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { findChat } from '#server/utils/chat/turns'
-import { findChatModel, newLaneSchema, newLaneValues } from '#server/utils/chat/lanes'
+import { assertLaneLimit, countEnabledLanes, findChatModel, newLaneSchema, newLaneValues } from '#server/utils/chat/lanes'
 
 const bodySchema = newLaneSchema.extend({
 	/** Copies this lane of the chat; the other fields apply on top. */
@@ -20,17 +20,18 @@ export default defineEventHandler(async (event) => {
 	await authorize(event, chatAbilities().manageChat, chat)
 	const { duplicateOf, ...fields } = await readValidatedBody(event, bodySchema)
 
-	let copied = {}
+	let copied: { enabled?: boolean } = {}
 	if (duplicateOf) {
 		const source = await findChatModel(db, chat!.id, duplicateOf)
 		if (!source) throw createError({ status: 404, statusText: 'Model not found in this chat' })
 		const { id: _, position: __, ...rest } = source
 		copied = rest
 	}
+	const values = { ...copied, ...await newLaneValues(db, user.id, fields) }
+	if (values.enabled ?? true) await assertLaneLimit(db, await countEnabledLanes(db, chat!.id) + 1)
 	const [last] = await db.select({ position: max(schema.chatModel.position) }).from(schema.chatModel).where(eq(schema.chatModel.chatId, chat!.id))
 	const [lane] = await db.insert(schema.chatModel).values({
-		...copied,
-		...await newLaneValues(db, user.id, fields),
+		...values,
 		chatId: chat!.id,
 		position: (last?.position ?? -1) + 1,
 	}).returning()

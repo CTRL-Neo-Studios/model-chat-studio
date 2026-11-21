@@ -11,7 +11,7 @@ import { authorize } from '#server/utils/core/authorize'
 import { getSetting } from '#server/utils/core/settings'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { assertRateLimit } from '#server/utils/core/rateLimit'
-import { applyTurnTrigger, assertWithinBudget, findChat, listChatMessages, saveAnswer, turnRequestSchema } from '#server/utils/chat/turns'
+import { answerAttempt, applyTurnTrigger, assertWithinBudget, findChat, listChatMessages, saveAnswer, turnRequestSchema } from '#server/utils/chat/turns'
 import { listChatModels } from '#server/utils/chat/lanes'
 import { resolveAttachments } from '#server/utils/chat/files'
 import { getCatalog, getEndpoints, getPriceOverride, useInference } from '#server/utils/inference'
@@ -57,6 +57,11 @@ export default defineEventHandler(async (event) => {
 	const lane = lanes.find(lane => lane.id === request.chatModelId)
 	if (!lane) throw createError({ status: 404, statusText: 'Model not found in this chat' })
 	if (!lane.enabled) throw createError({ status: 400, statusText: 'This model is turned off in this chat' })
+	// A limit lowered after the lanes were turned on: only the first ones answer.
+	const maxChatModels = await getSetting(db, 'maxChatModels')
+	if (lanes.filter(entry => entry.enabled).findIndex(entry => entry.id === lane.id) >= maxChatModels) {
+		throw createError({ status: 400, statusText: `Only the first ${maxChatModels} models in a chat answer. Turn one off first.` })
+	}
 
 	// Policy checks: the allowlist, the provider list and the budget.
 	const params = lane.params
@@ -77,6 +82,12 @@ export default defineEventHandler(async (event) => {
 	await assertWithinBudget(db, user, byok)
 
 	const parentId = await applyTurnTrigger(db, chatId, request)
+	// Each regenerate is one more attempt at the lane's answer to this message; past the admin's cap it is refused.
+	const attempt = await answerAttempt(db, lane.id, parentId) + 1
+	const maxRegenerations = await getSetting(db, 'maxRegenerations')
+	if (attempt > maxRegenerations + 1) {
+		throw createError({ status: 429, statusText: `This answer was regenerated ${maxRegenerations === 1 ? 'once' : `${maxRegenerations} times`}, the most allowed.` })
+	}
 	// The lane's thread up to the message being answered: a regenerated answer does not see what came after.
 	const thread = await listChatMessages(db, chatId, lane.id) as UIMessage<MessageMetadata>[]
 	const history = thread.slice(0, thread.findIndex(message => message.id === parentId) + 1)
@@ -129,6 +140,8 @@ export default defineEventHandler(async (event) => {
 		instructions: [lane.systemPrompt ?? DEFAULT_INSTRUCTIONS, webSearch && WEB_SEARCH_INSTRUCTIONS].filter(Boolean).join('\n\n'),
 		messages: await convertToModelMessages(modelHistory, { tools }),
 		stopWhen: isStepCount(5),
+		// Retries rate limits and server errors until the stream starts.
+		maxRetries: await getSetting(db, 'maxRetries'),
 		abortSignal: event.req.signal,
 		experimental_transform: smoothStream(),
 	})
@@ -146,7 +159,7 @@ export default defineEventHandler(async (event) => {
 	const metadata = (finishReason?: string): MessageMetadata => {
 		const { title: _, ...usage } = platform.usage({ model: model.id, steps, price })
 		return {
-			platform: platform.id, model: model.id, lane: laneLabel, ...usage, durationMs: Date.now() - startedAt,
+			platform: platform.id, model: model.id, lane: laneLabel, attempt, ...usage, durationMs: Date.now() - startedAt,
 			...(finishReason === 'content-filter' && { refused: true }),
 		}
 	}

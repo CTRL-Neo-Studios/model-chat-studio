@@ -5,7 +5,8 @@ import * as schema from '../server/db/schema'
 import { chatAbilities, type ChatAccess } from '../shared/abilities/chatAbilities'
 import { authorize } from '../server/utils/core/authorize'
 import { setSetting } from '../server/utils/core/settings'
-import { applyTurnTrigger, deleteMessage, editMessage, listChatMessages, monthlyBudgetStatus, saveAnswer, type TurnRequest } from '../server/utils/chat/turns'
+import { answerAttempt, applyTurnTrigger, deleteMessage, editMessage, listChatMessages, monthlyBudgetStatus, saveAnswer, type TurnRequest } from '../server/utils/chat/turns'
+import { assertLaneLimit, countEnabledLanes } from '../server/utils/chat/lanes'
 import { createTestDb, type TestDb } from './db'
 
 let db: TestDb
@@ -106,6 +107,23 @@ test('a stopped answer can leave the earlier answer in place; a first answer is 
 	await applyTurnTrigger(db, chatId, say('u2'))
 	expect(await save('a2', 'u2')).toBe(true)
 	expect(await ids()).toEqual(['u1', 'a1', 'u2', 'a2'])
+})
+
+test('an answer counts its attempts per lane; the lane limit follows the admin setting', async () => {
+	await applyTurnTrigger(db, chatId, say('u1'))
+	expect(await answerAttempt(db, laneA, 'u1')).toBe(0)
+	await answer('a1', 'u1', laneA)
+	expect(await answerAttempt(db, laneA, 'u1')).toBe(1)
+	await saveAnswer(db, { id: 'a1b', chatId, parentId: 'u1', chatModelId: laneA, parts: [], metadata: { platform: 'deepseek', model: 'm', attempt: 3 } })
+	expect(await answerAttempt(db, laneA, 'u1')).toBe(3)
+	expect(await answerAttempt(db, laneB, 'u1')).toBe(0)
+
+	expect(await countEnabledLanes(db, chatId)).toBe(2)
+	await assertLaneLimit(db, 4)
+	await expect(assertLaneLimit(db, 5)).rejects.toMatchObject({ status: 400 })
+	await setSetting(db, 'maxChatModels', 2)
+	await assertLaneLimit(db, 2)
+	await expect(assertLaneLimit(db, 3)).rejects.toMatchObject({ status: 400 })
 })
 
 test('a regenerate that does not fit is refused', async () => {

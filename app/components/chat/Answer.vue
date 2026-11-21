@@ -49,7 +49,8 @@ const writing = computed(() => props.pending?.status === 'submitted' || streamin
 		</div>
 
 		<div :class="card ? 'px-3 py-2 min-w-0' : 'min-w-0'">
-			<div v-if="!message && pending?.status === 'submitted'" class="flex items-center gap-1.5 py-1">
+			<!-- Until the first text arrives; the answer starts (empty) before the platform replies, e.g. while a call is retried. -->
+			<div v-if="writing && !message?.parts.length" class="flex items-center gap-1.5 py-1">
 				<ChatIndicator />
 				<UChatShimmer text="Thinking..." class="text-sm" />
 			</div>

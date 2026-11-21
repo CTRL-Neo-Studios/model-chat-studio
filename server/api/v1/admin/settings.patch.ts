@@ -20,6 +20,9 @@ const bodySchema = z.object({
 	safetyCheck: z.boolean(),
 	defaultMonthlyBudgetUsd: z.number().nonnegative().nullable(),
 	inferencePlatform: z.enum(['openrouter', 'deepseek']).nullable(),
+	maxChatModels: z.number().int().min(1).max(12),
+	maxRegenerations: z.number().int().min(1).max(1000),
+	maxRetries: z.number().int().min(0).max(10),
 	platforms: z.object({ openrouter: platformPatch, deepseek: platformPatch }).partial().strict(),
 }).partial().strict()
 
@@ -54,6 +57,9 @@ export default defineEventHandler(async (event) => {
 		if (body.safetyCheck !== undefined) await setSetting(tx, 'safetyCheck', body.safetyCheck)
 		if (body.defaultMonthlyBudgetUsd !== undefined) await setSetting(tx, 'defaultMonthlyBudgetUsd', body.defaultMonthlyBudgetUsd)
 		if (body.inferencePlatform !== undefined) await setSetting(tx, 'inferencePlatform', body.inferencePlatform)
+		if (body.maxChatModels !== undefined) await setSetting(tx, 'maxChatModels', body.maxChatModels)
+		if (body.maxRegenerations !== undefined) await setSetting(tx, 'maxRegenerations', body.maxRegenerations)
+		if (body.maxRetries !== undefined) await setSetting(tx, 'maxRetries', body.maxRetries)
 		for (const [id, config] of Object.entries(configs) as [InferencePlatformId, PlatformConfig][]) {
 			await setSetting(tx, `inference.${id}`, config)
 		}

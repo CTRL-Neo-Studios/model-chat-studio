@@ -3,8 +3,8 @@
 //
 //   SESSION=<value of the nuxt-auth-session cookie> [BASE_URL=http://localhost:3000] bun scripts/app-smoke.ts [--search]
 //
-// Per platform: a plain turn, an image and a PDF, a regenerate, dictation, the spend ledger, and deleting
-// the chat. `--search` adds a web search turn (on OpenRouter that costs about $0.02).
+// Per platform: a plain turn, an image and a PDF, a regenerate, two models answering one message at once,
+// dictation, the spend ledger, and deleting the chat. `--search` adds a web search turn (on OpenRouter that costs about $0.02).
 // The test files come from `scripts/smoke-files.ts` (macOS makes them; elsewhere `--wav`, `--image`, `--pdf`).
 import { IMAGE_WORD, makeSmokeFiles, PDF_WORD, SENTENCE } from './smoke-files'
 
@@ -148,6 +148,19 @@ try {
 			const after = (await api<{ messages: unknown[] }>('GET', `/chats/${chatId}`)).messages.length
 			if (after !== before) throw new Error(`the chat went from ${before} to ${after} messages`)
 			return summary(lastAnswer)
+		})
+
+		await step('two models', async () => {
+			// A second lane with its own system prompt, sending the same message as the first, at the same time.
+			const second = await api<{ id: string }>('POST', `/chats/${chatId}/models`, { modelId: model.id, name: 'Second', systemPrompt: 'Whatever you are asked, reply with the single word: second' })
+			const message = { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'Reply with the single word: pong' }] }
+			const [first, other] = await Promise.all([laneId, second.id].map(lane => turn(chatId, lane, { trigger: 'submit-message', message })))
+			await api('DELETE', `/chats/${chatId}/models/${second.id}`)
+			const { messages } = await api<{ messages: { id: string }[] }>('GET', `/chats/${chatId}`)
+			const saved = messages.filter(entry => entry.id === message.id).length
+			if (saved !== 1) throw new Error(`the message was saved ${saved} times`)
+			if (!/pong/i.test(first!.text) || !/second/i.test(other!.text)) throw new Error(`got ${summary(first!)} and ${summary(other!)}`)
+			return `${summary(first!)} and ${summary(other!)}`
 		})
 
 		if (process.argv.includes('--search')) {

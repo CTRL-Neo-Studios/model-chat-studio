@@ -9,7 +9,9 @@ const props = defineProps<{
 }>()
 
 const { lanes, enabledLanes, settings, laneName, laneModel, saved } = props.chatLanes
-const { models } = useModels()
+const { models, maxChatModels } = useModels()
+// At the admin's limit, nothing more can be turned on or added until one is turned off.
+const full = computed(() => enabledLanes.value.length >= maxChatModels.value)
 const overlay = useOverlay()
 const editor = overlay.create(LazyChatModelEdit)
 const browser = overlay.create(LazyModelBrowser)
@@ -69,6 +71,7 @@ const items = computed<DropdownMenuItem[][]>(() => [
 				icon: 'i-lucide-power',
 				type: 'checkbox' as const,
 				checked: lane.enabled,
+				disabled: !lane.enabled && full.value,
 				onUpdateChecked: (checked: boolean) => props.chatLanes.update(lane, { enabled: checked }),
 				onSelect: (e: Event) => e.preventDefault(),
 			},
@@ -86,7 +89,7 @@ const items = computed<DropdownMenuItem[][]>(() => [
 				})),
 			},
 		], [
-			{ label: 'Duplicate', icon: 'i-lucide-copy', onSelect: () => props.chatLanes.duplicate(lane) },
+			{ label: 'Duplicate', icon: 'i-lucide-copy', disabled: lane.enabled && full.value, onSelect: () => props.chatLanes.duplicate(lane) },
 			{ label: 'Move left', icon: 'i-lucide-arrow-left', disabled: index === 0, onSelect: () => props.chatLanes.move(lane, -1) },
 			{ label: 'Move right', icon: 'i-lucide-arrow-right', disabled: index === lanes.value.length - 1, onSelect: () => props.chatLanes.move(lane, 1) },
 		], [
@@ -94,8 +97,9 @@ const items = computed<DropdownMenuItem[][]>(() => [
 		]],
 	})),
 	[{
-		label: 'Add model',
+		label: full.value ? `Add model (${maxChatModels.value} answering at most)` : 'Add model',
 		icon: 'i-lucide-plus',
+		disabled: full.value,
 		children: [
 			...([['Your profiles', false], ['Instance profiles', true]] as const).map(([heading, instance]) => {
 				const group = profiles.value.filter(profile => (profile.ownerId === null) === instance)

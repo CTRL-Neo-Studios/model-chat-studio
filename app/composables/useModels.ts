@@ -5,6 +5,8 @@ export function useModels() {
 
 	const platform = computed(() => request.data.value?.platform ?? null)
 	const models = computed(() => request.data.value?.models ?? [])
+	/** How many models can answer in one chat. */
+	const maxChatModels = computed(() => request.data.value?.maxChatModels ?? 4)
 
 	/** The model a chat uses: its own while still offered, else the platform's default. */
 	function resolveModel(id?: string) {
@@ -12,7 +14,7 @@ export function useModels() {
 			?? models.value.find(model => model.id === request.data.value?.defaultModel)
 	}
 
-	return { ready: request, platform, models, resolveModel }
+	return { ready: request, platform, models, maxChatModels, resolveModel }
 }
 
 export type CatalogModelView = ReturnType<typeof useModels>['models']['value'][number]

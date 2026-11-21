@@ -17,11 +17,13 @@ const general = reactive({ signupMode: 'invite' as 'invite' | 'open' | 'closed',
 const active = ref<PlatformId | 'none'>('none')
 const platformForms = reactive(Object.fromEntries(platformIds.map(id => [id, { apiKey: '', defaultModel: '', titleModel: '', sttModel: '' }])) as Record<PlatformId, { apiKey: string, defaultModel: string, titleModel: string, sttModel: string }>)
 const safetyCheck = ref(false)
+const limits = reactive({ maxChatModels: 4, maxRegenerations: 50, maxRetries: 5 })
 
 function fill(view: NonNullable<typeof settings.value>) {
 	settings.value = view
 	general.signupMode = view.signupMode
 	general.defaultMonthlyBudgetUsd = view.defaultMonthlyBudgetUsd
+	Object.assign(limits, { maxChatModels: view.maxChatModels, maxRegenerations: view.maxRegenerations, maxRetries: view.maxRetries })
 	active.value = view.inferencePlatform ?? 'none'
 	safetyCheck.value = view.safetyCheck
 	for (const id of platformIds) {
@@ -89,6 +91,21 @@ const catalogFor = (id: PlatformId) => catalog.value?.platform === id ? catalog.
 				</UFormField>
 				<div>
 					<UButton label="Save" :loading="saving === 'general'" @click="save('general', { ...general })" />
+				</div>
+			</UPageCard>
+
+			<UPageCard title="Limits" variant="subtle">
+				<UFormField label="Models per chat" description="How many models can answer each message in one chat. Each answer is billed separately.">
+					<UInputNumber v-model="limits.maxChatModels" :min="1" :max="12" class="w-32" />
+				</UFormField>
+				<UFormField label="Regenerations per answer" description="After this many, the answer can no longer be regenerated.">
+					<UInputNumber v-model="limits.maxRegenerations" :min="1" :max="1000" class="w-32" />
+				</UFormField>
+				<UFormField label="Automatic retries" description="How often a call the platform refused or failed (rate limits, server errors) is retried before the member sees an error.">
+					<UInputNumber v-model="limits.maxRetries" :min="0" :max="10" class="w-32" />
+				</UFormField>
+				<div>
+					<UButton label="Save" :loading="saving === 'limits'" @click="save('limits', { ...limits })" />
 				</div>
 			</UPageCard>
 

@@ -84,4 +84,6 @@ export interface MessageMetadata {
 	lane?: { name: string, color: LaneColor | null }
 	/** From the request to the end of the answer. */
 	durationMs?: number
+	/** 1 for the first answer, then one more per regenerate (capped by `maxRegenerations`). */
+	attempt?: number
 }

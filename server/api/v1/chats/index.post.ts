@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { chatSettingsSchema } from '#shared/utils/chat'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { attachFiles, userMessageSchema } from '#server/utils/chat/turns'
-import { newLaneSchema, newLaneValues } from '#server/utils/chat/lanes'
+import { assertLaneLimit, newLaneSchema, newLaneValues } from '#server/utils/chat/lanes'
 
 const bodySchema = z.object({
 	id: z.uuid(),
@@ -18,6 +18,7 @@ const bodySchema = z.object({
 export default defineEventHandler(async (event) => {
 	const user = await useServerAuth().requireUser(event)
 	const { id, message, settings, models } = await readValidatedBody(event, bodySchema)
+	await assertLaneLimit(db, models.filter(fields => fields.enabled !== false).length)
 	const lanes = await Promise.all(models.map(async (fields, position) => ({ chatId: id, position, ...await newLaneValues(db, user.id, fields) })))
 
 	return await db.transaction(async (tx) => {

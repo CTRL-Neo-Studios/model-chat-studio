@@ -1,5 +1,5 @@
 import { createError } from 'nuxt/server'
-import { and, asc, eq, isNull, or } from 'drizzle-orm'
+import { and, asc, count, eq, isNull, or } from 'drizzle-orm'
 import { z } from 'zod'
 import { laneFieldsSchema, type LaneFields } from '../../../shared/utils/chat'
 // Relative, not `hub:db`, so this module also loads in `bun test`.
@@ -35,6 +35,21 @@ export async function findChatModel(db: Db, chatId: string, id: string | undefin
 	const [lane] = await db.select(laneColumns).from(tables.chatModel)
 		.where(and(eq(tables.chatModel.id, id!), eq(tables.chatModel.chatId, chatId)))
 	return lane
+}
+
+/** How many of a chat's lanes answer new messages. */
+export async function countEnabledLanes(db: Db, chatId: string) {
+	const [row] = await db.select({ count: count() }).from(tables.chatModel)
+		.where(and(eq(tables.chatModel.chatId, chatId), eq(tables.chatModel.enabled, true)))
+	return row?.count ?? 0
+}
+
+/** Refuses a change that would leave more lanes answering than the admin allows (`maxChatModels`). */
+export async function assertLaneLimit(db: Db, enabledAfter: number) {
+	const max = await getSetting(db, 'maxChatModels')
+	if (enabledAfter > max) {
+		throw createError({ status: 400, statusText: `At most ${max} models can answer in one chat. Turn one off first.` })
+	}
 }
 
 /**
