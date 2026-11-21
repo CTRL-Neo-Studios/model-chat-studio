@@ -225,14 +225,14 @@ All under `/api/v1`, all requiring a user unless noted.
 
 | Route | Purpose |
 |---|---|
-| `GET /chats`, `POST /chats` | list own chats; create with `{ id, message, params? }` (the client picks the chat UUID, as in the template) |
+| `GET /chats`, `POST /chats` | list own chats; create with `{ id, message, params?, systemPrompt? }` (the client picks the chat UUID, as in the template) |
 | `GET /chats/:id` | read, with messages ordered by `seq` and `isOwner`; allowed for the owner, listed people, and anyone when link access is on. Only the owner gets `sharedWith` (people). |
 | `PATCH /chats/:id` | owner only: `title`, `visibility`, `sharedWith` (user ids; replaces the list), `systemPrompt`, `params` |
 | `DELETE /chats/:id` | owner only: delete the chat; from phase 7 also its blobs, remote files and file rows |
 | `POST /chats/:id` | owner only: stream a turn (see below) |
 | `GET /chats/:id/votes`, `POST /chats/:id/votes` | owner only, as in the template |
 | `GET /users/search?q=` | find people to share with: `id`, `username`, `name`, `avatarUrl`; at least 2 characters, 10 results |
-| `GET /models` | `{ platform: { id, capabilities } \| null, defaultModel, models }`: the allowlisted catalog, cached one hour |
+| `GET /models` | `{ platform: { id, capabilities, safetyCheck } \| null, defaultModel, models }`: the allowlisted catalog, cached one hour. `safetyCheck` is the admin setting, reported where the platform has one |
 | `GET /models/endpoints?id=` | upstream providers for one allowlisted model (ids contain slashes, so a query parameter) |
 | `PUT /files/:chatId`, `GET /files/:id`, `DELETE /files/:id` | upload, serve, delete; reading follows the chat's access |
 | `POST /transcriptions` | WAV in, text out |
@@ -369,21 +369,24 @@ Done in phase 5, except where noted:
 
 ### Rewritten
 
-- `useModels` and `ModelSelect`: catalog from `/models`, search, vendor groups, price, context length, modalities.
-- `useChatSettings`: per-chat `params` saved with `PATCH /chats/:id` instead of cookies.
-- `ChatVisibility`: becomes the share dialog. It has a people picker backed by `/users/search`, the list of people with access, a link access switch and the copy-link button.
+- `useModels` and `ModelSelect` (done in phase 6): catalog from `/models` (skipped for guests), search over name and id, vendor groups, price, context length, extra input types. `resolveModel()` gives a chat's model, falling back to the platform default as the server does.
+- `useChatSettings` (done in phase 6): per-chat `params` and system prompt. A saved chat stores changes with `PATCH /chats/:id`, debounced; every send, edit and regenerate calls `flush()` first so the turn sees them. A new chat starts from the settings last used (cookie `chat-params`) and sends them, with the system prompt, in `POST /chats`. Changing the model clears the chosen providers.
+- `ChatVisibility` (done in phase 6): the share dialog. A people picker backed by `/users/search`, the people with access (removable), a link access switch, and the copy-link button. The share button shows a dot while the chat is shared.
 - `useDictation`: keeps the microphone capture and level meter, collects samples, encodes 16 kHz mono 16-bit WAV on stop and posts it. `SAMPLE_RATE` and `MAX_DURATION` stay as constants. 120 s at 16 kHz is 3.84 MB; at 48 kHz it would be 11.5 MB, over DeepSeek's 8 MiB limit.
 - The chat transport (done in phase 5): `prepareSendMessagesRequest` sends `{ trigger: 'submit-message', message }` (the last message) or `{ trigger: 'regenerate-message', messageId }`, with the CSRF header. An edit is `sendMessage({ text, messageId })`; the template's separate delete call is gone. `regenerate()` without an id (the first answer, the retry button) matches the server's rule: both drop a trailing answer, if any.
 
 ### New
 
-- Provider picker beside the model picker: Auto or chosen providers, a fallback toggle, and price, quantization and uptime per endpoint. Rendered only when `capabilities.providerRouting` is true.
-- Chat settings panel: system prompt, temperature, top-p, max output tokens, reasoning level. Each control appears only if the model lists the parameter, and reasoning is a toggle when the model has no levels.
-- Attachment and web search controls follow the selected model's `inputModalities` and `webSearch`.
-- Reply footer: model, provider, tokens, cost. A refusal notice replaces a refused answer.
-- `/signin` with the GitHub button and `/invite/[code]`.
-- `/settings`: month usage against budget, personal API key.
-- `/admin/users`, `/admin/invites`, `/admin/models`, `/admin/settings`.
+Done in phase 6, except where noted:
+
+- Provider picker beside the model picker: Auto or chosen providers in pick order, a fallback switch, and price, quantization, 1-day uptime and a degraded warning per endpoint. Rendered only when `capabilities.providerRouting` is true.
+- `PromptMenu`: web search (when the model has `webSearch`) and reasoning. Reasoning is a checkbox for toggle-only models and a submenu of levels otherwise, with "Default" and, unless reasoning is mandatory, "Off".
+- Chat settings panel: system prompt, temperature, top-p, max output tokens. Each control appears only if the model lists the parameter. On DeepSeek the sliders are disabled with the reason while reasoning, web search or the safety check is on; `/models` reports `platform.safetyCheck` for this.
+- Attachment controls follow `inputModalities` in phase 7.
+- Reply footer: model name, provider, tokens in and out, reasoning tokens, cost; cached tokens in a tooltip. An answer with `metadata.refused` shows a "withheld" notice instead of its parts.
+- `/signin` with the GitHub button and `/invite/[code]` (done in phase 2).
+- `/settings`: month usage against budget, personal API key (phase 8).
+- `/admin/users`, `/admin/invites`, `/admin/models`, `/admin/settings` (phase 8).
 - `/admin/settings` holds the signup mode, the default budget, the active inference platform, and for each platform its API key and default, title and speech-to-text models.
 
 The safety check switch on `/admin/settings` appears only when `capabilities.safetyCheck` is true. It is off by default and carries this warning:
@@ -414,7 +417,7 @@ Phase P is done. Phases 2 and 3 are independent once phase 1 is done, and phases
 | 3 | Inference adapter | Done. Both adapters, the DeepSeek glue, platform and key settings, catalog cache, per-model capabilities, allowlist, key resolution and encryption, `scripts/inference-smoke.ts` | offline tests pass for option mapping, usage and cost, catalog, encryption, platform switch and allowlist; live turns streamed on both platforms (2026-11-20, results in section 10) |
 | 4 | Chat backend | Done. Chat, vote, share, search, usage and admin model routes; the turn route with policy checks, ledger, titles and truncation; `chatAbilities.ts` | ordering, quota, truncation and chat access tests pass (`test/chat.test.ts`); turns streamed through `curl` against fixture upstreams on both platforms (below) |
 | 5 | Frontend port | Done. Section 7 "Ported" on the new API | create, stream, edit, regenerate, vote, rename, delete and link sharing checked in the browser against a fixture upstream (OpenRouter-shaped, slowed to stream word by word), including a chart tool turn, a guest on a shared and on a private chat, and the 402 budget toast |
-| 6 | Extended chat UI | Model and provider pickers, `PromptMenu` with web search and reasoning, settings panel, reply footer, share dialog | changing provider changes `metadata.provider` on the next reply; a listed person can open a private chat and a stranger gets 404 |
+| 6 | Extended chat UI | Done. Model and provider pickers, `PromptMenu` with web search and reasoning, settings panel, reply footer and refusal notice, share dialog | checked in the browser against a fixture OpenRouter (catalog, endpoints, answers naming the provider): switching from Baidu to Together changed `metadata.provider` on the next reply, and the request carried the chosen model, providers, fallback, effort, temperature, web search and system prompt; a listed person read the private chat without send or share controls and a stranger got 404; a `content_filter` finish showed the notice. The DeepSeek slider lock is not exercised (no DeepSeek fixture in the browser) |
 | 7 | Files and dictation | File routes on `hub:blob`, attachments by media type, DeepSeek PDF upload flow, WAV dictation; file parts in `userMessageSchema` (text only until then); deleting blobs, remote files and file rows on chat delete and on truncation | an image and a PDF reach a model on each platform; a spoken sentence lands in the prompt on both |
 | 8 | Admin and settings | Admin pages, `/settings`, the platform switch and keys, the safety check switch | an admin can invite, ban, set a budget, disable a model, switch signup mode and switch platform from the UI |
 | 9 | Hardening | Rate limits on stream and transcription, CSP review, full smoke run per platform | smoke run passes on OpenRouter and on DeepSeek |

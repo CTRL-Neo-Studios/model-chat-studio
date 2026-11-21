@@ -9,15 +9,16 @@ const bodySchema = z.object({
 	id: z.uuid(),
 	message: userMessageSchema,
 	params: chatParamsSchema.optional(),
+	systemPrompt: z.string().trim().max(20_000).optional(),
 })
 
 /** Creates a chat with its first message. The answer is requested with `POST /chats/:id`. */
 export default defineEventHandler(async (event) => {
 	const user = await useServerAuth().requireUser(event)
-	const { id, message, params } = await readValidatedBody(event, bodySchema)
+	const { id, message, params, systemPrompt } = await readValidatedBody(event, bodySchema)
 
 	return await db.transaction(async (tx) => {
-		const [chat] = await tx.insert(schema.chat).values({ id, userId: user.id, params }).onConflictDoNothing().returning()
+		const [chat] = await tx.insert(schema.chat).values({ id, userId: user.id, params, systemPrompt: systemPrompt || null }).onConflictDoNothing().returning()
 		const [saved] = chat
 			? await tx.insert(schema.message).values({ id: message.id, chatId: id, role: 'user', parts: message.parts }).onConflictDoNothing().returning()
 			: []

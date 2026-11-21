@@ -8,8 +8,11 @@ const toast = useToast()
 const { csrf, headerName } = useCsrf()
 
 // Until an admin picks a platform and a key, there is nothing to send to.
-const { data: models } = await useFetch('/api/v1/models', { key: 'models' })
-const unavailable = computed(() => !models.value?.platform)
+const { ready, platform } = useModels()
+await ready
+const unavailable = computed(() => !platform.value)
+
+const { params, systemPrompt } = useChatSettings()
 const isAdmin = computed(() => user.value?.role === 'admin')
 
 const greeting = computed(() => {
@@ -30,6 +33,8 @@ async function createChat(prompt: string) {
 			body: {
 				id: chatId,
 				message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: prompt }] },
+				params: params.value,
+				systemPrompt: systemPrompt.value || undefined,
 			},
 		})
 	}
@@ -74,6 +79,8 @@ const quickChats = [
 
 					<ChatPrompt
 						v-model="input"
+						v-model:params="params"
+						v-model:system-prompt="systemPrompt"
 						:disabled="loading || unavailable"
 						class="[view-transition-name:chat-prompt]"
 						@submit="createChat(input)"

@@ -15,6 +15,7 @@ const { data } = await useFetch(`/api/v1/chats/${chatId}`, { key: `chat-${chatId
 
 const isOwner = computed(() => data.value?.isOwner ?? false)
 const visibility = ref<'public' | 'private'>(data.value?.visibility ?? 'private')
+const sharedWith = ref(data.value?.sharedWith ?? [])
 const title = ref<string | null>(data.value?.title ?? null)
 
 useHead({ title: () => title.value || 'Chat' })
@@ -23,6 +24,9 @@ const { data: votes } = await useLazyFetch(`/api/v1/chats/${chatId}/votes`, {
 	immediate: isOwner.value,
 	default: () => [],
 })
+
+await useModels().ready
+const { params, systemPrompt, flush } = useChatSettings(data.value ?? undefined)
 
 const input = ref('')
 
@@ -63,11 +67,19 @@ const { messages, status, error, sendMessage, regenerate, stop } = useChat({
 	},
 })
 
-function handleSubmit(e: Event) {
+// Settings changed just before sending are saved first, so the turn uses them.
+async function handleSubmit(e: Event) {
 	e.preventDefault()
-	if (!input.value.trim()) return
-	sendMessage({ text: input.value })
+	const text = input.value
+	if (!text.trim()) return
 	input.value = ''
+	await flush()
+	sendMessage({ text })
+}
+
+async function regenerateAnswer(messageId?: string) {
+	await flush()
+	regenerate(messageId ? { messageId } : undefined)
 }
 
 const editingMessageId = ref<string | null>(null)
@@ -77,8 +89,9 @@ function startEdit(message: UIMessage) {
 }
 
 // Sending a message under an existing id is an edit: the server replaces it and drops what followed.
-function saveEdit(message: UIMessage, text: string) {
+async function saveEdit(message: UIMessage, text: string) {
 	editingMessageId.value = null
+	await flush()
 	sendMessage({ text, messageId: message.id })
 }
 
@@ -134,9 +147,9 @@ onMounted(() => {
 
 				<ChatVisibility
 					v-if="isOwner"
+					v-model:visibility="visibility"
+					v-model:shared-with="sharedWith"
 					:chat-id="data.id"
-					:visibility="visibility"
-					@update:visibility="visibility = $event"
 				/>
 			</Navbar>
 		</template>
@@ -176,19 +189,21 @@ onMounted(() => {
 								:vote="getVote(message.id)"
 								@vote="vote"
 								@edit="startEdit"
-								@regenerate="message => regenerate({ messageId: message.id })"
+								@regenerate="message => regenerateAnswer(message.id)"
 							/>
 						</template>
 
 						<template v-if="isOwner" #footer>
 							<ChatPrompt
 								v-model="input"
+								v-model:params="params"
+								v-model:system-prompt="systemPrompt"
 								:status="status"
 								:error="error"
 								class="[view-transition-name:chat-prompt] rounded-b-none backdrop-blur-sm"
 								@submit="handleSubmit"
 								@stop="stop()"
-								@reload="regenerate()"
+								@reload="regenerateAnswer()"
 							/>
 						</template>
 					</UChatMessages>

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import type { ChatStatus } from 'ai'
+import type { ChatParams } from '#shared/utils/chat'
 
-// ponytail: attachments and dictation arrive in phase 7, the model picker and chat settings in phase 6.
+// ponytail: attachments and dictation arrive in phase 7.
 withDefaults(defineProps<{
 	status?: ChatStatus
 	error?: Error
@@ -18,6 +19,16 @@ const emit = defineEmits<{
 }>()
 
 const input = defineModel<string>({ default: '' })
+const params = defineModel<ChatParams>('params', { required: true })
+const systemPrompt = defineModel<string>('systemPrompt', { required: true })
+
+const { platform, resolveModel } = useModels()
+const model = computed(() => resolveModel(params.value.model))
+
+// Provider choices belong to one model.
+function setModel(id: string) {
+	params.value = { ...params.value, model: id, providers: undefined }
+}
 </script>
 
 <template>
@@ -32,15 +43,33 @@ const input = defineModel<string>({ default: '' })
 		@submit="emit('submit', $event)"
 	>
 		<template #footer>
-			<div />
-			<UChatPromptSubmit
-				:status="status"
-				:disabled="disabled"
-				color="neutral"
-				size="sm"
-				@stop="emit('stop')"
-				@reload="emit('reload')"
+			<ChatPromptMenu
+				v-model:web-search="params.webSearch"
+				v-model:reasoning-level="params.reasoningLevel"
+				:model="model"
 			/>
+
+			<div class="flex items-center gap-1 min-w-0">
+				<ModelSelect :model-value="model?.id" @update:model-value="setModel($event!)" />
+
+				<ChatProviderSelect
+					v-if="model && platform?.capabilities.providerRouting"
+					v-model:providers="params.providers"
+					v-model:allow-fallbacks="params.allowFallbacks"
+					:model-id="model.id"
+				/>
+
+				<ChatSettingsPanel v-model:params="params" v-model:system-prompt="systemPrompt" :model="model" />
+
+				<UChatPromptSubmit
+					:status="status"
+					:disabled="disabled"
+					color="neutral"
+					size="sm"
+					@stop="emit('stop')"
+					@reload="emit('reload')"
+				/>
+			</div>
 		</template>
 	</UChatPrompt>
 </template>
