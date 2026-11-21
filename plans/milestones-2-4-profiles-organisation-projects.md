@@ -76,9 +76,9 @@ From milestone 3, each answer stores its block list in `turnTrace`: block kind, 
 
 | Table | Columns of note |
 |---|---|
-| `modelProfile` | `id`, `ownerId` FK cascade, null for an instance profile; `name`, `color`, `platform`, `modelId`, `systemPrompt` (null: default instructions), `params` jsonb |
-| `chatModel` | `id`, `chatId` FK cascade, `profileId` FK set null, `position`, `enabled`, and the same `name`, `color`, `platform`, `modelId`, `systemPrompt`, `params` |
-| `chat` | `params` becomes `settings` jsonb; `systemPrompt` is dropped |
+| `modelProfile` | `id`, `ownerId` FK cascade, null for an instance profile; `name`, `color`, `platform`, `modelId`, `systemPrompt` (null: default instructions), `params` jsonb. Phase 2.3 |
+| `chatModel` | `id`, `chatId` FK cascade, `position`, `enabled`, `name` (null: the model's name), `color` (a Tailwind palette name), `platform` and `modelId` (both null: the active platform's default model; the platform is stamped by the server when a model is chosen), `systemPrompt`, `params`. `profileId` FK set null comes with `modelProfile` in phase 2.3 |
+| `chat` | `params` becomes `settings` jsonb (not null, `{}`); `systemPrompt` is dropped |
 | `message` | adds `chatModelId` uuid, FK set null |
 | `setting` | adds `maxChatModels` (default 4), `maxRegenerations` (default 50), `maxRetries` (default 5) |
 
@@ -89,7 +89,7 @@ From milestone 3, each answer stores its block list in `turnTrace`: block kind, 
 - Support varies widely: of 476 OpenRouter models, 225 list `top_k`, 117 `min_p`, 158 `repetition_penalty` and 17 `top_a` (spike C, 2026-11-21). A model's list is the union over its providers, so a setting can be dropped by the endpoint that serves the turn. The editor shows a lane's provider-dependent settings with that note; `require_parameters` is not sent, since it fails the turn when no single endpoint takes them all.
 - `MessageMetadata` adds `lane` (`name` and `color` at the time of the answer, so an answer keeps its label after its lane is deleted), `durationMs`, `edited`, `attempt`.
 
-Migration: every chat gets one lane from its `params` and `systemPrompt`; existing answers get that lane's id. The platform comes from the chat's last answer, else the active platform.
+Migration (`0002_chat_lanes`, phase 2.1): every chat gets one lane from its `params` and `systemPrompt`; existing answers get that lane's id. A chosen model's platform comes from the chat's last answer, else the active platform; a chat without a model gets a lane with neither. `test/migrations.test.ts` seeds the old schema and checks the result.
 
 A lane whose platform is not the active one is shown as unavailable and skipped. If no lane is available, the platform's default model answers, which is today's fallback rule.
 
@@ -99,10 +99,10 @@ A lane whose platform is not the active one is shown as unavailable and skipped.
 |---|---|
 | `GET /model-profiles`, `POST /model-profiles` | own and instance profiles; create from `{ modelId }` alone (quick add, named after the model) or in full. `instance: true` is admin only |
 | `PATCH /model-profiles/:id`, `DELETE /model-profiles/:id` | owner; admins for instance profiles |
-| `POST /chats` | takes `models`: up to `maxChatModels` of `{ profileId }` or `{ modelId }` |
+| `POST /chats` | takes `models`: lane fields in order (1 to 12 until `maxChatModels` in 2.5), and `settings`. `{ profileId }` comes in 2.3 |
 | `GET /chats/:id` | adds `models` (the lanes) and `settings` |
-| `POST /chats/:id/models` | add a lane from `{ profileId }`, `{ modelId }` or `{ duplicateOf }` |
-| `PATCH /chats/:id/models/:laneId`, `DELETE …` | any lane field, `enabled`, `position`; delete leaves its answers in place |
+| `POST /chats/:id/models` | add a lane at the end, from lane fields or `{ duplicateOf }` with fields applied on top (phase 2.1); `{ profileId }` in 2.3. Deleting the last lane is refused |
+| `PATCH /chats/:id/models/:laneId`, `DELETE …` | any lane field and `enabled` (phase 2.1); `position` with the reorder UI in 2.4. Delete leaves its answers in place |
 | `POST /chats/:id/models/:laneId/apply` | write the lane back to its profile |
 | `POST /chats/:id` | body gains `chatModelId` (below) |
 | `PATCH /chats/:id/messages/:messageId` | a user message: `parts`, optional `dropAfter: true` ("Save and resend"). An answer: `text`, sets `metadata.edited`. A message with attachments still cannot be edited |
@@ -117,7 +117,7 @@ Body: `{ trigger: 'submit-message', message, chatModelId }` or `{ trigger: 'rege
 - `submit-message`: the first lane request to arrive inserts the user message. The others join it: same id, same chat, and it is the newest user message. Anything else is 409.
 - `regenerate-message`: replaces this lane's answer to that user message and nothing else. The new answer's `attempt` is the old one's plus one; at `maxRegenerations` the request is refused with 429.
 - `maxRetries` is passed to `streamText`, which retries retryable platform errors (rate limits, 5xx) until the stream starts. The SDK's default is 2.
-- The title is generated by the request that inserted the user message, so N lanes make one title call.
+- The first enabled lane (by position) generates the title, so N lanes make one title call. This also covers a chat started on the home page, whose first answers are regenerate requests that insert nothing.
 - History is the lane's thread: user messages in `seq` order, each followed by this lane's answer if it has one. A lane added late sees earlier questions without answers, so the thread can hold consecutive user messages; they are sent as they are (spike B: accepted by every model tried).
 - Enabled lanes are counted against `maxChatModels` when a lane is added or enabled, and again here.
 - Budget, rate limit, usage ledger and attachments work per request, unchanged.
@@ -139,7 +139,7 @@ Body: `{ trigger: 'submit-message', message, chatModelId }` or `{ trigger: 'rege
 | # | Work | Done when |
 |---|---|---|
 | 2.P | Spikes in `../model-chat-studio-prep` (branch `prep/m2-spikes`, `scripts/spikes/m2/`), see section 6 | each assumption is confirmed or the plan is changed |
-| 2.1 | Schema, migration, lane routes, the turn route per lane, `chat.settings` | existing chats open and answer through their migrated lane; tests cover the join rule and the lane thread |
+| 2.1 | Done. Schema, migration, lane routes, the turn route per lane, `chat.settings`. Until 2.4 the UI edits the first lane (`useChatSettings` patches it; cookie `chat-defaults`), and until 2.2 an edit or regenerate still truncates across lanes | an old-schema PGlite chat with a model, temperature, web search and a system prompt migrated to one lane and answered through it in Chromium (the fixture platform received its system prompt and web search instructions); switching the model in the prompt patched the lane; a home-page chat was created with its lane and titled; over HTTP, two lanes answered one message in parallel (one user message, two answers), a disabled lane got 400, another chat's lane 404, the last lane could not be deleted. Tests cover the join rule (each condition mutation-checked), the lane thread and the migration |
 | 2.2 | Message routes, in-place regenerate, truncation out of the turn route | in the browser: regenerate a middle answer, delete one answer, edit an answer, edit a question with and without resend; later messages survive except on resend |
 | 2.3 | Profile routes, `/model-profiles`, `ModelBrowser`, admin fields use it | a profile made by quick add, edited, published by an admin and used by a member |
 | 2.4 | `ModelsMenu`, `ModelEdit`, answer cards, both layouts, parallel streams, stop | two lanes answer one message side by side with their own settings; a third added later answers only from then on; "Apply to profile" changes the profile and nothing else |

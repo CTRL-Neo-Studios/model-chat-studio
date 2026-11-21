@@ -26,7 +26,7 @@ const { data: votes } = await useLazyFetch(`/api/v1/chats/${chatId}/votes`, {
 })
 
 await useModels().ready
-const { params, systemPrompt, flush } = useChatSettings(data.value ?? undefined)
+const { lane, settings, laneId, flush } = useChatSettings(data.value ?? undefined)
 
 const input = ref('')
 const { uploads, promptFiles, uploading, parts: fileParts, clear: clearFiles } = usePromptUploads(chatId)
@@ -48,11 +48,11 @@ const { messages, status, error, sendMessage, regenerate, stop } = useChat({
 	transport: new DefaultChatTransport({
 		api: `/api/v1/chats/${chatId}`,
 		headers: { [headerName]: csrf },
-		// The server keeps the history: send only the new message, or what to regenerate.
+		// The server keeps the history: send only the new message, or what to regenerate, and the lane that answers.
 		prepareSendMessagesRequest: ({ messages, trigger, messageId }) => ({
 			body: trigger === 'submit-message'
-				? { trigger, message: messages[messages.length - 1] }
-				: { trigger, messageId },
+				? { trigger, message: messages[messages.length - 1], chatModelId: laneId }
+				: { trigger, messageId, chatModelId: laneId },
 		}),
 	}),
 	async onFinish() {
@@ -210,8 +210,8 @@ onMounted(() => {
 						<template v-if="isOwner" #footer>
 							<ChatPrompt
 								v-model="input"
-								v-model:params="params"
-								v-model:system-prompt="systemPrompt"
+								v-model:lane="lane"
+								v-model:settings="settings"
 								v-model:files="promptFiles"
 								:uploads="uploads"
 								:uploading="uploading"

@@ -10,6 +10,8 @@ import { createTestDb, type TestDb } from './db'
 let db: TestDb
 let userId: string
 let chatId: string
+let laneA: string
+let laneB: string
 
 beforeEach(async () => {
 	db = await createTestDb()
@@ -17,17 +19,20 @@ beforeEach(async () => {
 	userId = user!.id
 	const [chat] = await db.insert(schema.chat).values({ userId }).returning()
 	chatId = chat!.id
+	const lanes = await db.insert(schema.chatModel).values([{ chatId, position: 0 }, { chatId, position: 1 }]).returning()
+	laneA = lanes[0]!.id
+	laneB = lanes[1]!.id
 })
 
-const say = (id: string, text = id): TurnRequest => ({ trigger: 'submit-message', message: { id, role: 'user', parts: [{ type: 'text', text }] } })
-const regenerate = (messageId?: string): TurnRequest => ({ trigger: 'regenerate-message', messageId })
+const say = (id: string, text = id, chatModelId = laneA): TurnRequest => ({ trigger: 'submit-message', message: { id, role: 'user', parts: [{ type: 'text', text }] }, chatModelId })
+const regenerate = (messageId?: string, chatModelId = laneA): TurnRequest => ({ trigger: 'regenerate-message', messageId, chatModelId })
 
-async function answer(id: string) {
-	await db.insert(schema.message).values({ id, chatId, role: 'assistant', parts: [{ type: 'text', text: id }] })
+async function answer(id: string, parentId?: string, chatModelId = laneA) {
+	await db.insert(schema.message).values({ id, chatId, parentId, chatModelId, role: 'assistant', parts: [{ type: 'text', text: id }] })
 }
 
-async function ids() {
-	return (await listChatMessages(db, chatId)).map(message => message.id)
+async function ids(chatModelId?: string) {
+	return (await listChatMessages(db, chatId, chatModelId)).map(message => message.id)
 }
 
 test('messages come back in the order they were saved, whatever their ids or timestamps', async () => {
@@ -97,12 +102,55 @@ test('a trigger that does not fit changes nothing', async () => {
 	expect(await listChatMessages(db, other!.id)).toEqual([])
 })
 
+test('another lane sending the same message joins it: nothing is saved twice or dropped', async () => {
+	await applyTurnTrigger(db, chatId, say('u1'))
+	await answer('a1', 'u1', laneA)
+
+	expect(await applyTurnTrigger(db, chatId, say('u1', 'u1', laneB))).toEqual({ parentId: 'u1', removedFileIds: [] })
+	expect(await ids()).toEqual(['u1', 'a1'])
+	// Again from lane B, before it has answered (a retry after a failed answer): still a join.
+	expect(await applyTurnTrigger(db, chatId, say('u1', 'u1', laneB))).toEqual({ parentId: 'u1', removedFileIds: [] })
+	expect(await ids()).toEqual(['u1', 'a1'])
+})
+
+test('resending a message is an edit when its text changed, the lane already answered it, or a newer message exists', async () => {
+	await applyTurnTrigger(db, chatId, say('u1'))
+	await answer('a1', 'u1', laneA)
+	await applyTurnTrigger(db, chatId, say('u1', 'u1', laneA))
+	expect(await ids()).toEqual(['u1'])
+
+	await answer('a1', 'u1', laneA)
+	await applyTurnTrigger(db, chatId, say('u1', 'changed', laneB))
+	expect(await ids()).toEqual(['u1'])
+
+	await answer('a1', 'u1', laneA)
+	await applyTurnTrigger(db, chatId, say('u2'))
+	await applyTurnTrigger(db, chatId, say('u1', 'changed', laneB))
+	expect(await ids()).toEqual(['u1'])
+})
+
+test('a lane sees every user message and only its own answers; a lane added late sees questions without answers', async () => {
+	await applyTurnTrigger(db, chatId, say('u1'))
+	await applyTurnTrigger(db, chatId, say('u1', 'u1', laneB))
+	await answer('a1', 'u1', laneA)
+	await answer('b1', 'u1', laneB)
+	await applyTurnTrigger(db, chatId, say('u2'))
+	await answer('a2', 'u2', laneA)
+
+	expect(await ids()).toEqual(['u1', 'a1', 'b1', 'u2', 'a2'])
+	expect(await ids(laneA)).toEqual(['u1', 'a1', 'u2', 'a2'])
+	expect(await ids(laneB)).toEqual(['u1', 'b1', 'u2'])
+	const [late] = await db.insert(schema.chatModel).values({ chatId, position: 2 }).returning()
+	expect(await ids(late!.id)).toEqual(['u1', 'u2'])
+})
+
 test('attachments link to their message once, only from the chat owner, and are reported when their message is dropped', async () => {
 	const [stranger] = await db.insert(schema.user).values({ githubId: 2, username: 'u2' }).returning()
 	const upload = async (ownerId: string) => (await db.insert(schema.file).values({ ownerId, chatId, blobPath: 'x', mediaType: 'image/png', size: 1 }).returning())[0]!.id
 	const withFile = (id: string, fileId: string): TurnRequest => ({
 		trigger: 'submit-message',
 		message: { id, role: 'user', parts: [{ type: 'text', text: 'see' }, { type: 'file', mediaType: 'image/png', url: `/api/v1/files/${fileId}` }] },
+		chatModelId: laneA,
 	})
 	const mine = await upload(userId)
 	const theirs = await upload(stranger!.id)

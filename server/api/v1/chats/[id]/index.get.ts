@@ -4,8 +4,9 @@ import { chatAbilities } from '#shared/abilities/chatAbilities'
 import { authorize } from '#server/utils/core/authorize'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { findChat, listChatMessages, listChatShares } from '#server/utils/chat/turns'
+import { listChatModels } from '#server/utils/chat/lanes'
 
-/** A chat with its messages, for the owner, the people it is shared with, and anyone when link access is on. */
+/** A chat with its lanes and messages, for the owner, the people it is shared with, and anyone when link access is on. */
 export default defineEventHandler(async (event) => {
 	const chat = await findChat(db, getRouterParam(event, 'id', { decode: true }))
 	await authorize(event, chatAbilities().readChat, chat)
@@ -17,6 +18,7 @@ export default defineEventHandler(async (event) => {
 		isOwner,
 		// Only the owner sees who else has access.
 		sharedWith: isOwner ? await listChatShares(db, view.id) : [],
+		models: await listChatModels(db, view.id),
 		messages: await listChatMessages(db, view.id),
 	}
 })

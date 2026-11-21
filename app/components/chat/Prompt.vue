@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ChatStatus } from 'ai'
-import type { ChatParams } from '#shared/utils/chat'
+import type { ChatSettings } from '#shared/utils/chat'
+import type { LaneDraft } from '~/composables/useChatSettings'
 import type { PromptUpload } from '~/composables/usePromptUploads'
 
 const props = withDefaults(defineProps<{
@@ -24,11 +25,11 @@ const emit = defineEmits<{
 
 const input = defineModel<string>({ default: '' })
 const files = defineModel<File[]>('files', { default: () => [] })
-const params = defineModel<ChatParams>('params', { required: true })
-const systemPrompt = defineModel<string>('systemPrompt', { required: true })
+const lane = defineModel<LaneDraft>('lane', { required: true })
+const settings = defineModel<ChatSettings>('settings', { required: true })
 
 const { platform, resolveModel } = useModels()
-const model = computed(() => resolveModel(params.value.model))
+const model = computed(() => resolveModel(lane.value.modelId ?? undefined))
 // Text files always; images and PDFs when the model reads them.
 const accept = computed(() => fileAcceptPattern({
 	images: !!model.value?.inputModalities.includes('image'),
@@ -37,14 +38,14 @@ const accept = computed(() => fileAcceptPattern({
 
 // Provider choices belong to one model.
 function setModel(id: string) {
-	params.value = { ...params.value, model: id, providers: undefined }
+	lane.value = { ...lane.value, modelId: id, params: { ...lane.value.params, providers: undefined } }
 }
 
 // A model no longer offered falls back to the default without its provider and reasoning choices,
 // as on the server; clearing them keeps the pickers from showing choices that are ignored.
 watch(model, (current) => {
-	if (current && params.value.model && params.value.model !== current.id) {
-		params.value = { ...params.value, model: current.id, providers: undefined, reasoningLevel: undefined }
+	if (current && lane.value.modelId && lane.value.modelId !== current.id) {
+		lane.value = { ...lane.value, modelId: current.id, params: { ...lane.value.params, providers: undefined, reasoningLevel: undefined } }
 	}
 }, { immediate: true })
 
@@ -88,8 +89,8 @@ function appendTranscript(text: string) {
 
 		<template #footer="{ open }">
 			<ChatPromptMenu
-				v-model:web-search="params.webSearch"
-				v-model:reasoning-level="params.reasoningLevel"
+				v-model:web-search="settings.webSearch"
+				v-model:reasoning-level="lane.params.reasoningLevel"
 				:model="model"
 				:open="open"
 			/>
@@ -99,12 +100,17 @@ function appendTranscript(text: string) {
 
 				<ChatProviderSelect
 					v-if="model && platform?.capabilities.providerRouting"
-					v-model:providers="params.providers"
-					v-model:allow-fallbacks="params.allowFallbacks"
+					v-model:providers="lane.params.providers"
+					v-model:allow-fallbacks="lane.params.allowFallbacks"
 					:model-id="model.id"
 				/>
 
-				<ChatSettingsPanel v-model:params="params" v-model:system-prompt="systemPrompt" :model="model" />
+				<ChatSettingsPanel
+					v-model:params="lane.params"
+					v-model:system-prompt="lane.systemPrompt"
+					:web-search="settings.webSearch"
+					:model="model"
+				/>
 
 				<ChatDictateButton
 					v-if="canDictate"

@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import type { ChatParams } from '#shared/utils/chat'
+import type { ModelParams } from '#shared/utils/chat'
 import type { CatalogModelView } from '~/composables/useModels'
 
 const props = defineProps<{
 	model?: CatalogModelView
+	/** The chat's web search switch: DeepSeek ignores sampling while it is on. */
+	webSearch?: boolean
 }>()
 
-const params = defineModel<ChatParams>('params', { required: true })
+const params = defineModel<ModelParams>('params', { required: true })
 const systemPrompt = defineModel<string>('systemPrompt', { required: true })
 
 const { platform } = useModels()
@@ -18,7 +20,7 @@ const samplingIgnored = computed(() => {
 	const reasoning = props.model?.reasoning
 	const level = params.value.reasoningLevel
 	if (reasoning && (level ? level !== 'none' : reasoning.defaultEnabled)) return 'DeepSeek ignores these while reasoning is on.'
-	if (params.value.webSearch && props.model?.webSearch) return 'DeepSeek ignores these while web search is on.'
+	if (props.webSearch && props.model?.webSearch) return 'DeepSeek ignores these while web search is on.'
 	if (platform.value.safetyCheck) return 'DeepSeek ignores these while the safety check is on.'
 	return undefined
 })

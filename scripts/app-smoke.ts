@@ -42,12 +42,12 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 interface Turn { text: string, messageId?: string, metadata?: Record<string, unknown>, error?: string, sources: string[] }
 
-/** Sends a turn and reads the UI message stream the way the chat page does. */
-async function turn(chatId: string, body: unknown): Promise<Turn> {
+/** Sends one lane's turn and reads the UI message stream the way the chat page does. */
+async function turn(chatId: string, chatModelId: string, body: Record<string, unknown>): Promise<Turn> {
 	const response = await fetch(`${BASE}/api/v1/chats/${chatId}`, {
 		method: 'POST',
 		headers: { 'cookie': cookieHeader(), 'csrf-token': csrf!, 'content-type': 'application/json' },
-		body: JSON.stringify(body),
+		body: JSON.stringify({ ...body, chatModelId }),
 	})
 	if (!response.ok) throw new Error(`turn answered ${response.status}: ${(await response.text()).slice(0, 300)}`)
 	const result: Turn = { text: '', sources: [] }
@@ -107,10 +107,12 @@ try {
 		const spentBefore = (await api<{ spentUsd: number }>('GET', '/me/usage')).spentUsd
 		const chatId = crypto.randomUUID()
 		let lastAnswer: Turn | undefined
+		let laneId = ''
 
 		await step('first turn', async () => {
-			await api('POST', '/chats', { id: chatId, params: { model: model.id }, message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'Reply with the single word: pong' }] } })
-			lastAnswer = await turn(chatId, { trigger: 'regenerate-message' })
+			await api('POST', '/chats', { id: chatId, models: [{ modelId: model.id }], message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'Reply with the single word: pong' }] } })
+			laneId = (await api<{ models: { id: string }[] }>('GET', `/chats/${chatId}`)).models[0]!.id
+			lastAnswer = await turn(chatId, laneId, { trigger: 'regenerate-message' })
 			if (!/pong/i.test(lastAnswer.text)) throw new Error(`expected pong, got ${summary(lastAnswer)}`)
 			return summary(lastAnswer)
 		})
@@ -134,7 +136,7 @@ try {
 			}
 			if (!words.length) return 'skipped: the model reads neither images nor PDFs'
 			parts.push({ type: 'text', text: 'Each attachment holds one secret word. Reply with just the secret words.' })
-			lastAnswer = await turn(chatId, { trigger: 'submit-message', message: { id: crypto.randomUUID(), role: 'user', parts } })
+			lastAnswer = await turn(chatId, laneId, { trigger: 'submit-message', message: { id: crypto.randomUUID(), role: 'user', parts } })
 			const missing = words.filter(word => !lastAnswer!.text.toLowerCase().includes(word))
 			if (missing.length) throw new Error(`missing ${missing.join(', ')} in ${summary(lastAnswer)}`)
 			return summary(lastAnswer)
@@ -142,7 +144,7 @@ try {
 
 		await step('regenerate', async () => {
 			const before = (await api<{ messages: unknown[] }>('GET', `/chats/${chatId}`)).messages.length
-			lastAnswer = await turn(chatId, { trigger: 'regenerate-message', messageId: lastAnswer?.messageId })
+			lastAnswer = await turn(chatId, laneId, { trigger: 'regenerate-message', messageId: lastAnswer?.messageId })
 			const after = (await api<{ messages: unknown[] }>('GET', `/chats/${chatId}`)).messages.length
 			if (after !== before) throw new Error(`the chat went from ${before} to ${after} messages`)
 			return summary(lastAnswer)
@@ -151,8 +153,8 @@ try {
 		if (process.argv.includes('--search')) {
 			await step('web search', async () => {
 				if (!model.webSearch) return 'skipped: no web search for this model'
-				await api('PATCH', `/chats/${chatId}`, { params: { model: model.id, webSearch: true } })
-				lastAnswer = await turn(chatId, { trigger: 'submit-message', message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'What is the latest Nuxt release? One sentence, with a source.' }] } })
+				await api('PATCH', `/chats/${chatId}`, { settings: { webSearch: true } })
+				lastAnswer = await turn(chatId, laneId, { trigger: 'submit-message', message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'What is the latest Nuxt release? One sentence, with a source.' }] } })
 				return `${summary(lastAnswer)}, ${lastAnswer.sources.length} sources`
 			})
 		}

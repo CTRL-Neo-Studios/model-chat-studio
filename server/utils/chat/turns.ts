@@ -1,5 +1,6 @@
+import { isDeepStrictEqual } from 'node:util'
 import { createError } from 'nuxt/server'
-import { and, asc, eq, gt, gte, inArray, isNull, or, sum } from 'drizzle-orm'
+import { and, asc, eq, gt, gte, inArray, isNull, ne, or, sum } from 'drizzle-orm'
 import { z } from 'zod'
 // Relative, not `hub:db`, so this module also loads in `bun test`.
 import * as tables from '../../db/schema'
@@ -40,14 +41,14 @@ export async function attachFiles(db: Db, chatId: string, messageId: string, par
 }
 
 /**
- * The body of `POST /chats/:id`. The client sends only the new message, never the history.
- * Submitting a message whose id already exists in the chat is an edit.
+ * The body of `POST /chats/:id`: one answer from one lane (`chatModelId`). The client sends only the new
+ * message, never the history. Submitting a message whose id already exists in the chat joins it (another
+ * lane answering the same message) or edits it; see `applyTurnTrigger`.
  */
 export const turnRequestSchema = z.discriminatedUnion('trigger', [
-	z.object({ trigger: z.literal('submit-message'), message: userMessageSchema }),
-	z.object({ trigger: z.literal('regenerate-message'), messageId: z.string().min(1).optional() }),
+	z.object({ trigger: z.literal('submit-message'), message: userMessageSchema, chatModelId: z.uuid() }),
+	z.object({ trigger: z.literal('regenerate-message'), messageId: z.string().min(1).optional(), chatModelId: z.uuid() }),
 ])
-
 export type TurnRequest = z.infer<typeof turnRequestSchema>
 
 /** A chat with the ids of the people it is shared with. Ids that are not UUIDs find nothing. */
@@ -73,28 +74,55 @@ export async function listChatShares(db: Db, chatId: string) {
 		.orderBy(asc(tables.chatShare.createdAt))
 }
 
-/** A chat's messages in the order they were saved. */
-export async function listChatMessages(db: Db, chatId: string) {
+/**
+ * A chat's messages in the order they were saved. With a lane, only that lane's thread: every message
+ * except the other lanes' answers.
+ */
+export async function listChatMessages(db: Db, chatId: string, chatModelId?: string) {
 	return await db.select({
 		id: tables.message.id,
 		role: tables.message.role,
 		parts: tables.message.parts,
 		metadata: tables.message.metadata,
+		chatModelId: tables.message.chatModelId,
 		createdAt: tables.message.createdAt,
 	}).from(tables.message)
-		.where(eq(tables.message.chatId, chatId))
+		.where(and(
+			eq(tables.message.chatId, chatId),
+			chatModelId ? or(ne(tables.message.role, 'assistant'), eq(tables.message.chatModelId, chatModelId)) : undefined,
+		))
 		.orderBy(asc(tables.message.seq))
+}
+
+/**
+ * Whether a lane's request for an existing user message joins it instead of editing it: the message is the
+ * chat's newest user message, it arrives unchanged, and this lane has not answered it yet.
+ */
+async function joinsMessage(db: Db, chatId: string, chatModelId: string, message: { id: string, seq: number }, parts: UserMessageParts) {
+	const [stored] = await db.select({ parts: tables.message.parts }).from(tables.message).where(eq(tables.message.id, message.id))
+	if (!stored || !isDeepStrictEqual(stored.parts, parts)) return false
+	const later = await db.select({ id: tables.message.id }).from(tables.message).where(and(
+		eq(tables.message.chatId, chatId),
+		eq(tables.message.role, 'user'),
+		gt(tables.message.seq, message.seq),
+	)).limit(1)
+	const answered = await db.select({ id: tables.message.id }).from(tables.message).where(and(
+		eq(tables.message.chatModelId, chatModelId),
+		eq(tables.message.parentId, message.id),
+	)).limit(1)
+	return !later.length && !answered.length
 }
 
 /**
  * Applies a turn's trigger before the model is called, in one transaction:
  * - a new message is saved;
+ * - a message that another lane saved for the same send is joined (`joinsMessage`): nothing changes;
  * - an edit replaces the message's parts and deletes everything after it;
  * - a regenerate deletes the target assistant message and everything after it, or everything after
  *   a target user message. Without a target it starts from the last message.
  *
- * Returns the id of the user message the answer replies to, and the attachments of the deleted
- * messages, which the caller deletes from storage once this has committed.
+ * Returns the id of the user message the answer replies to, and the attachments of the deleted messages,
+ * which the caller deletes from storage once this has committed.
  */
 export async function applyTurnTrigger(db: Db, chatId: string, request: TurnRequest): Promise<{ parentId: string, removedFileIds: string[] }> {
 	return await db.transaction(async (tx) => {
@@ -112,8 +140,15 @@ export async function applyTurnTrigger(db: Db, chatId: string, request: TurnRequ
 				.values({ id, chatId, role: 'user', parts, parentId: rows.at(-1)?.id })
 				.onConflictDoNothing()
 				.returning({ id: tables.message.id })
-			// The id exists in another chat.
-			if (!saved) throw createError({ status: 409, statusText: 'This message id is already in use' })
+			if (!saved) {
+				// Another lane's request saved it after `rows` was read, or the id belongs to another chat.
+				const [existing] = await tx.select({ chatId: tables.message.chatId, role: tables.message.role, seq: tables.message.seq })
+					.from(tables.message).where(eq(tables.message.id, id))
+				if (existing?.chatId === chatId && existing.role === 'user' && await joinsMessage(tx, chatId, request.chatModelId, { id, seq: existing.seq }, parts)) {
+					return { parentId: id, removedFileIds: [] }
+				}
+				throw createError({ status: 409, statusText: 'This message id is already in use' })
+			}
 			await attachFiles(tx, chatId, saved.id, parts)
 			return { parentId: saved.id, removedFileIds: [] }
 		}
@@ -122,6 +157,9 @@ export async function applyTurnTrigger(db: Db, chatId: string, request: TurnRequ
 		if (!pivot) throw createError({ status: 400, statusText: 'There is no message to answer' })
 		if (request.trigger === 'submit-message') {
 			if (pivot.role !== 'user') throw createError({ status: 400, statusText: 'Only your own messages can be edited' })
+			if (await joinsMessage(tx, chatId, request.chatModelId, pivot, request.message.parts)) {
+				return { parentId: pivot.id, removedFileIds: [] }
+			}
 			await tx.update(tables.message).set({ parts: request.message.parts }).where(eq(tables.message.id, pivot.id))
 			await attachFiles(tx, chatId, pivot.id, request.message.parts)
 		}

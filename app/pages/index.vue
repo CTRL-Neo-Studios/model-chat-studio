@@ -12,7 +12,7 @@ const { ready, platform } = useModels()
 await ready
 const unavailable = computed(() => !platform.value)
 
-const { params, systemPrompt } = useChatSettings()
+const { lane, settings } = useChatSettings()
 const isAdmin = computed(() => user.value?.role === 'admin')
 
 const greeting = computed(() => {
@@ -36,8 +36,8 @@ async function createChat(prompt: string) {
 			body: {
 				id: chatId,
 				message: { id: crypto.randomUUID(), role: 'user', parts: [...(prompt.trim() ? [{ type: 'text', text: prompt }] : []), ...fileParts.value] },
-				params: params.value,
-				systemPrompt: systemPrompt.value || undefined,
+				settings: settings.value,
+				models: [{ modelId: lane.value.modelId, params: lane.value.params, systemPrompt: lane.value.systemPrompt || null }],
 			},
 		})
 	}
@@ -83,8 +83,8 @@ const quickChats = [
 
 					<ChatPrompt
 						v-model="input"
-						v-model:params="params"
-						v-model:system-prompt="systemPrompt"
+						v-model:lane="lane"
+						v-model:settings="settings"
 						v-model:files="promptFiles"
 						:uploads="uploads"
 						:uploading="uploading"

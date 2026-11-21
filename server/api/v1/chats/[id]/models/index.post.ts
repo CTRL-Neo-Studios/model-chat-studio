@@ -1,0 +1,38 @@
+import { createError, defineEventHandler, getRouterParam, readValidatedBody } from 'nuxt/server'
+import { db, schema } from 'hub:db'
+import { eq, max } from 'drizzle-orm'
+import { z } from 'zod'
+import { chatAbilities } from '#shared/abilities/chatAbilities'
+import { laneFieldsSchema } from '#shared/utils/chat'
+import { authorize } from '#server/utils/core/authorize'
+import { findChat } from '#server/utils/chat/turns'
+import { findChatModel, laneValues } from '#server/utils/chat/lanes'
+
+const bodySchema = laneFieldsSchema.partial().extend({
+	/** Copies this lane of the chat; the other fields apply on top. */
+	duplicateOf: z.uuid().optional(),
+}).strict()
+
+/** Owner only: adds a lane at the end. It answers from the next message on. */
+export default defineEventHandler(async (event) => {
+	const chat = await findChat(db, getRouterParam(event, 'id', { decode: true }))
+	await authorize(event, chatAbilities().manageChat, chat)
+	const { duplicateOf, ...fields } = await readValidatedBody(event, bodySchema)
+
+	let copied = {}
+	if (duplicateOf) {
+		const source = await findChatModel(db, chat!.id, duplicateOf)
+		if (!source) throw createError({ status: 404, statusText: 'Model not found in this chat' })
+		const { id: _, position: __, ...rest } = source
+		copied = rest
+	}
+	const [last] = await db.select({ position: max(schema.chatModel.position) }).from(schema.chatModel).where(eq(schema.chatModel.chatId, chat!.id))
+	const [lane] = await db.insert(schema.chatModel).values({
+		...copied,
+		...await laneValues(db, fields),
+		chatId: chat!.id,
+		position: (last?.position ?? -1) + 1,
+	}).returning()
+	const { chatId: _, createdAt: __, ...view } = lane!
+	return view
+})

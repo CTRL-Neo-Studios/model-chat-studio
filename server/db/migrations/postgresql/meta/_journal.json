@@ -15,6 +15,13 @@
       "when": 1795205927178,
       "tag": "0001_allowlist_off_by_default",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795276626043,
+      "tag": "0002_chat_lanes",
+      "breakpoints": true
     }
   ]
 }

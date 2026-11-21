@@ -10,6 +10,7 @@ import { getSetting } from '#server/utils/core/settings'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { assertRateLimit } from '#server/utils/core/rateLimit'
 import { applyTurnTrigger, assertWithinBudget, findChat, listChatMessages, turnRequestSchema } from '#server/utils/chat/turns'
+import { listChatModels } from '#server/utils/chat/lanes'
 import { deleteStoredFiles, resolveAttachments } from '#server/utils/chat/files'
 import { getCatalog, getEndpoints, getPriceOverride, useInference } from '#server/utils/inference'
 import type { FinishedStep, Pricing } from '#server/utils/inference/types'
@@ -42,7 +43,10 @@ function fallbackTitle(text: string): string {
 	return clean.length > 60 ? `${clean.slice(0, 59)}…` : clean || 'New chat'
 }
 
-/** Streams one answer. The client sends only the new message (or the regenerate target), never the history. */
+/**
+ * Streams one lane's answer. The client sends only the new message (or the regenerate target) and the lane,
+ * never the history; the lane sees its own thread.
+ */
 export default defineEventHandler(async (event) => {
 	const user = await useServerAuth().requireUser(event)
 	const chat = await findChat(db, getRouterParam(event, 'id', { decode: true }))
@@ -56,10 +60,15 @@ export default defineEventHandler(async (event) => {
 	if (!inference) throw createError({ status: 503, statusText: 'No model platform is configured yet. An admin can set one up in the settings.' })
 	const { platform, apiKey, byok, config } = inference
 
+	const lanes = await listChatModels(db, chatId)
+	const lane = lanes.find(lane => lane.id === request.chatModelId)
+	if (!lane) throw createError({ status: 404, statusText: 'Model not found in this chat' })
+	if (!lane.enabled) throw createError({ status: 400, statusText: 'This model is turned off in this chat' })
+
 	// Policy checks: the allowlist, the provider list and the budget.
-	const params = chat!.params ?? {}
+	const params = lane.params
 	const catalog = await getCatalog(db, inference)
-	const chosen = catalog.find(model => model.id === params.model)
+	const chosen = lane.platform === platform.id ? catalog.find(model => model.id === lane.modelId) : undefined
 	// A model that is no longer offered (or another platform's) falls back to the default, without its model-specific settings.
 	const model = chosen ?? catalog.find(model => model.id === config.defaultModel)
 	if (!model) throw createError({ status: 400, statusText: 'This chat\'s model is not available. Pick another model.' })
@@ -77,11 +86,12 @@ export default defineEventHandler(async (event) => {
 	const { parentId, removedFileIds } = await applyTurnTrigger(db, chatId, request)
 	// Attachments of the messages an edit or regenerate dropped.
 	await deleteStoredFiles(db, removedFileIds, inference)
-	const history = await listChatMessages(db, chatId) as UIMessage<MessageMetadata>[]
+	const history = await listChatMessages(db, chatId, lane.id) as UIMessage<MessageMetadata>[]
 	const firstText = history.find(message => message.role === 'user')?.parts.map(part => part.type === 'text' ? part.text : '').join(' ') ?? ''
 
 	const safetyCheck = await getSetting(db, 'safetyCheck')
-	const firstTurn = !chat!.title
+	// The first enabled lane names the chat, so a chat answered by several lanes is named once.
+	const firstTurn = !chat!.title && lanes.find(lane => lane.enabled)?.id === lane.id
 	/** Appends one row to the spend ledger and returns the usage. */
 	const recordUsage = async (kind: 'chat' | 'title', modelId: string, steps: FinishedStep[], price: Pricing | null = null) => {
 		const usage = platform.usage({ model: modelId, steps, price })
@@ -107,7 +117,7 @@ export default defineEventHandler(async (event) => {
 			})
 		: Promise.resolve(undefined)
 
-	const webSearch = !!params.webSearch && model.webSearch
+	const webSearch = !!chat!.settings.webSearch && model.webSearch
 	const prepared = platform.prepare({
 		...params, apiKey, model: model.id, providers, reasoningLevel, webSearch,
 		userId: user.id, firstTurn, safetyCheck,
@@ -122,7 +132,7 @@ export default defineEventHandler(async (event) => {
 	const result = streamText({
 		...prepared,
 		tools,
-		instructions: [INSTRUCTIONS, webSearch && WEB_SEARCH_INSTRUCTIONS, chat!.systemPrompt].filter(Boolean).join('\n\n'),
+		instructions: [INSTRUCTIONS, webSearch && WEB_SEARCH_INSTRUCTIONS, lane.systemPrompt].filter(Boolean).join('\n\n'),
 		messages: await convertToModelMessages(modelHistory, { tools }),
 		stopWhen: isStepCount(5),
 		abortSignal: event.req.signal,
@@ -162,7 +172,7 @@ export default defineEventHandler(async (event) => {
 					const stored = metadata(finishReason)
 					const parts = stored.refused ? [{ type: 'text' as const, text: REFUSAL }] : responseMessage.parts
 					if (parts.length) {
-						await db.insert(schema.message).values({ id: responseMessage.id, chatId, parentId, role: 'assistant', parts, metadata: stored })
+						await db.insert(schema.message).values({ id: responseMessage.id, chatId, parentId, chatModelId: lane.id, role: 'assistant', parts, metadata: stored })
 					}
 					if (firstTurn) {
 						const title = (await titlePromise) ?? usage.title ?? fallbackTitle(firstText)

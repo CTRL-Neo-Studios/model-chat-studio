@@ -14,7 +14,7 @@ import {
 } from "drizzle-orm/pg-core";
 import {relations} from "drizzle-orm";
 import type {UIMessage} from "ai";
-import type {ChatParams, MessageMetadata} from "../../shared/utils/chat";
+import type {ChatSettings, MessageMetadata, ModelParams} from "../../shared/utils/chat";
 
 const createdAt = timestamp({ withTimezone: true }).defaultNow().notNull()
 
@@ -102,12 +102,32 @@ export const chat = pgTable("chat", {
 	title: text(),
 	/** Link access: `public` means anyone with the link can read. */
 	visibility: text({ enum: ["private", "public"] }).notNull().default("private"),
-	systemPrompt: text(),
-	params: jsonb().$type<ChatParams>(),
+	/** Settings shared by every lane; each lane's model settings live in `chatModel`. */
+	settings: jsonb().$type<ChatSettings>().notNull().default({}),
 
 	...createdUpdatedAtColumns
 }, (t) => [
 	index().on(t.userId, t.createdAt),
+]);
+
+/** A lane: one model answering in a chat, with its own settings and its own thread of answers. */
+export const chatModel = pgTable("chatModel", {
+	id: uuid().primaryKey().defaultRandom(),
+	chatId: uuid().notNull().references(() => chat.id, { onDelete: "cascade" }),
+	position: integer().notNull(),
+	enabled: boolean().notNull().default(true),
+	/** `null` shows the model's name. */
+	name: text(),
+	color: text(),
+	/** The platform `modelId` belongs to; set together with it. */
+	platform: text({ enum: inferencePlatforms }),
+	/** `null` is the active platform's default model. */
+	modelId: text(),
+	systemPrompt: text(),
+	params: jsonb().$type<ModelParams>().notNull().default({}),
+	createdAt,
+}, (t) => [
+	index().on(t.chatId, t.position),
 ]);
 
 export const chatShare = pgTable("chatShare", {
@@ -128,6 +148,8 @@ export const message = pgTable("message", {
 	role: text({ enum: ["user", "assistant", "system"] }).notNull(),
 	parts: jsonb().$type<UIMessage['parts']>().notNull(),
 	metadata: jsonb().$type<MessageMetadata>(),
+	/** The lane that wrote an answer; `null` on user messages and on answers of a deleted lane. */
+	chatModelId: uuid().references(() => chatModel.id, { onDelete: "set null" }),
 	createdAt,
 }, (t) => [
 	index().on(t.chatId, t.seq),
@@ -202,8 +224,13 @@ export const userRelations = relations(user, ({ many }) => ({
 export const chatRelations = relations(chat, ({ one, many }) => ({
 	user: one(user, { fields: [chat.userId], references: [user.id] }),
 	messages: many(message),
+	models: many(chatModel),
 	shares: many(chatShare),
 	votes: many(vote),
+}))
+
+export const chatModelRelations = relations(chatModel, ({ one }) => ({
+	chat: one(chat, { fields: [chatModel.chatId], references: [chat.id] }),
 }))
 
 export const chatShareRelations = relations(chatShare, ({ one }) => ({

@@ -1,6 +1,6 @@
 import type { SharedV4ProviderOptions } from '@ai-sdk/provider'
 import type { LanguageModel, LanguageModelUsage, ProviderMetadata, ToolSet } from 'ai'
-import type { ChatParams } from '../../../shared/utils/chat'
+import type { ChatSettings, ModelParams } from '../../../shared/utils/chat'
 import type { InferencePlatformId } from '../core/settings'
 
 /** USD per 1M tokens. */
@@ -44,7 +44,7 @@ export interface CatalogEndpoint {
 	pricing: Pricing | null
 }
 
-export interface TurnInput extends Omit<ChatParams, 'model'> {
+export interface TurnInput extends ModelParams, ChatSettings {
 	apiKey: string
 	model: string
 	userId: string

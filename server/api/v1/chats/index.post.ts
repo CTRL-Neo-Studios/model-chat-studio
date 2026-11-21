@@ -1,28 +1,32 @@
 import { createError, defineEventHandler, readValidatedBody } from 'nuxt/server'
 import { db, schema } from 'hub:db'
 import { z } from 'zod'
-import { chatParamsSchema } from '#shared/utils/chat'
+import { chatSettingsSchema, laneFieldsSchema } from '#shared/utils/chat'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { attachFiles, userMessageSchema } from '#server/utils/chat/turns'
+import { laneValues } from '#server/utils/chat/lanes'
 
 const bodySchema = z.object({
 	id: z.uuid(),
 	message: userMessageSchema,
-	params: chatParamsSchema.optional(),
-	systemPrompt: z.string().trim().max(20_000).optional(),
+	settings: chatSettingsSchema.optional(),
+	/** The lanes, in order. */
+	models: z.array(laneFieldsSchema.partial()).min(1).max(12),
 })
 
-/** Creates a chat with its first message. The answer is requested with `POST /chats/:id`. */
+/** Creates a chat with its lanes and first message. Each lane's answer is requested with `POST /chats/:id`. */
 export default defineEventHandler(async (event) => {
 	const user = await useServerAuth().requireUser(event)
-	const { id, message, params, systemPrompt } = await readValidatedBody(event, bodySchema)
+	const { id, message, settings, models } = await readValidatedBody(event, bodySchema)
+	const lanes = await Promise.all(models.map(async (fields, position) => ({ chatId: id, position, ...await laneValues(db, fields) })))
 
 	return await db.transaction(async (tx) => {
-		const [chat] = await tx.insert(schema.chat).values({ id, userId: user.id, params, systemPrompt: systemPrompt || null }).onConflictDoNothing().returning()
+		const [chat] = await tx.insert(schema.chat).values({ id, userId: user.id, settings }).onConflictDoNothing().returning()
 		const [saved] = chat
 			? await tx.insert(schema.message).values({ id: message.id, chatId: id, role: 'user', parts: message.parts }).onConflictDoNothing().returning()
 			: []
 		if (!chat || !saved) throw createError({ status: 409, statusText: 'This id is already in use' })
+		await tx.insert(schema.chatModel).values(lanes)
 		await attachFiles(tx, id, saved.id, message.parts)
 		const { userId: _, ...view } = chat
 		return view
