@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ChatSettings } from '#shared/utils/chat'
+import type { PromptCommand } from '~/components/chat/Prompt.vue'
 
 /** The new-chat screen: pick models, write the first message. `temporary` starts a chat that is not kept. */
 const props = defineProps<{
@@ -90,6 +91,14 @@ async function createChat(prompt: string) {
 	await navigateTo({ path: `/chat/${chatId}`, state: { firstAnswer: true } })
 }
 
+// "/temp": the same models and settings, in a temporary chat.
+const tempCommand: PromptCommand = { kind: 'temp', label: 'temp', description: 'Make this a temporary chat: not kept, deleted when you leave', icon: 'i-lucide-ghost' }
+function startTemporary() {
+	lastLanes.value = lanes.value.map(lane => lane.profileId ? { profileId: lane.profileId } : { modelId: lane.modelId })
+	lastSettings.value = { ...settings.value }
+	return navigateTo('/temporary')
+}
+
 const quickChats = [
 	{ label: 'Explain a concept simply', icon: 'i-lucide-lightbulb' },
 	{ label: 'Help me write a Vue composable', icon: 'i-lucide-code' },
@@ -136,9 +145,11 @@ const quickChats = [
 						:uploads="uploads"
 						:uploading="uploading"
 						:disabled="loading || unavailable"
+						:commands="temporary ? [] : [tempCommand]"
 						class="[view-transition-name:chat-prompt]"
 						@update:web-search="chatLanes.setSettings({ webSearch: $event })"
 						@submit="createChat(input)"
+						@command="startTemporary"
 					/>
 
 					<div class="flex flex-wrap gap-2">

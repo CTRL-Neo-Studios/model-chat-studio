@@ -149,6 +149,21 @@ test('a lane sees every user message and only its own answers; a lane added late
 	expect(await ids(late!.id)).toEqual(['u1', 'u2'])
 })
 
+test('a lane\'s thread holds its own summaries only, where they were made', async () => {
+	await applyTurnTrigger(db, chatId, say('u1'))
+	await answer('a1', 'u1', laneA)
+	await answer('b1', 'u1', laneB)
+	await db.insert(schema.message).values([
+		{ id: 'sA', chatId, role: 'system', parts: [{ type: 'text', text: 'A so far' }], chatModelId: laneA },
+		{ id: 'sB', chatId, role: 'system', parts: [{ type: 'text', text: 'B so far' }], chatModelId: laneB },
+	])
+	await applyTurnTrigger(db, chatId, say('u2'))
+
+	expect(await ids()).toEqual(['u1', 'a1', 'b1', 'sA', 'sB', 'u2'])
+	expect(await ids(laneA)).toEqual(['u1', 'a1', 'sA', 'u2'])
+	expect(await ids(laneB)).toEqual(['u1', 'b1', 'sB', 'u2'])
+})
+
 test('editing a message changes only its text; with dropAfter its answers and the later turns go', async () => {
 	await applyTurnTrigger(db, chatId, say('u1'))
 	await answer('a1', 'u1')

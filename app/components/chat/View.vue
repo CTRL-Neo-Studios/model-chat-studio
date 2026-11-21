@@ -2,6 +2,7 @@
 import type { UIMessage } from 'ai'
 import { LazyModalConfirm } from '#components'
 import type { ChatMessage } from '~/composables/useLaneAnswers'
+import type { PromptCommand } from '~/components/chat/Prompt.vue'
 
 /** A loaded chat: the page renders it once the chat's query has data. */
 const props = defineProps<{
@@ -26,6 +27,8 @@ const sharedWith = ref(data.value?.sharedWith ?? [])
 // Renaming writes the cache (`useChatActions`), so the title is read from it.
 const title = computed(() => data.value?.title ?? null)
 const temporary = computed(() => data.value?.temporary ?? false)
+
+const overviewOpen = ref(false)
 
 // "Keep this chat": it joins the chat list, named from its first message.
 const keeping = ref(false)
@@ -94,10 +97,54 @@ function writeBack() {
 watch(messages, writeBack)
 watch([visibility, sharedWith, settings, lanes], writeBack, { deep: true })
 
-/** The page as a list: each user message, followed by one entry for its answers. */
-const shown = computed(() => messages.value.flatMap((message): ChatMessage[] => message.role === 'user'
-	? [message, { id: `answers:${message.id}`, role: 'assistant', parts: [{ type: 'text', text: '' }], parentId: message.id }]
-	: []))
+/**
+ * The page as a list: each user message followed by one entry for its answers, and a divider where the chat was
+ * compacted, holding that run of summaries (one per lane).
+ */
+const shown = computed(() => messages.value.flatMap((message, index): ChatMessage[] => {
+	if (message.role === 'user') return [message, { id: `answers:${message.id}`, role: 'assistant', parts: [{ type: 'text', text: '' }], parentId: message.id }]
+	if (message.role === 'system' && messages.value[index - 1]?.role !== 'system') return [{ id: `summaries:${message.id}`, role: 'assistant', parts: [{ type: 'text', text: '' }] }]
+	return []
+}))
+
+/** The summaries of one compaction: the run of summary messages starting at `firstId`. */
+function summariesFrom(firstId: string) {
+	const start = messages.value.findIndex(message => message.id === firstId)
+	const end = messages.value.findIndex((message, index) => index > start && message.role !== 'system')
+	return messages.value.slice(start, end < 0 ? undefined : end)
+}
+
+// "/" commands.
+const { renameChat } = useChatActions()
+const lastLanes = useCookie<{ profileId?: string, modelId?: string | null }[]>('chat-lanes', { default: () => [], sameSite: 'lax' })
+const lastSettings = useCookie<ChatSettings>('chat-settings', { default: () => ({}), sameSite: 'lax' })
+const commands: PromptCommand[] = [
+	{ kind: 'compact', label: 'compact', description: 'Summarise the chat so far; each model is sent the summary from now on', icon: 'i-lucide-fold-vertical' },
+	{ kind: 'clear', label: 'clear', description: 'Start a new chat with the same models and settings', icon: 'i-lucide-eraser' },
+	{ kind: 'rename', label: 'rename', description: 'Rename this chat', icon: 'i-lucide-pencil' },
+]
+const compacting = ref(false)
+async function runCommand(kind: PromptCommand['kind']) {
+	if (kind === 'rename') return renameChat(chatId, title.value)
+	if (kind === 'clear') {
+		// The new chat starts from these models: profiles by id, other models by model id, as the home page keeps them.
+		lastLanes.value = enabledLanes.value.map(lane => lane.profileId ? { profileId: lane.profileId } : { modelId: lane.modelId })
+		lastSettings.value = { ...settings.value, memoryLength: undefined }
+		return navigateTo('/')
+	}
+	if (kind !== 'compact' || compacting.value || answers.busy.value) return
+	compacting.value = true
+	const result = await act<{ summaries: ChatMessage[], failed: number }>(`/api/v1/chats/${chatId}/compact`, { method: 'POST' })
+	compacting.value = false
+	if (!result) return
+	messages.value = [...messages.value, ...result.summaries]
+	toast.add({
+		title: result.summaries.length ? 'Chat compacted' : 'Nothing to compact',
+		description: result.failed ? `${result.failed} ${result.failed === 1 ? 'model' : 'models'} could not summarise; they still get the full chat.` : undefined,
+		icon: 'i-lucide-fold-vertical',
+		color: result.failed ? 'warning' : 'success',
+	})
+}
 
 /** One answer slot per lane that answered (or is answering) the question, then answers of removed lanes. */
 function slotsFor(questionId: string) {
@@ -228,6 +275,9 @@ onMounted(() => {
 					<ChatModelsMenu v-if="isOwner" :chat-lanes="chatLanes" />
 				</template>
 
+				<UTooltip v-if="isOwner" text="Conversation overview">
+					<UButton icon="i-lucide-list-tree" color="neutral" variant="ghost" aria-label="Conversation overview" @click="overviewOpen = true" />
+				</UTooltip>
 				<template v-if="temporary && isOwner">
 					<UBadge icon="i-lucide-ghost" label="Temporary" color="neutral" variant="subtle" />
 					<UButton label="Keep this chat" icon="i-lucide-bookmark-plus" size="sm" variant="soft" :loading="keeping" @click="keep" />
@@ -289,6 +339,24 @@ onMounted(() => {
 									@cancel-edit="editingMessageId = null"
 								/>
 							</div>
+							<div v-else-if="message.id.startsWith('summaries:')" class="flex flex-col gap-2 py-2">
+								<USeparator icon="i-lucide-fold-vertical" label="Compacted: each model now gets its summary and what follows" />
+								<UCollapsible v-for="summary in summariesFrom(message.id.slice(10))" :key="summary.id" class="rounded-md border border-default">
+									<UButton
+										color="neutral"
+										variant="ghost"
+										block
+										trailing-icon="i-lucide-chevron-down"
+										:label="`Summary for ${summary.metadata?.lane?.name ?? summary.metadata?.model ?? 'a model'}`"
+										:ui="{ trailingIcon: 'ms-auto group-data-[state=open]:rotate-180 transition-transform' }"
+									/>
+									<template #content>
+										<p class="px-3 pb-3 text-sm text-muted whitespace-pre-wrap">
+											{{ summary.parts.map(part => part.type === 'text' ? part.text : '').join('') }}
+										</p>
+									</template>
+								</UCollapsible>
+							</div>
 							<ChatMessageContent
 								v-else
 								:message="message"
@@ -320,6 +388,8 @@ onMounted(() => {
 								:uploads="uploads"
 								:uploading="uploading"
 								:status="answers.busy.value ? 'streaming' : 'ready'"
+								:disabled="compacting"
+								:commands="commands"
 								class="[view-transition-name:chat-prompt] rounded-b-none backdrop-blur-sm"
 								:memory-max="memoryMax"
 								:memory-length="settings.memoryLength"
@@ -327,6 +397,7 @@ onMounted(() => {
 								@update:memory-length="chatLanes.setSettings({ memoryLength: $event ?? null })"
 								@submit="handleSubmit"
 								@stop="answers.stop()"
+								@command="runCommand"
 							/>
 						</template>
 					</UChatMessages>
@@ -334,4 +405,5 @@ onMounted(() => {
 			</div>
 		</template>
 	</UDashboardPanel>
+	<ChatOverview v-if="isOwner" v-model:open="overviewOpen" :chat-id="chatId" :messages="messages" />
 </template>

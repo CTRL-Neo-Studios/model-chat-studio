@@ -1,6 +1,6 @@
 # Milestones 2–4: model profiles, organisation, projects
 
-Status: milestone 2 done (live smoke run passed on both platforms). Milestone 3: spikes done (D's live run pending), 3.1 folders and 3.2 temporary chat done. Milestone 1 (`plans/milestone-1-chat-foundation.md`) is the base; its conventions (section 2 there) apply unchanged.
+Status: milestone 2 done (live smoke run passed on both platforms). Milestone 3 built: spikes (D's live run pending), folders, temporary chat, context builder with memory slider and turn trace, prompt editor with commands and `/compact`, conversation overview. Milestone 4 next. Milestone 1 (`plans/milestone-1-chat-foundation.md`) is the base; its conventions (section 2 there) apply unchanged.
 
 Goal, in build order:
 
@@ -171,15 +171,14 @@ A summary is a `message` row with role `system`, `metadata.kind: 'summary'` and 
 | `POST /chats` | accepts `temporary: true` |
 | `GET /chats` | returns `folderId`; leaves temporary chats out; deletes the caller's temporary chats older than 24 h |
 | `POST /chats/:id/compact` | per enabled lane: summarise its thread with its own model, store the summary, record usage as `compact` |
-| `GET /chats/:id/trace` | owner only: the block lists of the chat's answers |
-| `GET /chats/:id/files` | every file in the chat |
+| `GET /chats/:id/overview` | owner only, one request for the overview: the block lists of the chat's answers in chat order, every file in the chat, and the spend ledger's totals for the chat by kind |
 
 ### Behaviour
 
 - **Folders.** The sidebar becomes a `UTree`: folders first, then loose chats in today's date groups. Dragging uses native drag events on the rows (spike A): a row dropped on a folder moves into it, dropped on "no folder" moves out. Every drag has a "Move to…" menu twin for keyboards. Folder menu: New folder, Rename, Move to, Delete.
 - **Temporary chat.** `/temporary` is the chat page without an id in the URL, so a refresh starts over by itself. The sidebar starts collapsed and is restored on leaving. Leaving the page deletes the chat: a `keepalive` DELETE on `pagehide` (refresh, closed tab, another site page) and on route leave (another page in the app); the 24 h sweep in `GET /chats` catches tabs that died. No title is generated and sharing is refused. The navbar shows "Temporary" and "Keep this chat", which clears the mark, titles the chat from its first message and moves to `/chat/:id`. Spend is recorded as usual.
-- **Memory slider.** In the prompt footer, bottom left: "Memory: all" or "Memory: 12 messages". It counts the messages after the latest summary; the summary itself is always sent. Stored per chat and applied to each lane's own thread.
-- **Commands.** The prompt body becomes a `UEditor` (Markdown, starter kit off, Enter submits). "/" opens the command menu. `/compact` calls the route above. `/clear` opens a new chat with the same lanes and settings. `/temp` turns a not-yet-started chat temporary. `/rename <title>` renames.
+- **Memory slider.** In the prompt footer, bottom left: "Memory: all" or "Memory: 12 messages". It counts the messages after the latest summary, without answers that are reasoning only; the summary itself is always sent, as a user message (the AI SDK takes system messages only as instructions). The cut never starts on an answer: an answer whose question was left out goes too, so the thread always opens with a user message (at most one message fewer than asked; this also makes spike D's outcome moot for the slider). Stored per chat and applied to each lane's own thread; saved when the slider is released or its popover closes.
+- **Commands.** The prompt body is a `UEditor` (starter kit off, Enter submits, Shift+Enter breaks the line; on touch screens Enter breaks the line). What is sent is the editor's plain text, not its Markdown (spike B). "/" opens a `UEditorSuggestionMenu` whose custom kinds the parent runs. In a chat: `/compact` calls the route above; `/clear` opens a new chat with the same models and settings; `/rename` opens the rename dialog. On the new-chat page: `/temp` moves to a temporary chat with the same models and settings. Summaries show under a divider with one collapsible summary per model.
 - **Overview slideover**, opened from the navbar, owner only:
   - *Trajectory.* One row per block and per event of each turn (instructions, context, user, fetched files, answer, tool call with its result), labelled by role and lane, with a timeline strip on top (input, model, tools) and a search field. Rows expand to the full text.
   - *Files.* Every upload and, in projects, every referenced file, with size, type and the message it belongs to. In a project chat each upload has "Add to project".

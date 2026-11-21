@@ -87,8 +87,8 @@ const question = alias(tables.message, 'question')
 
 /**
  * A chat's messages in reading order: each user message in the order saved, followed by its answers. An
- * answer regenerated later still sits under its question. With a lane, only that lane's thread: every
- * message except the other lanes' answers.
+ * answer regenerated later still sits under its question. With a lane, only that lane's thread: every user
+ * message, and that lane's own answers and summaries.
  */
 export async function listChatMessages(db: Db, chatId: string, chatModelId?: string) {
 	return await db.select({
@@ -104,7 +104,7 @@ export async function listChatMessages(db: Db, chatId: string, chatModelId?: str
 		.leftJoin(question, and(eq(tables.message.role, 'assistant'), eq(question.id, tables.message.parentId)))
 		.where(and(
 			eq(tables.message.chatId, chatId),
-			chatModelId ? or(ne(tables.message.role, 'assistant'), eq(tables.message.chatModelId, chatModelId)) : undefined,
+			chatModelId ? or(eq(tables.message.role, 'user'), eq(tables.message.chatModelId, chatModelId)) : undefined,
 		))
 		.orderBy(sql`coalesce(${question.seq}, ${tables.message.seq})`, asc(tables.message.seq))
 }

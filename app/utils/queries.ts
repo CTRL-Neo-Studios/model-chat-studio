@@ -28,6 +28,14 @@ export const chatVotesQuery = defineQueryOptions((id: string) => ({
 	query: () => useRequestFetch()(`/api/v1/chats/${id}/votes`),
 }))
 
+/** Owner only: context blocks per answer, the chat's files and its ledger totals. */
+export const chatOverviewQuery = defineQueryOptions((id: string) => ({
+	key: ['chats', id, 'overview'],
+	query: () => useRequestFetch()(`/api/v1/chats/${id}/overview`),
+	// New answers add traces and spend: read afresh each time the overview opens.
+	staleTime: 0,
+}))
+
 export const meQuery = defineQueryOptions({
 	key: ['me'],
 	query: () => useRequestFetch()('/api/v1/users/me'),

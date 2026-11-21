@@ -88,6 +88,8 @@ export interface MessageMetadata {
 	durationMs?: number
 	/** 1 for the first answer, then one more per regenerate (capped by `maxRegenerations`). */
 	attempt?: number
+	/** A `/compact` summary (role `system`) of a lane's thread up to it. */
+	kind?: 'summary'
 }
 
 /**
