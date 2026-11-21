@@ -1,6 +1,6 @@
 # Optimization plan: page speed and the admin model pickers
 
-Status: O1 to O3 done; O4 planned. It sits between milestone 2 (waiting for its live smoke run) and milestone 3, and changes no feature. O3 deviation: a chat and the admin settings form still wait for their data on a first visit (their data seeds the page's editable state); hovering a chat in the sidebar loads it ahead.
+Status: O1 to O4 done. It sits between milestone 2 (waiting for its live smoke run) and milestone 3, and changes no feature. Deviations: the admin settings form still waits for its data on a first visit (the form starts from it); changes are optimistic local or cache updates with rollback rather than `useMutation`, which would add nothing over them.
 
 ## 1. Findings
 

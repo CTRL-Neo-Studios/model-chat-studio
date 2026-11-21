@@ -52,6 +52,9 @@ export function useChatLanes(chat?: SavedChat) {
 		lanes.value = lanes.value.map(entry => entry.id === lane.id ? lane : entry)
 	}
 
+	/** A lane being added on a saved chat; adding needs the server's id. */
+	const adding = ref(false)
+
 	/** Adds a lane from a profile or a model id. On a saved chat it answers from the next message on. */
 	async function add(source: { profile: LaneSource } | { modelId: string | null }) {
 		if (!base) {
@@ -59,7 +62,9 @@ export function useChatLanes(chat?: SavedChat) {
 			return
 		}
 		const body = 'profile' in source ? { profileId: source.profile.id } : { modelId: source.modelId }
+		adding.value = true
 		const lane = await act<Lane>(`${base}/models`, { method: 'POST', body })
+		adding.value = false
 		if (lane) lanes.value = [...lanes.value, lane]
 	}
 
@@ -70,20 +75,27 @@ export function useChatLanes(chat?: SavedChat) {
 			lanes.value = [...lanes.value, draft(fields)]
 			return
 		}
+		adding.value = true
 		const copy = await act<Lane>(`${base}/models`, { method: 'POST', body: { duplicateOf: lane.id } })
+		adding.value = false
 		if (copy) lanes.value = [...lanes.value, copy]
 	}
 
+	// Changes to a saved chat show at once and are undone (with the server's message) if the server refuses.
+	// A response only applies while the lane is still as this change left it, so a later change wins.
 	async function update(lane: Lane, fields: Partial<LaneFields>) {
-		if (!base) return replace({ ...lane, ...fields })
+		const changed = { ...lane, ...fields }
+		replace(changed)
+		if (!base) return
 		const saved = await act<Lane>(`${base}/models/${lane.id}`, { method: 'PATCH', body: fields })
-		if (saved) replace(saved)
+		if (toRaw(lanes.value.find(entry => entry.id === lane.id)) === changed) replace(saved ?? lane)
 	}
 
 	async function remove(lane: Lane) {
 		if (lanes.value.length <= 1) return
-		if (base && !await act(`${base}/models/${lane.id}`, { method: 'DELETE' })) return
-		lanes.value = lanes.value.filter(entry => entry.id !== lane.id)
+		const before = lanes.value
+		lanes.value = before.filter(entry => entry.id !== lane.id)
+		if (base && !await act(`${base}/models/${lane.id}`, { method: 'DELETE' })) lanes.value = before
 	}
 
 	/** Moves a lane one place; on a saved chat the two lanes swap positions. */
@@ -91,16 +103,17 @@ export function useChatLanes(chat?: SavedChat) {
 		const index = lanes.value.findIndex(entry => entry.id === lane.id)
 		const other = lanes.value[index + offset]
 		if (!other) return
-		const order = [...lanes.value]
-		order[index] = other
-		order[index + offset] = lane
+		const before = lanes.value
+		const order = [...before]
+		order[index] = { ...other, position: lane.position }
+		order[index + offset] = { ...lane, position: other.position }
 		lanes.value = order
 		if (!base) return
-		await Promise.all([
+		const results = await Promise.all([
 			act(`${base}/models/${lane.id}`, { method: 'PATCH', body: { position: other.position } }),
 			act(`${base}/models/${other.id}`, { method: 'PATCH', body: { position: lane.position } }),
 		])
-		;[lane.position, other.position] = [other.position, lane.position]
+		if (results.includes(undefined)) lanes.value = before
 	}
 
 	/** Writes a saved lane back to its profile. */
@@ -109,11 +122,12 @@ export function useChatLanes(chat?: SavedChat) {
 	}
 
 	async function setSettings(changes: Partial<ChatSettings>) {
-		settings.value = { ...settings.value, ...changes }
-		if (base) await act(base, { method: 'PATCH', body: { settings: settings.value } })
+		const before = settings.value
+		settings.value = { ...before, ...changes }
+		if (base && !await act(base, { method: 'PATCH', body: { settings: settings.value } })) settings.value = before
 	}
 
-	return { saved: !!chat, lanes, settings, enabledLanes, laneModel, laneName, draft, fromProfile, add, duplicate, update, remove, move, applyToProfile, setSettings }
+	return { saved: !!chat, lanes, settings, enabledLanes, adding, laneModel, laneName, draft, fromProfile, add, duplicate, update, remove, move, applyToProfile, setSettings }
 }
 
 export type ChatLanes = ReturnType<typeof useChatLanes>

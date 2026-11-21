@@ -8,7 +8,7 @@ const props = defineProps<{
 	chatLanes: ChatLanes
 }>()
 
-const { lanes, enabledLanes, settings, laneName, laneModel, saved } = props.chatLanes
+const { lanes, enabledLanes, settings, laneName, laneModel, saved, adding } = props.chatLanes
 const { models, maxChatModels } = useModels()
 // At the admin's limit, nothing more can be turned on or added until one is turned off.
 const full = computed(() => enabledLanes.value.length >= maxChatModels.value)
@@ -129,6 +129,7 @@ const label = computed(() => enabledLanes.value.length === 1 ? laneName(enabledL
 				<span v-for="lane in enabledLanes.slice(0, 4)" :key="lane.id" :class="['size-3 rounded-full ring-2 ring-(--ui-bg)', swatch(lane.color)]" />
 			</span>
 			<span class="truncate max-w-48">{{ label }}</span>
+			<UIcon v-if="adding" name="i-lucide-loader-circle" class="size-4 shrink-0 animate-spin text-dimmed" aria-label="Adding a model" />
 		</UButton>
 
 		<template #lane-leading="{ item }">

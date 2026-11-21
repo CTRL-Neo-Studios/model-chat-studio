@@ -22,10 +22,17 @@ const matches = computed(() => {
 		&& (!term || model.id.toLowerCase().includes(term) || model.name.toLowerCase().includes(term)))
 })
 
+// The switch moves at once and moves back if the server refuses.
 async function setAllowed(row: Row, enabled: boolean) {
-	await act('/api/v1/admin/models', { method: 'PATCH', body: { platform: platform.value, modelId: row.id, enabled } })
+	const key = adminCatalogQuery({}).key
+	const setRow = (value: boolean) => {
+		const current = queryCache.getQueryData(key)
+		if (current) queryCache.setQueryData(key, Object.assign({}, current, { models: current.models.map(model => model.id === row.id ? { ...model, enabled: value } : model) }))
+	}
+	setRow(enabled)
+	if (!await act('/api/v1/admin/models', { method: 'PATCH', body: { platform: platform.value, modelId: row.id, enabled } })) return setRow(!enabled)
 	// Members' model picker follows the allowlist.
-	await Promise.all([refresh(), queryCache.invalidateQueries({ key: modelsQuery.key, exact: true })])
+	queryCache.invalidateQueries({ key: modelsQuery.key, exact: true })
 }
 
 // Price override (DeepSeek only: OpenRouter reports the cost of every answer).

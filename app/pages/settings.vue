@@ -2,6 +2,7 @@
 useHead({ title: 'Settings' })
 
 const act = useApiAction()
+const queryCache = useQueryCache()
 const { platform } = useModels()
 // Both load at once; the cards fill in as they arrive.
 const { data: me, refetch: refreshMe } = useQuery(meQuery)
@@ -38,8 +39,12 @@ const stoppedRegenerateItems = [
 	{ label: 'Keep what was generated', value: 'keep-partial', description: 'The unfinished answer replaces the previous one.' },
 ]
 
+// Shown at once; the previous choice comes back if the server refuses.
 async function setStoppedRegenerate(value: string) {
-	if (await act('/api/v1/me/preferences', { method: 'PATCH', body: { stoppedRegenerate: value }, success: 'Saved' })) await refreshMe()
+	const before = me.value
+	if (!before) return
+	queryCache.setQueryData(meQuery.key, { ...before, preferences: { ...before.preferences, stoppedRegenerate: value as typeof before.preferences.stoppedRegenerate } })
+	if (!await act('/api/v1/me/preferences', { method: 'PATCH', body: { stoppedRegenerate: value }, success: 'Saved' })) queryCache.setQueryData(meQuery.key, before)
 }
 </script>
 
@@ -66,6 +71,7 @@ async function setStoppedRegenerate(value: string) {
 							You have used this month's budget. Add your own key below to keep chatting.
 						</p>
 					</div>
+					<USkeleton v-else class="h-5 w-48" />
 				</UPageCard>
 
 				<UPageCard title="Your API keys" description="With your own key for the active platform, your chats are billed to your account and do not count against your budget. Keys are stored encrypted and never shown again." variant="subtle">
@@ -100,6 +106,10 @@ async function setStoppedRegenerate(value: string) {
 						:items="stoppedRegenerateItems"
 						@update:model-value="setStoppedRegenerate"
 					/>
+					<div v-else class="flex flex-col gap-3">
+						<USkeleton class="h-5 w-56" />
+						<USkeleton class="h-5 w-56" />
+					</div>
 				</UPageCard>
 			</div>
 		</template>
