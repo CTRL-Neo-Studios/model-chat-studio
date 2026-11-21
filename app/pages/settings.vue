@@ -3,8 +3,9 @@ useHead({ title: 'Settings' })
 
 const act = useApiAction()
 const { platform } = useModels()
-const { data: me, refresh: refreshMe } = await useFetch('/api/v1/users/me')
-const { data: usage } = await useFetch('/api/v1/me/usage')
+// Both load at once; the cards fill in as they arrive.
+const { data: me, refetch: refreshMe } = useQuery(meQuery)
+const { data: usage } = useQuery(usageQuery)
 
 const platforms = [
 	{ id: 'openrouter' as const, name: 'OpenRouter', keys: 'https://openrouter.ai/settings/keys' },

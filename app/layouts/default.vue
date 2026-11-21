@@ -3,30 +3,45 @@ import type { DropdownMenuItem } from '@nuxt/ui'
 
 const { loggedIn } = useUserSession()
 const { renameChat, deleteChat } = useChatActions()
+const queryCache = useQueryCache()
 const siteName = useRuntimeConfig().public.siteName as string || 'Chat'
 
 const sidebarOpen = ref(false)
 const searchOpen = ref(false)
 
 // Guests only ever see a chat shared by link, so they have no list.
-const { data: chats, refresh: refreshChats } = await useFetch('/api/v1/chats', {
-	key: 'chats',
-	immediate: loggedIn.value,
-	default: () => [],
-	transform: data => data.map(chat => ({
-		id: chat.id,
-		label: chat.title || 'Untitled',
-		to: `/chat/${chat.id}`,
-		icon: 'i-lucide-message-circle',
-		createdAt: chat.createdAt,
-	})),
-})
+const { data: chatList } = useQuery(() => ({ ...chatsQuery, enabled: loggedIn.value }))
+const chats = computed(() => loggedIn.value
+	? (chatList.value ?? []).map(chat => ({
+			id: chat.id,
+			label: chat.title || 'Untitled',
+			to: `/chat/${chat.id}`,
+			icon: 'i-lucide-message-circle',
+			createdAt: chat.createdAt,
+		}))
+	: [])
 
-watch(loggedIn, (value) => {
-	if (value) refreshChats()
-	else chats.value = []
+/** Loads data the member is about to need, unless it is cached and fresh. */
+function prefetch(options: Parameters<typeof queryCache.ensure>[0]) {
+	queryCache.refresh(queryCache.ensure(options)).catch(() => {})
+}
+
+watch(loggedIn, () => {
 	sidebarOpen.value = false
 })
+// The model picker and the profiles appear on most pages; load them once signed in.
+if (import.meta.client) {
+	watch(loggedIn, (value) => {
+		if (value) [modelsQuery, modelProfilesQuery].forEach(prefetch)
+	}, { immediate: true })
+}
+
+// A chat loads while the pointer is over its link or the link has focus, so opening it is instant.
+function prefetchChat(event: Event) {
+	const link = event.target instanceof Element ? event.target.closest('a') : null
+	const id = link?.getAttribute('href')?.match(/^\/chat\/([\w-]+)$/)?.[1]
+	if (id) prefetch(chatQuery(id))
+}
 
 const { groups } = useChats(chats)
 
@@ -118,6 +133,8 @@ defineShortcuts({
 						link: 'overflow-hidden pr-7.5',
 						linkTrailing: 'translate-x-full group-hover:translate-x-0 group-has-data-[state=open]:translate-x-0 transition-transform ms-0 absolute inset-e-px',
 					}"
+					@pointerover="prefetchChat"
+					@focusin="prefetchChat"
 				>
 					<template #chat-trailing="{ item }">
 						<UDropdownMenu

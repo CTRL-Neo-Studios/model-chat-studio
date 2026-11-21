@@ -10,10 +10,10 @@ type Draft = Omit<LaneFields, 'enabled'>
 const act = useApiAction()
 const overlay = useOverlay()
 const { user } = useUserSession()
-const { ready, platform, models } = useModels()
-await ready
-const { data: profiles, refresh } = await useFetch('/api/v1/model-profiles', { default: () => [] })
-type Profile = NonNullable<typeof profiles.value>[number]
+const { platform, models } = useModels()
+const { data, isPending, refetch: refresh } = useQuery(modelProfilesQuery)
+const profiles = computed(() => data.value ?? [])
+type Profile = (typeof profiles.value)[number]
 
 const isAdmin = computed(() => user.value?.role === 'admin')
 const tab = ref<'mine' | 'instance'>('mine')
@@ -84,12 +84,12 @@ function actions(profile: Profile): DropdownMenuItem[][] {
 				<UTabs v-model="tab" :items="tabs" :content="false" class="w-full" />
 
 				<UEmpty
-					v-if="!shown.length"
+					v-if="!shown.length && !isPending"
 					icon="i-lucide-bot"
 					:title="tab === 'mine' ? 'No profiles yet' : 'No instance profiles'"
 					:description="tab === 'mine' ? 'Add a model to make your first profile.' : isAdmin ? 'Publish a profile for every member.' : 'An admin can publish profiles for everyone.'"
 				/>
-				<ul v-else class="flex flex-col divide-y divide-default rounded-md border border-default">
+				<ul v-else-if="shown.length" class="flex flex-col divide-y divide-default rounded-md border border-default">
 					<li v-for="profile in shown" :key="profile.id" class="flex items-center gap-3 px-4 py-3">
 						<span :class="['size-2.5 rounded-full shrink-0', profile.color ? LANE_COLOR_CLASSES[profile.color as keyof typeof LANE_COLOR_CLASSES] : 'bg-(--ui-border-accented)']" />
 						<div class="flex flex-col min-w-0 flex-1">

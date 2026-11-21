@@ -1,14 +1,10 @@
 import { LazyModalConfirm, LazyModalRename } from '#components'
 
-interface ChatListItem {
-	id: string
-	label: string
-}
-
 export function useChatActions() {
 	const route = useRoute()
 	const toast = useToast()
 	const overlay = useOverlay()
+	const queryCache = useQueryCache()
 	const { csrf, headerName } = useCsrf()
 
 	const renameModal = overlay.create(LazyModalRename)
@@ -36,10 +32,9 @@ export function useChatActions() {
 			return null
 		}
 
-		const chats = useNuxtData<ChatListItem[]>('chats')
-		if (chats.data.value) {
-			chats.data.value = chats.data.value.map(chat => chat.id === id ? { ...chat, label: result } : chat)
-		}
+		queryCache.setQueryData(chatsQuery.key, chats => chats?.map(chat => chat.id === id ? { ...chat, title: result } : chat) ?? [])
+		const chat = queryCache.getQueryData(chatQuery(id).key)
+		if (chat) queryCache.setQueryData(chatQuery(id).key, { ...chat, title: result })
 		return result
 	}
 
@@ -58,11 +53,9 @@ export function useChatActions() {
 		}
 
 		toast.add({ title: 'Chat deleted', description: 'Your chat has been deleted', icon: 'i-lucide-trash' })
-		const chats = useNuxtData<ChatListItem[]>('chats')
-		if (chats.data.value) {
-			chats.data.value = chats.data.value.filter(chat => chat.id !== id)
-		}
+		queryCache.setQueryData(chatsQuery.key, chats => chats?.filter(chat => chat.id !== id) ?? [])
 		if (route.params.id === id) await navigateTo('/')
+		for (const entry of queryCache.getEntries({ key: chatQuery(id).key })) queryCache.remove(entry)
 		return true
 	}
 

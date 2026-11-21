@@ -1,20 +1,21 @@
-/** The active platform and the models this member may pick. Pages `await ready` to have it on the server render. */
+/** The active platform and the models this member may pick, from the shared `models` query. */
 export function useModels() {
 	// Guests only read shared chats; the catalog needs a member.
-	const request = useFetch('/api/v1/models', { key: 'models', immediate: useUserSession().loggedIn.value })
+	const { loggedIn } = useUserSession()
+	const { data, isPending } = useQuery(() => ({ ...modelsQuery, enabled: loggedIn.value }))
 
-	const platform = computed(() => request.data.value?.platform ?? null)
-	const models = computed(() => request.data.value?.models ?? [])
+	const platform = computed(() => data.value?.platform ?? null)
+	const models = computed(() => data.value?.models ?? [])
 	/** How many models can answer in one chat. */
-	const maxChatModels = computed(() => request.data.value?.maxChatModels ?? 4)
+	const maxChatModels = computed(() => data.value?.maxChatModels ?? 4)
 
 	/** The model a chat uses: its own while still offered, else the platform's default. */
 	function resolveModel(id?: string) {
 		return models.value.find(model => model.id === id)
-			?? models.value.find(model => model.id === request.data.value?.defaultModel)
+			?? models.value.find(model => model.id === data.value?.defaultModel)
 	}
 
-	return { ready: request, platform, models, maxChatModels, resolveModel }
+	return { isPending, platform, models, maxChatModels, resolveModel }
 }
 
 export type CatalogModelView = ReturnType<typeof useModels>['models']['value'][number]

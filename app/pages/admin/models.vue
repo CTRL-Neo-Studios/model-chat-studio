@@ -5,7 +5,8 @@ definePageMeta({ minRole: 'admin' })
 useHead({ title: 'Models' })
 
 const act = useApiAction()
-const { data, error, refresh } = await useFetch('/api/v1/admin/models')
+const queryCache = useQueryCache()
+const { data, error, isPending, refetch: refresh } = useQuery(adminCatalogQuery({}))
 type Row = NonNullable<typeof data.value>['models'][number]
 
 const platform = computed(() => data.value?.platform ?? null)
@@ -21,10 +22,10 @@ const matches = computed(() => {
 		&& (!term || model.id.toLowerCase().includes(term) || model.name.toLowerCase().includes(term)))
 })
 
-// `useFetch` data is a shallow ref, so the row is not edited in place: the list is fetched again.
 async function setAllowed(row: Row, enabled: boolean) {
 	await act('/api/v1/admin/models', { method: 'PATCH', body: { platform: platform.value, modelId: row.id, enabled } })
-	await refresh()
+	// Members' model picker follows the allowlist.
+	await Promise.all([refresh(), queryCache.invalidateQueries({ key: modelsQuery.key, exact: true })])
 }
 
 // Price override (DeepSeek only: OpenRouter reports the cost of every answer).
@@ -56,7 +57,8 @@ const columns = computed<TableColumn<Row>[]>(() => [
 
 <template>
 	<AdminPanel title="Models">
-		<UAlert v-if="error" color="error" variant="subtle" icon="i-lucide-alert-circle" title="The models could not be loaded" :description="serverMessage(error)" :actions="[{ label: 'Retry', color: 'error', variant: 'outline', onClick: () => refresh() }]" />
+		<USkeleton v-if="isPending" class="h-14 w-full" />
+		<UAlert v-else-if="error" color="error" variant="subtle" icon="i-lucide-alert-circle" title="The models could not be loaded" :description="serverMessage(error)" :actions="[{ label: 'Retry', color: 'error', variant: 'outline', onClick: () => refresh() }]" />
 		<UAlert v-else-if="!platform" color="warning" variant="subtle" icon="i-lucide-plug-zap" title="No platform is active" description="Choose a platform and add its key in the settings first." />
 		<UAlert v-else-if="!data?.hasKey" color="warning" variant="subtle" icon="i-lucide-key-round" title="The active platform has no key" description="Add its key in the settings to list its models." />
 

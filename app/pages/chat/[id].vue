@@ -7,11 +7,15 @@ import type { ChatMessage } from '~/composables/useLaneAnswers'
 definePageMeta({ auth: false })
 
 const route = useRoute()
+const router = useRouter()
 const toast = useToast()
+const queryCache = useQueryCache()
 const { csrf, headerName } = useCsrf()
 const chatId = route.params.id as string
 
-const { data } = await useFetch(`/api/v1/chats/${chatId}`, { key: `chat-${chatId}` })
+// A chat seen before, or hovered in the sidebar, shows at once and refreshes behind; a new one waits for its data.
+const { data, error, refresh } = useQuery(chatQuery(chatId))
+if (!data.value && !error.value) await refresh()
 
 const isOwner = computed(() => data.value?.isOwner ?? false)
 const visibility = ref<'public' | 'private'>(data.value?.visibility ?? 'private')
@@ -20,15 +24,12 @@ const title = ref<string | null>(data.value?.title ?? null)
 
 useHead({ title: () => title.value || 'Chat' })
 
-const { data: votes } = await useLazyFetch(`/api/v1/chats/${chatId}/votes`, {
-	immediate: isOwner.value,
-	default: () => [],
-})
+const { data: votesData } = useQuery(() => ({ ...chatVotesQuery(chatId), enabled: isOwner.value }))
+const votes = computed(() => votesData.value ?? [])
 
 // The member's preferences; until they load, the server's defaults apply.
-const { data: me } = await useLazyFetch('/api/v1/users/me', { immediate: isOwner.value })
+const { data: me } = useQuery(() => ({ ...meQuery, enabled: isOwner.value }))
 
-await useModels().ready
 const chatLanes = useChatLanes(data.value ?? undefined)
 const { lanes, enabledLanes, settings, laneModel, laneName } = chatLanes
 const answeringModels = computed(() => enabledLanes.value.flatMap(lane => laneModel(lane) ?? []))
@@ -39,10 +40,9 @@ const { uploads, promptFiles, uploading, parts: fileParts, clear: clearFiles } =
 // The server names the chat at the end of the first answer.
 async function refreshTitle() {
 	if (title.value) return
-	await refreshNuxtData('chats')
-	const chats = useNuxtData<{ id: string, label: string }[]>('chats')
-	const label = chats.data.value?.find(chat => chat.id === chatId)?.label
-	if (label && label !== 'Untitled') title.value = label
+	await queryCache.invalidateQueries({ key: chatsQuery.key, exact: true })
+	const named = queryCache.getQueryData(chatsQuery.key)?.find(chat => chat.id === chatId)?.title
+	if (named) title.value = named
 }
 
 const messages = shallowRef<ChatMessage[]>((data.value?.messages ?? []) as ChatMessage[])
@@ -50,6 +50,24 @@ const answers = useLaneAnswers(chatId, messages, {
 	onAnswered: refreshTitle,
 	keepPreviousOnStop: () => (me.value?.preferences.stoppedRegenerate ?? 'keep-previous') === 'keep-previous',
 })
+
+// The cached chat follows this page, so coming back to it shows it as it is now, without a refetch.
+function writeBack() {
+	const key = chatQuery(chatId).key
+	const chat = queryCache.getQueryData(key)
+	if (!chat) return
+	queryCache.setQueryData(key, {
+		...chat,
+		title: title.value,
+		visibility: visibility.value,
+		sharedWith: sharedWith.value,
+		settings: settings.value,
+		models: lanes.value as typeof chat.models,
+		messages: messages.value as typeof chat.messages,
+	})
+}
+watch(messages, writeBack)
+watch([title, visibility, sharedWith, settings, lanes], writeBack, { deep: true })
 
 /** The page as a list: each user message, followed by one entry for its answers. */
 const shown = computed(() => messages.value.flatMap((message): ChatMessage[] => message.role === 'user'
@@ -137,13 +155,14 @@ function getVote(messageId: string) {
 }
 
 async function vote(message: UIMessage, isUpvoted: boolean) {
+	const key = chatVotesQuery(chatId).key
 	const snapshot = votes.value
 	const next = getVote(message.id) === isUpvoted ? null : isUpvoted
 
-	votes.value = [
-		...votes.value.filter(v => v.messageId !== message.id),
+	queryCache.setQueryData(key, [
+		...snapshot.filter(v => v.messageId !== message.id),
 		...(next === null ? [] : [{ chatId, messageId: message.id, isUpvoted: next }]),
-	]
+	])
 	try {
 		await $fetch(`/api/v1/chats/${chatId}/votes`, {
 			method: 'POST',
@@ -152,15 +171,16 @@ async function vote(message: UIMessage, isUpvoted: boolean) {
 		})
 	}
 	catch {
-		votes.value = snapshot
+		queryCache.setQueryData(key, snapshot)
 		toast.add({ description: 'Failed to save vote', icon: 'i-lucide-alert-circle', color: 'error' })
 	}
 }
 
-// A chat created on the home page arrives with only its first message: every model answers it.
+// A chat just created on the home page arrives with only its first message: every model answers it. Coming
+// back to it later does not, even when its cached copy still has one message.
 onMounted(() => {
 	const [first] = messages.value
-	if (isOwner.value && messages.value.length === 1 && first) {
+	if (isOwner.value && messages.value.length === 1 && first && router.options.history.state.firstAnswer) {
 		for (const lane of enabledLanes.value) answers.regenerate(lane.id, first)
 	}
 })

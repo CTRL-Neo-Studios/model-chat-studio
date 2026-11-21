@@ -94,7 +94,8 @@ const items = computed<DropdownMenuItem[][]>(() => ([[{
 	icon: 'i-lucide-log-out',
 	async onSelect() {
 		await clear()
-		await navigateTo('/signin')
+		// A fresh app: nothing cached for this member stays for whoever signs in next in this browser.
+		reloadNuxtApp({ path: '/signin' })
 	},
 }]]))
 </script>

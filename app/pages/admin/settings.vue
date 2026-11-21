@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import type { BrowsableModel } from '~/composables/useModels'
-
 definePageMeta({ minRole: 'admin' })
 useHead({ title: 'Admin settings' })
 
@@ -8,7 +6,9 @@ type PlatformId = 'openrouter' | 'deepseek'
 
 const act = useApiAction()
 const queryCache = useQueryCache()
-const { data: settings } = await useFetch('/api/v1/admin/settings')
+// The form starts from the settings, so a first visit waits for them.
+const { data: settings, refresh: loadSettings } = useQuery(adminSettingsQuery)
+if (!settings.value) await loadSettings()
 
 const platformNames: Record<PlatformId, string> = { openrouter: 'OpenRouter', deepseek: 'DeepSeek' }
 const platformIds: PlatformId[] = ['openrouter', 'deepseek']
@@ -16,14 +16,11 @@ const platformIds: PlatformId[] = ['openrouter', 'deepseek']
 type CatalogKind = 'chat' | 'stt'
 // Each platform's catalog with its own key, active or not. Loaded in the browser: catalogs are large.
 function useAdminCatalog(platform: PlatformId, kind: CatalogKind) {
-	return useQuery({
-		key: ['admin', 'catalog', platform, kind],
-		// Typed by hand: the inferred route type is too deep for `useQuery`.
-		query: () => $fetch<{ models: BrowsableModel[] }>('/api/v1/admin/models', { query: { platform, kind } }),
-		enabled: () => import.meta.client && !!settings.value?.platforms[platform].hasKey
+	return useQuery(() => ({
+		...adminCatalogQuery({ platform, kind }),
+		enabled: import.meta.client && !!settings.value?.platforms[platform].hasKey
 			&& (kind === 'chat' || settings.value.capabilities[platform].sttModel),
-		staleTime: 5 * 60_000,
-	})
+	}))
 }
 const catalogs = Object.fromEntries(platformIds.map(id => [id, { chat: useAdminCatalog(id, 'chat'), stt: useAdminCatalog(id, 'stt') }])) as Record<PlatformId, Record<CatalogKind, ReturnType<typeof useAdminCatalog>>>
 
@@ -47,7 +44,6 @@ const safetyCheck = ref(false)
 const limits = reactive({ maxChatModels: 4, maxRegenerations: 50, maxRetries: 5 })
 
 function fill(view: NonNullable<typeof settings.value>) {
-	settings.value = view
 	general.signupMode = view.signupMode
 	general.defaultMonthlyBudgetUsd = view.defaultMonthlyBudgetUsd
 	Object.assign(limits, { maxChatModels: view.maxChatModels, maxRegenerations: view.maxRegenerations, maxRetries: view.maxRetries })
@@ -66,9 +62,10 @@ async function save(section: string, body: Record<string, unknown>) {
 	const view = await act<NonNullable<typeof settings.value>>('/api/v1/admin/settings', { method: 'PATCH', body, success: 'Settings saved' })
 	saving.value = null
 	if (view) {
+		queryCache.setQueryData(adminSettingsQuery.key, view)
 		fill(view)
-		// The pickers follow the keys (a failed catalog shows in its picker); the model picker and the home page notice follow the active platform.
-		await Promise.all([queryCache.invalidateQueries({ key: ['admin', 'catalog'] }).catch(() => {}), refreshNuxtData('models')])
+		// The pickers follow the keys (a failed catalog shows in its picker); members' model picker and the home page notice follow the active platform.
+		await Promise.all([queryCache.invalidateQueries({ key: ['admin', 'catalog'] }), queryCache.invalidateQueries({ key: modelsQuery.key })]).catch(() => {})
 	}
 }
 

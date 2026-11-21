@@ -7,12 +7,12 @@ const chatId = crypto.randomUUID()
 
 const { user } = useUserSession()
 const toast = useToast()
+const queryCache = useQueryCache()
 const { csrf, headerName } = useCsrf()
 
 // Until an admin picks a platform and a key, there is nothing to send to.
-const { ready, platform } = useModels()
-await ready
-const unavailable = computed(() => !platform.value)
+const { isPending: modelsPending, platform } = useModels()
+const unavailable = computed(() => !modelsPending.value && !platform.value)
 const isAdmin = computed(() => user.value?.role === 'admin')
 
 const chatLanes = useChatLanes()
@@ -24,8 +24,11 @@ const lastLanes = useCookie<{ profileId?: string, modelId?: string | null }[]>('
 const lastSettings = useCookie<ChatSettings>('chat-settings', { default: () => ({}), sameSite: 'lax' })
 settings.value = { ...lastSettings.value }
 
-// "Start a chat" on the profiles page starts from that profile alone.
-const { data: profiles } = await useFetch('/api/v1/model-profiles', { default: () => [] })
+// "Start a chat" on the profiles page starts from that profile alone. The lanes start from the profiles,
+// so the first visit waits for them; they are usually cached already.
+const { data: profilesData, refresh: refreshProfiles } = useQuery(modelProfilesQuery)
+if (!profilesData.value) await refreshProfiles()
+const profiles = computed(() => profilesData.value ?? [])
 const profileId = useRoute().query.profile
 const fromQuery = profiles.value.find(profile => profile.id === profileId)
 lanes.value = (fromQuery ? [{ profileId: fromQuery.id }] : lastLanes.value).flatMap((source) => {
@@ -72,8 +75,9 @@ async function createChat(prompt: string) {
 	}
 	lastLanes.value = lanes.value.map(lane => lane.profileId ? { profileId: lane.profileId } : { modelId: lane.modelId })
 	lastSettings.value = { ...settings.value }
-	refreshNuxtData('chats')
-	await navigateTo(`/chat/${chatId}`)
+	queryCache.invalidateQueries({ key: chatsQuery.key, exact: true })
+	// The new chat's models answer its first message once it opens.
+	await navigateTo({ path: `/chat/${chatId}`, state: { firstAnswer: true } })
 }
 
 const quickChats = [

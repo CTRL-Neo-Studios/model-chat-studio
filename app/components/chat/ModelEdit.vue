@@ -12,6 +12,7 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [result?: { action: 'save' | 'apply', fields: LaneFields } | { action: 'remove' }] }>()
 
 const toast = useToast()
+const queryCache = useQueryCache()
 const { models, resolveModel } = useModels()
 
 const { id: _, profileId: __, position: ___, platform: ____, ...fields } = structuredClone(toRaw(props.lane))
@@ -24,7 +25,7 @@ function result(action: 'save' | 'apply') {
 
 // Back to the profile's values; saving still decides.
 async function reset() {
-	const profiles = await $fetch('/api/v1/model-profiles').catch(() => [])
+	const { data: profiles = [] } = await queryCache.refresh(queryCache.ensure(modelProfilesQuery))
 	const profile = profiles.find(entry => entry.id === props.lane.profileId)
 	if (!profile) {
 		toast.add({ description: 'The profile no longer exists', icon: 'i-lucide-alert-circle', color: 'error' })

@@ -16,12 +16,10 @@ const overlay = useOverlay()
 const editor = overlay.create(LazyChatModelEdit)
 const browser = overlay.create(LazyModelBrowser)
 
-// Profiles for "Add model", loaded when the menu first opens.
+// Profiles for "Add model": shared with the home and profiles pages, and loaded after sign-in.
 const open = ref(false)
-const { data: profiles, execute: loadProfiles } = useLazyFetch('/api/v1/model-profiles', { immediate: false, server: false, default: () => [] })
-watch(open, (value) => {
-	if (value && !profiles.value.length) loadProfiles()
-})
+const { data: profileList } = useQuery(modelProfilesQuery)
+const profiles = computed(() => profileList.value ?? [])
 
 const swatch = (color: Lane['color']) => color ? LANE_COLOR_CLASSES[color] : 'border border-dashed border-accented'
 const swatchOf = (item: object) => 'swatch' in item && typeof item.swatch === 'string' ? item.swatch : ''

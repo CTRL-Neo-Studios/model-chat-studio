@@ -12,19 +12,9 @@ const allowFallbacks = defineModel<boolean | undefined>('allowFallbacks')
 
 const open = ref(false)
 
-// Loaded when the picker first opens (or at once, to name chosen providers), and again after the model changes.
-const { data: endpoints, status, execute, clear } = useFetch('/api/v1/models/endpoints', {
-	query: computed(() => ({ id: props.modelId })),
-	immediate: !!providers.value?.length,
-	server: false,
-	watch: false,
-})
-const loading = computed(() => status.value === 'pending')
-
-watch(() => props.modelId, () => clear())
-watch(open, (value) => {
-	if (value && !endpoints.value) execute()
-})
+// Loaded when the picker opens, or at once to name chosen providers; each model has its own entry.
+const { data: endpoints, asyncStatus } = useQuery(() => ({ ...endpointsQuery(props.modelId), enabled: import.meta.client && (open.value || !!providers.value?.length) }))
+const loading = computed(() => asyncStatus.value === 'loading' && !endpoints.value)
 
 const chosen = computed(() => providers.value ?? [])
 
