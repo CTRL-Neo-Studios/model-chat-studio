@@ -65,6 +65,7 @@ export function toDeepSeekModel(model: DeepSeekModel): CatalogModel {
 			...(model.input_modalities ?? ['text']).filter(m => m === 'text' || m === 'image'),
 			...(CHATBOT_TOOL_MODELS[model.id] ? ['file'] : []),
 		],
+		outputModalities: ['text'],
 		webSearch: !!CHATBOT_TOOL_MODELS[model.id],
 		// The API lists none; DeepSeek ignores temperature and top_p while thinking, searching or reviewing.
 		supportedParameters: ['max_tokens', 'temperature', 'top_p', 'reasoning', 'tools'],

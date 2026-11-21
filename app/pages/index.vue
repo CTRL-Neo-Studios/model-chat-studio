@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { ChatSettings } from '#shared/utils/chat'
+
 const input = ref('')
 const loading = ref(false)
 const chatId = crypto.randomUUID()
@@ -11,9 +13,27 @@ const { csrf, headerName } = useCsrf()
 const { ready, platform } = useModels()
 await ready
 const unavailable = computed(() => !platform.value)
-
-const { lane, settings } = useChatSettings()
 const isAdmin = computed(() => user.value?.role === 'admin')
+
+const chatLanes = useChatLanes()
+const { lanes, enabledLanes, settings, laneModel, draft, fromProfile } = chatLanes
+const answeringModels = computed(() => enabledLanes.value.flatMap(lane => laneModel(lane) ?? []))
+
+// The models and settings of the last chat started, kept as profile or model ids (prompts would not fit a cookie).
+const lastLanes = useCookie<{ profileId?: string, modelId?: string | null }[]>('chat-lanes', { default: () => [], sameSite: 'lax' })
+const lastSettings = useCookie<ChatSettings>('chat-settings', { default: () => ({}), sameSite: 'lax' })
+settings.value = { ...lastSettings.value }
+
+// "Start a chat" on the profiles page starts from that profile alone.
+const { data: profiles } = await useFetch('/api/v1/model-profiles', { default: () => [] })
+const profileId = useRoute().query.profile
+const fromQuery = profiles.value.find(profile => profile.id === profileId)
+lanes.value = (fromQuery ? [{ profileId: fromQuery.id }] : lastLanes.value).flatMap((source) => {
+	if (!source.profileId) return [draft({ modelId: source.modelId ?? null })]
+	const profile = profiles.value.find(entry => entry.id === source.profileId)
+	return profile ? [draft(fromProfile(profile))] : []
+})
+if (!lanes.value.length) lanes.value = [draft({})]
 
 const greeting = computed(() => {
 	const hour = new Date().getHours()
@@ -27,6 +47,10 @@ const { uploads, promptFiles, uploading, parts: fileParts } = usePromptUploads(c
 
 async function createChat(prompt: string) {
 	if ((!prompt.trim() && !fileParts.value.length) || uploading.value || loading.value) return
+	if (!enabledLanes.value.length) {
+		toast.add({ description: 'Turn on a model first', icon: 'i-lucide-alert-circle', color: 'warning' })
+		return
+	}
 	input.value = prompt
 	loading.value = true
 	try {
@@ -37,7 +61,7 @@ async function createChat(prompt: string) {
 				id: chatId,
 				message: { id: crypto.randomUUID(), role: 'user', parts: [...(prompt.trim() ? [{ type: 'text', text: prompt }] : []), ...fileParts.value] },
 				settings: settings.value,
-				models: [{ modelId: lane.value.modelId, params: lane.value.params, systemPrompt: lane.value.systemPrompt || null }],
+				models: lanes.value.map(({ id: _, position: __, platform: ___, profileId, ...fields }) => ({ ...fields, profileId: profileId ?? undefined })),
 			},
 		})
 	}
@@ -46,6 +70,8 @@ async function createChat(prompt: string) {
 		toast.add({ description: 'Failed to start the chat', icon: 'i-lucide-alert-circle', color: 'error' })
 		return
 	}
+	lastLanes.value = lanes.value.map(lane => lane.profileId ? { profileId: lane.profileId } : { modelId: lane.modelId })
+	lastSettings.value = { ...settings.value }
 	refreshNuxtData('chats')
 	await navigateTo(`/chat/${chatId}`)
 }
@@ -61,7 +87,11 @@ const quickChats = [
 <template>
 	<UDashboardPanel id="home" class="min-h-0" :ui="{ body: 'p-0 sm:p-0' }">
 		<template #header>
-			<Navbar />
+			<Navbar>
+				<template #title>
+					<ChatModelsMenu v-if="!unavailable" :chat-lanes="chatLanes" />
+				</template>
+			</Navbar>
 		</template>
 
 		<template #body>
@@ -83,13 +113,14 @@ const quickChats = [
 
 					<ChatPrompt
 						v-model="input"
-						v-model:lane="lane"
-						v-model:settings="settings"
 						v-model:files="promptFiles"
+						:web-search="settings.webSearch"
+						:models="answeringModels"
 						:uploads="uploads"
 						:uploading="uploading"
 						:disabled="loading || unavailable"
 						class="[view-transition-name:chat-prompt]"
+						@update:web-search="chatLanes.setSettings({ webSearch: $event })"
 						@submit="createChat(input)"
 					/>
 

@@ -6,7 +6,7 @@ type PlatformId = 'openrouter' | 'deepseek'
 
 const act = useApiAction()
 const { data: settings } = await useFetch('/api/v1/admin/settings')
-// Model ids of the active platform, as suggestions for the model fields.
+// The active platform's full catalog, for the model fields.
 const { data: catalog, refresh: refreshCatalog } = await useLazyFetch('/api/v1/admin/models', { server: false })
 
 const platformNames: Record<PlatformId, string> = { openrouter: 'OpenRouter', deepseek: 'DeepSeek' }
@@ -74,7 +74,7 @@ const platformChoices = computed(() => [
 	})),
 ])
 
-const suggestions = (id: PlatformId) => catalog.value?.platform === id ? catalog.value.models.map(model => model.id) : []
+const catalogFor = (id: PlatformId) => catalog.value?.platform === id ? catalog.value.models : []
 </script>
 
 <template>
@@ -121,11 +121,23 @@ const suggestions = (id: PlatformId) => catalog.value?.platform === id ? catalog
 				</UFormField>
 
 				<UFormField label="Default model" description="For new chats, and for chats whose model is no longer offered.">
-					<UInputMenu v-model="platformForms[id].defaultModel" mode="autocomplete" :items="suggestions(id)" placeholder="Model id" class="w-full" />
+					<ModelField
+						:model-value="platformForms[id].defaultModel || null"
+						:models="catalogFor(id)"
+						placeholder="Choose the default model"
+						clearable
+						@update:model-value="platformForms[id].defaultModel = $event ?? ''"
+					/>
 				</UFormField>
 
 				<UFormField v-if="!settings.capabilities[id].nativeTitle" label="Title model" description="Names new chats with a short call; empty uses the start of the first message.">
-					<UInputMenu v-model="platformForms[id].titleModel" mode="autocomplete" :items="suggestions(id)" placeholder="Model id" class="w-full" />
+					<ModelField
+						:model-value="platformForms[id].titleModel || null"
+						:models="catalogFor(id)"
+						placeholder="None: the start of the first message"
+						clearable
+						@update:model-value="platformForms[id].titleModel = $event ?? ''"
+					/>
 				</UFormField>
 
 				<UFormField v-if="settings.capabilities[id].sttModel" label="Speech-to-text model" description="Dictation is off until one is set, e.g. openai/whisper-1.">

@@ -18,6 +18,8 @@ export interface CatalogModel {
 	maxOutputTokens: number | null
 	/** Subset of `text`, `image`, `file`. `file` means PDFs are accepted. */
 	inputModalities: string[]
+	/** What the model can produce, e.g. `text`, `image`. */
+	outputModalities: string[]
 	/** Whether the web search toggle applies to this model. */
 	webSearch: boolean
 	supportedParameters: string[]
@@ -61,6 +63,9 @@ export interface PreparedTurn {
 	providerOptions: SharedV4ProviderOptions
 	temperature?: number
 	topP?: number
+	topK?: number
+	frequencyPenalty?: number
+	presencePenalty?: number
 	maxOutputTokens?: number
 }
 

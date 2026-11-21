@@ -90,6 +90,8 @@ export async function listChatMessages(db: Db, chatId: string, chatModelId?: str
 		parts: tables.message.parts,
 		metadata: tables.message.metadata,
 		chatModelId: tables.message.chatModelId,
+		/** For an answer, the user message it answers. */
+		parentId: tables.message.parentId,
 		createdAt: tables.message.createdAt,
 	}).from(tables.message)
 		.leftJoin(question, and(eq(tables.message.role, 'assistant'), eq(question.id, tables.message.parentId)))

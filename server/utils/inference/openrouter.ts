@@ -55,6 +55,7 @@ export function toOpenRouterModel(model: OpenRouterModel): CatalogModel {
 		maxOutputTokens: model.top_provider.max_completion_tokens,
 		// `file` (PDFs) for every model: OpenRouter's file-parser plugin turns PDFs into text when the model cannot read them.
 		inputModalities: [...model.architecture.input_modalities.filter(m => m === 'text' || m === 'image'), 'file'],
+		outputModalities: model.architecture.output_modalities,
 		// The `openrouter:web_search` server tool goes through tool calling.
 		webSearch: model.supported_parameters.includes('tools'),
 		supportedParameters: model.supported_parameters,
@@ -123,6 +124,12 @@ export const openrouterPlatform: InferencePlatform = {
 	prepare(input) {
 		const openrouter = createOpenRouter({ apiKey: input.apiKey })
 		const providers = input.providers?.length ? input.providers : undefined
+		// Endpoint tags in the user's order, the ranking for automatic routing, and zero data retention.
+		const provider = {
+			...(providers && { only: providers, order: providers, allow_fallbacks: input.allowFallbacks ?? true }),
+			...(input.providerSort && { sort: input.providerSort }),
+			...(input.zdr && { zdr: true }),
+		}
 		// Options must stay unset: the helper flattens them, while OpenRouter expects them under `parameters`.
 		const tools: ToolSet = input.webSearch ? { web_search: openrouter.tools.webSearch({}) } : {}
 		return {
@@ -131,14 +138,20 @@ export const openrouterPlatform: InferencePlatform = {
 			tools,
 			providerOptions: {
 				openrouter: {
-					// Endpoint tags, in the user's order.
-					...(providers && { provider: { only: providers, order: providers, allow_fallbacks: input.allowFallbacks ?? true } }),
+					...(Object.keys(provider).length && { provider }),
 					...(input.reasoningLevel !== undefined && { reasoning: reasoningOption(input.reasoningLevel) }),
+					// Not AI SDK settings; the provider spreads these into the request body as they are.
+					...(input.minP !== undefined && { min_p: input.minP }),
+					...(input.topA !== undefined && { top_a: input.topA }),
+					...(input.repetitionPenalty !== undefined && { repetition_penalty: input.repetitionPenalty }),
 					user: input.userId,
 				},
 			},
 			temperature: input.temperature,
 			topP: input.topP,
+			topK: input.topK,
+			frequencyPenalty: input.frequencyPenalty,
+			presencePenalty: input.presencePenalty,
 			maxOutputTokens: input.maxOutputTokens,
 		}
 	},

@@ -1,13 +1,17 @@
 import { createError, defineEventHandler, getRouterParam, readValidatedBody } from 'nuxt/server'
 import { db, schema } from 'hub:db'
 import { eq } from 'drizzle-orm'
+import { z } from 'zod'
 import { chatAbilities } from '#shared/abilities/chatAbilities'
 import { laneFieldsSchema } from '#shared/utils/chat'
 import { authorize } from '#server/utils/core/authorize'
 import { findChat } from '#server/utils/chat/turns'
 import { findChatModel, laneValues } from '#server/utils/chat/lanes'
 
-const bodySchema = laneFieldsSchema.partial().strict()
+const bodySchema = laneFieldsSchema.partial().extend({
+	/** Display order; the client swaps two lanes' positions to move one. */
+	position: z.number().int().min(0).max(1000),
+}).partial().strict()
 	.refine(fields => Object.keys(fields).length > 0, 'Nothing to change')
 
 /** Owner only: changes a lane. Answers already given keep the model that wrote them. */

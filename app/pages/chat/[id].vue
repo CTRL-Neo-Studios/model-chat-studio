@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { useChat } from '@ai-sdk/vue'
-import { DefaultChatTransport, readUIMessageStream } from 'ai'
 import type { UIMessage } from 'ai'
 import { LazyModalConfirm } from '#components'
+import type { ChatMessage } from '~/composables/useLaneAnswers'
 
 // Readable by guests when link access is on; the server decides who sees what.
 definePageMeta({ auth: false })
@@ -30,32 +29,12 @@ const { data: votes } = await useLazyFetch(`/api/v1/chats/${chatId}/votes`, {
 const { data: me } = await useLazyFetch('/api/v1/users/me', { immediate: isOwner.value })
 
 await useModels().ready
-const { lane, settings, laneId, flush } = useChatSettings(data.value ?? undefined)
+const chatLanes = useChatLanes(data.value ?? undefined)
+const { lanes, enabledLanes, settings, laneModel, laneName } = chatLanes
+const answeringModels = computed(() => enabledLanes.value.flatMap(lane => laneModel(lane) ?? []))
 
 const input = ref('')
 const { uploads, promptFiles, uploading, parts: fileParts, clear: clearFiles } = usePromptUploads(chatId)
-
-/** The body of an error response, as the server describes it. */
-function describeError(error: Error): string {
-	try {
-		const body = JSON.parse(error.message)
-		return body.message || body.statusText || error.message
-	}
-	catch {
-		return error.message
-	}
-}
-
-// The server keeps the history: send only the new message, or what to regenerate, and the lane that answers.
-const transport = new DefaultChatTransport({
-	api: `/api/v1/chats/${chatId}`,
-	headers: { [headerName]: csrf },
-	prepareSendMessagesRequest: ({ messages, trigger, messageId }) => ({
-		body: trigger === 'submit-message'
-			? { trigger, message: messages[messages.length - 1], chatModelId: laneId }
-			: { trigger, messageId, chatModelId: laneId },
-	}),
-})
 
 // The server names the chat at the end of the first answer.
 async function refreshTitle() {
@@ -66,83 +45,48 @@ async function refreshTitle() {
 	if (label && label !== 'Untitled') title.value = label
 }
 
-const { messages, status, error, sendMessage, stop } = useChat({
-	id: chatId,
-	messages: data.value?.messages as UIMessage[] | undefined,
-	transport,
-	onFinish: refreshTitle,
-	onError(error) {
-		toast.add({ description: describeError(error), icon: 'i-lucide-alert-circle', color: 'error', duration: 0 })
-	},
+const messages = shallowRef<ChatMessage[]>((data.value?.messages ?? []) as ChatMessage[])
+const answers = useLaneAnswers(chatId, messages, {
+	onAnswered: refreshTitle,
+	keepPreviousOnStop: () => (me.value?.preferences.stoppedRegenerate ?? 'keep-previous') === 'keep-previous',
 })
 
-/** The answer being regenerated in place, and how to stop it. */
-const regenerating = shallowRef<{ id?: string, controller: AbortController } | null>(null)
-const busy = computed(() => !!regenerating.value || status.value === 'submitted' || status.value === 'streaming')
+/** The page as a list: each user message, followed by one entry for its answers. */
+const shown = computed(() => messages.value.flatMap((message): ChatMessage[] => message.role === 'user'
+	? [message, { id: `answers:${message.id}`, role: 'assistant', parts: [{ type: 'text', text: '' }], parentId: message.id }]
+	: []))
 
-// Settings changed just before sending are saved first, so the turn uses them.
-async function handleSubmit(e: Event) {
+/** One answer slot per lane that answered (or is answering) the question, then answers of removed lanes. */
+function slotsFor(questionId: string) {
+	const given = messages.value.filter(message => message.role === 'assistant' && message.parentId === questionId)
+	const slots = lanes.value.flatMap((lane) => {
+		const message = given.find(answer => answer.chatModelId === lane.id)
+		const pending = answers.pending.value[answers.keyOf(questionId, lane.id)]
+		if (!message && !pending) return []
+		return [{ key: lane.id, lane, message, pending, label: message?.metadata?.lane ?? { name: laneName(lane), color: lane.color } }]
+	})
+	const removed = given.filter(answer => !lanes.value.some(lane => lane.id === answer.chatModelId)).map(message => ({
+		key: message.id, lane: undefined, message, pending: undefined, label: message.metadata?.lane ?? { name: message.metadata?.model ?? 'Removed model', color: null },
+	}))
+	return [...slots, ...removed]
+}
+// Cards once more than one model answers; a single model's answer reads as before.
+const cards = (questionId: string) => lanes.value.length > 1 || slotsFor(questionId).length > 1
+const question = (id: string) => messages.value.find(message => message.id === id)!
+
+function handleSubmit(e: Event) {
 	e.preventDefault()
 	const text = input.value
 	const files = fileParts.value
-	if ((!text.trim() && !files.length) || uploading.value || busy.value) return
+	if ((!text.trim() && !files.length) || uploading.value || answers.busy.value) return
+	if (!enabledLanes.value.length) {
+		toast.add({ description: 'Turn on a model first', icon: 'i-lucide-alert-circle', color: 'warning' })
+		return
+	}
 	input.value = ''
 	clearFiles()
-	await flush()
-	sendMessage(text.trim() ? { text, files } : { files })
-}
-
-/**
- * Answers a message again, in place: the question of `messageId` (an answer or a user message), or the
- * newest user message. Later messages stay; `chat.regenerate()` would drop them on the client.
- */
-async function regenerateAnswer(messageId?: string) {
-	if (busy.value) return
-	await flush()
-	const list = messages.value
-	const target = messageId ? list.findIndex(message => message.id === messageId) : list.length - 1
-	const questionIndex = list.slice(0, target + 1).findLastIndex(message => message.role === 'user')
-	const question = list[questionIndex]
-	if (!question) return
-	// One lane: a question has at most one answer, right after it.
-	const previous = list[questionIndex + 1]?.role === 'assistant' ? list[questionIndex + 1] : undefined
-	let replacing = previous?.id
-	const controller = new AbortController()
-	regenerating.value = { id: replacing, controller }
-	try {
-		const stream = await transport.sendMessages({
-			trigger: 'regenerate-message',
-			chatId,
-			messageId: messageId ?? question.id,
-			messages: list.slice(0, questionIndex + 1),
-			abortSignal: controller.signal,
-		})
-		for await (const answer of readUIMessageStream({ stream, terminateOnError: true })) {
-			const current = messages.value
-			const at = replacing ? current.findIndex(message => message.id === replacing) : -1
-			messages.value = at === -1
-				? current.toSpliced(current.findIndex(message => message.id === question.id) + 1, 0, answer)
-				: current.toSpliced(at, 1, answer)
-			replacing = answer.id
-			regenerating.value = { id: answer.id, controller }
-		}
-		await refreshTitle()
-	}
-	catch (error) {
-		if (!controller.signal.aborted) toast.add({ description: describeError(error as Error), icon: 'i-lucide-alert-circle', color: 'error', duration: 0 })
-	}
-	finally {
-		// The server keeps the answer that was being replaced when this one is stopped, if the member chose that.
-		if (controller.signal.aborted && previous && (me.value?.preferences.stoppedRegenerate ?? 'keep-previous') === 'keep-previous') {
-			messages.value = messages.value.map(message => message.id === replacing ? previous : message)
-		}
-		regenerating.value = null
-	}
-}
-
-function stopAnswer() {
-	if (regenerating.value) regenerating.value.controller.abort()
-	else stop()
+	const parts = [...(text.trim() ? [{ type: 'text' as const, text }] : []), ...files]
+	answers.send({ id: crypto.randomUUID(), role: 'user', parts }, enabledLanes.value.map(lane => lane.id))
 }
 
 const editingMessageId = ref<string | null>(null)
@@ -151,7 +95,7 @@ function startEdit(message: UIMessage) {
 	if (!editingMessageId.value) editingMessageId.value = message.id
 }
 
-/** Replaces a message's text. "Save and resend" also drops what followed and answers the message again. */
+/** Replaces a message's text. "Save and resend" also drops what followed and has every model answer again. */
 async function saveEdit(message: UIMessage, text: string, resend: boolean) {
 	editingMessageId.value = null
 	try {
@@ -168,7 +112,7 @@ async function saveEdit(message: UIMessage, text: string, resend: boolean) {
 		toast.add({ description: serverMessage(error) ?? 'Failed to save the message', icon: 'i-lucide-alert-circle', color: 'error' })
 		return
 	}
-	if (resend) await regenerateAnswer(message.id)
+	if (resend) for (const lane of enabledLanes.value) answers.regenerate(lane.id, question(message.id))
 }
 
 const deleteModal = useOverlay().create(LazyModalConfirm)
@@ -213,9 +157,12 @@ async function vote(message: UIMessage, isUpvoted: boolean) {
 	}
 }
 
-// A chat created on the home page arrives with only its first message.
+// A chat created on the home page arrives with only its first message: every model answers it.
 onMounted(() => {
-	if (isOwner.value && data.value?.messages.length === 1) regenerateAnswer()
+	const [first] = messages.value
+	if (isOwner.value && messages.value.length === 1 && first) {
+		for (const lane of enabledLanes.value) answers.regenerate(lane.id, first)
+	}
 })
 </script>
 
@@ -235,6 +182,7 @@ onMounted(() => {
 						:is-owner="isOwner"
 						@update:title="title = $event"
 					/>
+					<ChatModelsMenu v-if="isOwner" :chat-lanes="chatLanes" />
 				</template>
 
 				<ChatVisibility
@@ -251,18 +199,11 @@ onMounted(() => {
 				<UContainer class="flex-1 flex flex-col gap-4 sm:gap-6">
 					<UChatMessages
 						should-auto-scroll
-						:messages="messages"
-						:status="status"
+						:messages="shown"
+						:status="answers.busy.value ? 'streaming' : 'ready'"
 						:class="['pt-(--ui-header-height)', !isOwner && 'pb-4 sm:pb-6']"
 						:ui="{ footer: 'pt-4 sm:pt-6' }"
 					>
-						<template #indicator>
-							<div class="flex items-center gap-1.5">
-								<ChatIndicator />
-								<UChatShimmer text="Thinking..." class="text-sm" />
-							</div>
-						</template>
-
 						<template #files="{ message, parts }">
 							<UChatAttachment
 								v-for="(part, index) in parts"
@@ -274,10 +215,37 @@ onMounted(() => {
 							/>
 						</template>
 
-						<template #content="{ message, streaming }">
+						<template #content="{ message }">
+							<div
+								v-if="message.id.startsWith('answers:')"
+								:class="settings.answerLayout === 'stack' || !cards(message.id.slice(8)) ? 'flex flex-col gap-3' : 'flex gap-3 overflow-x-auto pb-2'"
+							>
+								<ChatAnswer
+									v-for="slot in slotsFor(message.id.slice(8))"
+									:key="slot.key"
+									:label="slot.label"
+									:message="slot.message"
+									:pending="slot.pending"
+									:card="cards(message.id.slice(8))"
+									:is-owner="isOwner"
+									:editing="!!slot.message && editingMessageId === slot.message.id"
+									:vote="slot.message ? getVote(slot.message.id) : null"
+									:regenerable="!!slot.lane"
+									:class="settings.answerLayout !== 'stack' && cards(message.id.slice(8)) ? 'min-w-80 flex-1 basis-0' : undefined"
+									@regenerate="slot.lane && answers.regenerate(slot.lane.id, question(message.id.slice(8)))"
+									@stop="slot.lane && answers.stop(message.id.slice(8), slot.lane.id)"
+									@dismiss="slot.lane && answers.dismiss(message.id.slice(8), slot.lane.id)"
+									@edit="startEdit"
+									@delete="deleteMessage"
+									@vote="vote"
+									@save="saveEdit"
+									@cancel-edit="editingMessageId = null"
+								/>
+							</div>
 							<ChatMessageContent
+								v-else
 								:message="message"
-								:streaming="streaming || message.id === regenerating?.id"
+								:streaming="false"
 								:editing="isOwner && editingMessageId === message.id"
 								@save="saveEdit"
 								@cancel-edit="editingMessageId = null"
@@ -286,13 +254,12 @@ onMounted(() => {
 
 						<template v-if="isOwner" #actions="{ message }">
 							<ChatMessageActions
+								v-if="message.role === 'user'"
 								:message="message"
-								:streaming="(status === 'streaming' && message.id === messages[messages.length - 1]?.id) || message.id === regenerating?.id"
+								:streaming="false"
 								:editing="editingMessageId === message.id"
-								:vote="getVote(message.id)"
-								@vote="vote"
+								:vote="null"
 								@edit="startEdit"
-								@regenerate="message => regenerateAnswer(message.id)"
 								@delete="deleteMessage"
 							/>
 						</template>
@@ -300,17 +267,16 @@ onMounted(() => {
 						<template v-if="isOwner" #footer>
 							<ChatPrompt
 								v-model="input"
-								v-model:lane="lane"
-								v-model:settings="settings"
 								v-model:files="promptFiles"
+								:web-search="settings.webSearch"
+								:models="answeringModels"
 								:uploads="uploads"
 								:uploading="uploading"
-								:status="regenerating ? 'streaming' : status"
-								:error="error"
+								:status="answers.busy.value ? 'streaming' : 'ready'"
 								class="[view-transition-name:chat-prompt] rounded-b-none backdrop-blur-sm"
+								@update:web-search="chatLanes.setSettings({ webSearch: $event })"
 								@submit="handleSubmit"
-								@stop="stopAnswer"
-								@reload="regenerateAnswer()"
+								@stop="answers.stop()"
 							/>
 						</template>
 					</UChatMessages>

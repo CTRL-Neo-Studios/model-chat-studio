@@ -1,24 +1,24 @@
 import { createError, defineEventHandler, readValidatedBody } from 'nuxt/server'
 import { db, schema } from 'hub:db'
 import { z } from 'zod'
-import { chatSettingsSchema, laneFieldsSchema } from '#shared/utils/chat'
+import { chatSettingsSchema } from '#shared/utils/chat'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { attachFiles, userMessageSchema } from '#server/utils/chat/turns'
-import { laneValues } from '#server/utils/chat/lanes'
+import { newLaneSchema, newLaneValues } from '#server/utils/chat/lanes'
 
 const bodySchema = z.object({
 	id: z.uuid(),
 	message: userMessageSchema,
 	settings: chatSettingsSchema.optional(),
-	/** The lanes, in order. */
-	models: z.array(laneFieldsSchema.partial()).min(1).max(12),
+	/** The lanes, in order: lane fields, optionally over a profile. */
+	models: z.array(newLaneSchema).min(1).max(12),
 })
 
 /** Creates a chat with its lanes and first message. Each lane's answer is requested with `POST /chats/:id`. */
 export default defineEventHandler(async (event) => {
 	const user = await useServerAuth().requireUser(event)
 	const { id, message, settings, models } = await readValidatedBody(event, bodySchema)
-	const lanes = await Promise.all(models.map(async (fields, position) => ({ chatId: id, position, ...await laneValues(db, fields) })))
+	const lanes = await Promise.all(models.map(async (fields, position) => ({ chatId: id, position, ...await newLaneValues(db, user.id, fields) })))
 
 	return await db.transaction(async (tx) => {
 		const [chat] = await tx.insert(schema.chat).values({ id, userId: user.id, settings }).onConflictDoNothing().returning()

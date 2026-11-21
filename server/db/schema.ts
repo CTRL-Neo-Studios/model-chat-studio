@@ -14,7 +14,7 @@ import {
 } from "drizzle-orm/pg-core";
 import {relations} from "drizzle-orm";
 import type {UIMessage} from "ai";
-import type {ChatSettings, MessageMetadata, ModelParams} from "../../shared/utils/chat";
+import {type ChatSettings, LANE_COLORS, type MessageMetadata, type ModelParams} from "../../shared/utils/chat";
 import type {UserPreferences} from "../../shared/utils/preferences";
 
 const createdAt = timestamp({ withTimezone: true }).defaultNow().notNull()
@@ -113,15 +113,35 @@ export const chat = pgTable("chat", {
 	index().on(t.userId, t.createdAt),
 ]);
 
+/** A model with its settings, used to start lanes. `ownerId` `null` is an instance profile, published by an admin. */
+export const modelProfile = pgTable("modelProfile", {
+	id: uuid().primaryKey().defaultRandom(),
+	ownerId: uuid().references(() => user.id, { onDelete: "cascade" }),
+	name: text().notNull(),
+	color: text({ enum: LANE_COLORS }),
+	/** The platform `modelId` belongs to: the active one when the model was chosen. */
+	platform: text({ enum: inferencePlatforms }).notNull(),
+	modelId: text().notNull(),
+	/** `null` uses the default instructions. */
+	systemPrompt: text(),
+	params: jsonb().$type<ModelParams>().notNull().default({}),
+
+	...createdUpdatedAtColumns
+}, (t) => [
+	index().on(t.ownerId),
+]);
+
 /** A lane: one model answering in a chat, with its own settings and its own thread of answers. */
 export const chatModel = pgTable("chatModel", {
 	id: uuid().primaryKey().defaultRandom(),
 	chatId: uuid().notNull().references(() => chat.id, { onDelete: "cascade" }),
+	/** The profile the lane was started from; changing the lane does not change the profile. */
+	profileId: uuid().references(() => modelProfile.id, { onDelete: "set null" }),
 	position: integer().notNull(),
 	enabled: boolean().notNull().default(true),
 	/** `null` shows the model's name. */
 	name: text(),
-	color: text(),
+	color: text({ enum: LANE_COLORS }),
 	/** The platform `modelId` belongs to; set together with it. */
 	platform: text({ enum: inferencePlatforms }),
 	/** `null` is the active platform's default model. */
@@ -234,6 +254,11 @@ export const chatRelations = relations(chat, ({ one, many }) => ({
 
 export const chatModelRelations = relations(chatModel, ({ one }) => ({
 	chat: one(chat, { fields: [chatModel.chatId], references: [chat.id] }),
+	profile: one(modelProfile, { fields: [chatModel.profileId], references: [modelProfile.id] }),
+}))
+
+export const modelProfileRelations = relations(modelProfile, ({ one }) => ({
+	owner: one(user, { fields: [modelProfile.ownerId], references: [user.id] }),
 }))
 
 export const chatShareRelations = relations(chatShare, ({ one }) => ({

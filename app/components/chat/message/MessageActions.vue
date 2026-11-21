@@ -2,12 +2,14 @@
 import type { UIMessage } from 'ai'
 import { getTextFromMessage } from '@nuxt/ui/utils/ai'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
 	message: UIMessage & { createdAt?: string | Date }
 	streaming: boolean
 	editing: boolean
 	vote: boolean | null
-}>()
+	/** Off for answers of a model that was removed from the chat. */
+	regenerable?: boolean
+}>(), { regenerable: true })
 
 const emit = defineEmits<{
 	edit: [message: UIMessage]
@@ -64,7 +66,7 @@ const { copy, copied } = useClipboard({ copiedDuring: 2000 })
 			/>
 		</UTooltip>
 
-		<UTooltip text="Regenerate response">
+		<UTooltip v-if="regenerable" text="Regenerate response">
 			<UButton
 				size="sm"
 				color="neutral"

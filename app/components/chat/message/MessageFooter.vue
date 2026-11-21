@@ -7,15 +7,16 @@ const props = defineProps<{
 
 const { models } = useModels()
 
-// Model, provider, tokens and cost, as far as the platform reported them.
+// Model, provider, tokens, cost and time, as far as the platform reported them.
 const parts = computed(() => {
-	const { model, provider, inputTokens, outputTokens, reasoningTokens, costUsd, edited } = props.metadata
+	const { model, provider, inputTokens, outputTokens, reasoningTokens, costUsd, durationMs, edited } = props.metadata
 	return [
 		models.value.find(entry => entry.id === model)?.name ?? model,
 		provider,
 		inputTokens !== undefined && outputTokens !== undefined && `${formatTokens(inputTokens)} in · ${formatTokens(outputTokens)} out`,
 		reasoningTokens ? `${formatTokens(reasoningTokens)} reasoning` : undefined,
 		typeof costUsd === 'number' ? formatUsd(costUsd) : undefined,
+		durationMs !== undefined ? `${(durationMs / 1000).toFixed(1)} s` : undefined,
 		edited ? 'edited' : undefined,
 	].filter(Boolean)
 })

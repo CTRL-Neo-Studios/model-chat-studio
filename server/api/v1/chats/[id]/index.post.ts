@@ -6,6 +6,7 @@ import { chatAbilities } from '#shared/abilities/chatAbilities'
 import type { MessageMetadata } from '#shared/utils/chat'
 import { chartTool } from '#shared/utils/tools/chart'
 import { userPreferencesSchema } from '#shared/utils/preferences'
+import { DEFAULT_INSTRUCTIONS } from '#shared/utils/instructions'
 import { authorize } from '#server/utils/core/authorize'
 import { getSetting } from '#server/utils/core/settings'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
@@ -15,16 +16,6 @@ import { listChatModels } from '#server/utils/chat/lanes'
 import { resolveAttachments } from '#server/utils/chat/files'
 import { getCatalog, getEndpoints, getPriceOverride, useInference } from '#server/utils/inference'
 import type { FinishedStep, Pricing } from '#server/utils/inference/types'
-
-const INSTRUCTIONS = `You are a knowledgeable and helpful AI assistant. Give clear, accurate, well-structured answers.
-
-Formatting:
-- Never use Markdown headings (#, ##, ...) or underlined headings (=== or ---). Use **bold text** for section labels.
-- Start with the content, never with a heading.
-
-Quality:
-- Be concise yet complete, with examples when they help.
-- Break complex topics into digestible parts.`
 
 // Added only while web search is on. Without it, DeepSeek sometimes answered that it had no web
 // access and did not search (live runs, plan section 10).
@@ -57,6 +48,7 @@ export default defineEventHandler(async (event) => {
 	assertRateLimit(`turn:${user.id}`, 20, 60_000, 'messages')
 	const chatId = chat!.id
 
+	const startedAt = Date.now()
 	const inference = await useInference(db, user.id)
 	if (!inference) throw createError({ status: 503, statusText: 'No model platform is configured yet. An admin can set one up in the settings.' })
 	const { platform, apiKey, byok, config } = inference
@@ -133,7 +125,8 @@ export default defineEventHandler(async (event) => {
 	const result = streamText({
 		...prepared,
 		tools,
-		instructions: [INSTRUCTIONS, webSearch && WEB_SEARCH_INSTRUCTIONS, lane.systemPrompt].filter(Boolean).join('\n\n'),
+		// A lane's own system prompt replaces the default instructions; web search instructions apply either way.
+		instructions: [lane.systemPrompt ?? DEFAULT_INSTRUCTIONS, webSearch && WEB_SEARCH_INSTRUCTIONS].filter(Boolean).join('\n\n'),
 		messages: await convertToModelMessages(modelHistory, { tools }),
 		stopWhen: isStepCount(5),
 		abortSignal: event.req.signal,
@@ -148,9 +141,14 @@ export default defineEventHandler(async (event) => {
 			controller.enqueue(part)
 		},
 	}))
+	// The lane as it is now, so the answer keeps its label after the lane is renamed or deleted.
+	const laneLabel = { name: lane.name ?? model.name, color: lane.color }
 	const metadata = (finishReason?: string): MessageMetadata => {
 		const { title: _, ...usage } = platform.usage({ model: model.id, steps, price })
-		return { platform: platform.id, model: model.id, ...usage, ...(finishReason === 'content-filter' && { refused: true }) }
+		return {
+			platform: platform.id, model: model.id, lane: laneLabel, ...usage, durationMs: Date.now() - startedAt,
+			...(finishReason === 'content-filter' && { refused: true }),
+		}
 	}
 
 	return createUIMessageStreamResponse({
@@ -160,7 +158,7 @@ export default defineEventHandler(async (event) => {
 			sendSources: true,
 			generateMessageId: generateId,
 			messageMetadata: ({ part }) => part.type === 'start'
-				? { platform: platform.id, model: model.id }
+				? { platform: platform.id, model: model.id, lane: laneLabel }
 				: part.type === 'finish' ? metadata(part.finishReason) : undefined,
 			onError: (error) => {
 				console.error('[chat] turn failed', error)

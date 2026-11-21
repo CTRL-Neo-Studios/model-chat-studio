@@ -1,6 +1,8 @@
 <script setup lang="ts">
 const props = defineProps<{
 	modelId: string
+	/** Renders as a full-width form control instead of the prompt's compact button. */
+	field?: boolean
 }>()
 
 /** Endpoint tags in the order they were picked; empty or unset means automatic routing. */
@@ -44,8 +46,20 @@ function percent(value: number | null) {
 </script>
 
 <template>
-	<UPopover v-model:open="open" :content="{ side: 'top', align: 'end' }">
+	<UPopover v-model:open="open" :content="{ side: field ? 'bottom' : 'top', align: field ? 'start' : 'end' }">
 		<UButton
+			v-if="field"
+			icon="i-lucide-server"
+			:label="chosen.length ? label : 'Automatic routing'"
+			color="neutral"
+			variant="outline"
+			trailing-icon="i-lucide-chevron-down"
+			class="w-full"
+			:ui="{ label: 'truncate', trailingIcon: 'ms-auto text-dimmed' }"
+			aria-label="Choose providers"
+		/>
+		<UButton
+			v-else
 			icon="i-lucide-server"
 			:label="label"
 			size="sm"

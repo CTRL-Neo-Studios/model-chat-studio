@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import type { ChatStatus } from 'ai'
-import type { ChatSettings } from '#shared/utils/chat'
-import type { LaneDraft } from '~/composables/useChatSettings'
+import type { CatalogModelView } from '~/composables/useModels'
 import type { PromptUpload } from '~/composables/usePromptUploads'
 
 const props = withDefaults(defineProps<{
+	/** The models that will answer; attachments and web search follow what they can take. */
+	models: CatalogModelView[]
 	status?: ChatStatus
 	error?: Error
 	disabled?: boolean
@@ -25,29 +26,13 @@ const emit = defineEmits<{
 
 const input = defineModel<string>({ default: '' })
 const files = defineModel<File[]>('files', { default: () => [] })
-const lane = defineModel<LaneDraft>('lane', { required: true })
-const settings = defineModel<ChatSettings>('settings', { required: true })
+const webSearch = defineModel<boolean | undefined>('webSearch')
 
-const { platform, resolveModel } = useModels()
-const model = computed(() => resolveModel(lane.value.modelId ?? undefined))
-// Text files always; images and PDFs when the model reads them.
+// Text files always; images and PDFs when a model reads them. A model that cannot gets a note instead.
 const accept = computed(() => fileAcceptPattern({
-	images: !!model.value?.inputModalities.includes('image'),
-	pdf: !!model.value?.inputModalities.includes('file'),
+	images: props.models.some(model => model.inputModalities.includes('image')),
+	pdf: props.models.some(model => model.inputModalities.includes('file')),
 }))
-
-// Provider choices belong to one model.
-function setModel(id: string) {
-	lane.value = { ...lane.value, modelId: id, params: { ...lane.value.params, providers: undefined } }
-}
-
-// A model no longer offered falls back to the default without its provider and reasoning choices,
-// as on the server; clearing them keeps the pickers from showing choices that are ignored.
-watch(model, (current) => {
-	if (current && lane.value.modelId && lane.value.modelId !== current.id) {
-		lane.value = { ...lane.value, modelId: current.id, params: { ...lane.value.params, providers: undefined, reasoningLevel: undefined } }
-	}
-}, { immediate: true })
 
 const dictation = ref<'idle' | 'recording' | 'transcribing'>('idle')
 const placeholder = computed(() => ({ idle: undefined, recording: 'Listening...', transcribing: 'Transcribing...' })[dictation.value])
@@ -89,29 +74,12 @@ function appendTranscript(text: string) {
 
 		<template #footer="{ open }">
 			<ChatPromptMenu
-				v-model:web-search="settings.webSearch"
-				v-model:reasoning-level="lane.params.reasoningLevel"
-				:model="model"
+				v-model:web-search="webSearch"
+				:web-search-available="models.some(model => model.webSearch)"
 				:open="open"
 			/>
 
 			<div class="flex items-center gap-1 min-w-0">
-				<ModelSelect :model-value="model?.id" @update:model-value="setModel($event!)" />
-
-				<ChatProviderSelect
-					v-if="model && platform?.capabilities.providerRouting"
-					v-model:providers="lane.params.providers"
-					v-model:allow-fallbacks="lane.params.allowFallbacks"
-					:model-id="model.id"
-				/>
-
-				<ChatSettingsPanel
-					v-model:params="lane.params"
-					v-model:system-prompt="lane.systemPrompt"
-					:web-search="settings.webSearch"
-					:model="model"
-				/>
-
 				<ChatDictateButton
 					v-if="canDictate"
 					v-model:state="dictation"

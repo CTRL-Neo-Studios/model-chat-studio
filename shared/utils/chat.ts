@@ -1,12 +1,22 @@
 import { z } from 'zod'
 
-/** A lane's model settings, stored in `chatModel.params`. */
+/** A lane's or profile's model settings, stored in `chatModel.params` and `modelProfile.params`. */
 export const modelParamsSchema = z.object({
 	/** OpenRouter endpoint tags, e.g. `deepinfra/fp4/flex`. Empty means automatic routing. */
 	providers: z.array(z.string().min(1)).optional(),
 	allowFallbacks: z.boolean().optional(),
+	/** OpenRouter: how to rank providers when routing automatically. */
+	providerSort: z.enum(['price', 'throughput', 'latency']).optional(),
+	/** OpenRouter: only providers that do not retain prompts. */
+	zdr: z.boolean().optional(),
 	temperature: z.number().min(0).max(2).optional(),
 	topP: z.number().gt(0).max(1).optional(),
+	topK: z.number().int().min(0).max(1000).optional(),
+	minP: z.number().min(0).max(1).optional(),
+	topA: z.number().min(0).max(1).optional(),
+	frequencyPenalty: z.number().min(-2).max(2).optional(),
+	presencePenalty: z.number().min(-2).max(2).optional(),
+	repetitionPenalty: z.number().gt(0).max(2).optional(),
 	maxOutputTokens: z.number().int().positive().optional(),
 	/** `none` turns reasoning off; other values come from the model's catalog entry. */
 	reasoningLevel: z.string().min(1).optional(),
@@ -17,12 +27,15 @@ export type ModelParams = z.infer<typeof modelParamsSchema>
 /** Settings that apply to every lane of a chat, stored in `chat.settings`. */
 export const chatSettingsSchema = z.object({
 	webSearch: z.boolean().optional(),
+	/** How several lanes' answers to one message are shown: side by side (default) or one under another. */
+	answerLayout: z.enum(['columns', 'stack']).optional(),
 })
 
 export type ChatSettings = z.infer<typeof chatSettingsSchema>
 
 /** The colors a lane can be labelled with: Tailwind palette names. */
 export const LANE_COLORS = ['red', 'orange', 'amber', 'yellow', 'lime', 'green', 'emerald', 'teal', 'cyan', 'sky', 'blue', 'indigo', 'violet', 'purple', 'fuchsia', 'pink', 'rose'] as const
+export type LaneColor = typeof LANE_COLORS[number]
 
 /**
  * The editable fields of a lane (`chatModel`): one model answering in a chat.
@@ -38,6 +51,18 @@ export const laneFieldsSchema = z.object({
 })
 
 export type LaneFields = z.infer<typeof laneFieldsSchema>
+
+/** The editable fields of a model profile: a model with its settings, used to start lanes. */
+export const profileFieldsSchema = z.object({
+	name: z.string().trim().min(1).max(60),
+	color: z.enum(LANE_COLORS).nullable(),
+	modelId: z.string().min(1).max(200),
+	/** `null` uses the default instructions. */
+	systemPrompt: z.string().trim().max(20_000).nullable(),
+	params: modelParamsSchema,
+})
+
+export type ProfileFields = z.infer<typeof profileFieldsSchema>
 
 /** Stored on assistant messages and sent to the client as `UIMessage.metadata`. */
 export interface MessageMetadata {
@@ -55,4 +80,8 @@ export interface MessageMetadata {
 	refused?: boolean
 	/** The answer's text was edited by hand. */
 	edited?: boolean
+	/** The lane that answered, as it was then, so the answer keeps its label after the lane changes or goes. */
+	lane?: { name: string, color: LaneColor | null }
+	/** From the request to the end of the answer. */
+	durationMs?: number
 }

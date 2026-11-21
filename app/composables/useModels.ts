@@ -16,3 +16,6 @@ export function useModels() {
 }
 
 export type CatalogModelView = ReturnType<typeof useModels>['models']['value'][number]
+
+/** What the model browser shows; members' and admins' catalogs both fit. */
+export type BrowsableModel = Pick<CatalogModelView, 'id' | 'name' | 'vendor' | 'contextLength' | 'maxOutputTokens' | 'inputModalities' | 'outputModalities' | 'pricing'>

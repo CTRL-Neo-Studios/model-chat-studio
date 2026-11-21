@@ -53,6 +53,14 @@ describe('OpenRouter', () => {
 		expect(bodies[1]!.reasoning).toEqual({ enabled: false })
 	})
 
+	test('sends sampling settings where OpenRouter reads them, and the ranking and retention choices with or without chosen providers', async () => {
+		const bodies = captureFetch(openrouterChunks())
+		await run(turn({ model: 'a/b', topK: 40, minP: 0.05, topA: 0.1, frequencyPenalty: 0.2, presencePenalty: -0.1, repetitionPenalty: 1.1, providerSort: 'price', zdr: true }))
+		await run(turn({ model: 'a/b', providers: ['x/fp8'], providerSort: 'latency' }))
+		expect(bodies[0]).toMatchObject({ top_k: 40, min_p: 0.05, top_a: 0.1, frequency_penalty: 0.2, presence_penalty: -0.1, repetition_penalty: 1.1, provider: { sort: 'price', zdr: true } })
+		expect(bodies[1]!.provider).toEqual({ only: ['x/fp8'], order: ['x/fp8'], allow_fallbacks: true, sort: 'latency' })
+	})
+
 	test('reads cost, serving provider and tokens; citations become sources', async () => {
 		captureFetch(openrouterChunks())
 		const { parts, steps } = await run(turn({ model: 'deepseek/deepseek-chat' }))
