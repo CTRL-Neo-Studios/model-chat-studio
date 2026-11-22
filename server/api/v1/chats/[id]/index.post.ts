@@ -115,7 +115,7 @@ export default defineEventHandler(async (event) => {
 		...params, apiKey, model: model.id, providers, reasoningLevel, webSearch,
 		userId: user.id, firstTurn, safetyCheck,
 	})
-	const tools: ToolSet = { ...prepared.tools, chart: chartTool }
+	const tools: ToolSet = prepared.appTools === false ? prepared.tools : { ...prepared.tools, chart: chartTool }
 	const price = await getPriceOverride(db, platform.id, model.id)
 	const modelHistory = await resolveAttachments({ db, inference, model, userId: user.id, chatId }, context.messages).catch((error) => {
 		console.error('[chat] attachment failed', error)

@@ -62,6 +62,8 @@ export interface TurnInput extends ModelParams, ChatSettings {
 export interface PreparedTurn {
 	model: LanguageModel
 	tools: ToolSet
+	/** `false` when the platform refuses the app's own tools (chart, file tools) in this turn. */
+	appTools?: false
 	providerOptions: SharedV4ProviderOptions
 	temperature?: number
 	topP?: number

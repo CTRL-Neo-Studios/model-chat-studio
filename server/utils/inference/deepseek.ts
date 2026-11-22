@@ -87,6 +87,11 @@ const lastChunkSchema = z.object({
 	})).optional(),
 })
 
+/** DeepSeek's own web tools go with the request when the chat has web search on and the model offers it. */
+function hasWebTools(input: TurnInput) {
+	return !!input.webSearch && !!CHATBOT_TOOL_MODELS[input.model]
+}
+
 /**
  * `@ai-sdk/deepseek` on Chat Completions, plus two pieces of glue:
  * - a `fetch` wrapper that adds DeepSeek's web tools, `title` and `safety_check` to the body, since the
@@ -95,7 +100,7 @@ const lastChunkSchema = z.object({
  *   `providerMetadata.deepseek.title`.
  */
 function deepseekModel(input: TurnInput) {
-	const webSearch = !!input.webSearch && !!CHATBOT_TOOL_MODELS[input.model]
+	const webSearch = hasWebTools(input)
 	const provider = createDeepSeek({
 		apiKey: input.apiKey,
 		fetch: async (url, init) => {
@@ -165,6 +170,9 @@ export const deepseekPlatform: InferencePlatform = {
 		return {
 			model: deepseekModel(input),
 			tools: {},
+			// DeepSeek refuses app tools next to its web tools with thinking off (spike A, milestone 4);
+			// thinking is on by default, so only an explicit `none` leaves them out.
+			...(hasWebTools(input) && level === 'none' && { appTools: false as const }),
 			providerOptions: {
 				deepseek: {
 					...(level !== undefined && { thinking: { type: level === 'none' ? 'disabled' : 'enabled' } }),

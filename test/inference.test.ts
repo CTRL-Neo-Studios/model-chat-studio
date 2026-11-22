@@ -121,6 +121,17 @@ describe('DeepSeek', () => {
 		expect(pro!.reasoning_effort).toBeUndefined()
 	})
 
+	test('leaves the app\'s tools out only where DeepSeek refuses them: web tools with thinking off', () => {
+		const appTools = (input: Partial<TurnInput>) => deepseekPlatform.prepare(turn({ model: 'deepseek-flash', ...input })).appTools
+		expect(appTools({ webSearch: true, reasoningLevel: 'none' })).toBe(false)
+		// Thinking is on by default.
+		expect(appTools({ webSearch: true })).toBeUndefined()
+		expect(appTools({ webSearch: true, reasoningLevel: 'high' })).toBeUndefined()
+		expect(appTools({ reasoningLevel: 'none' })).toBeUndefined()
+		// No web tools on a model without them.
+		expect(appTools({ model: 'deepseek-v4-pro', webSearch: true, reasoningLevel: 'none' })).toBeUndefined()
+	})
+
 	test('turns the last chunk into sources and a title, and maps cache hits', async () => {
 		captureFetch(deepseekChunks)
 		const { parts, steps } = await run(turn({ model: 'deepseek-flash' }))
