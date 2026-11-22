@@ -7,12 +7,12 @@ import type { ChatMessage } from '~/composables/useLaneAnswers'
  * its token use (context). Answers' figures are as the platform reported them; the split of an answer's input
  * across its blocks is an estimate from their sizes (about four characters per token).
  */
-const props = defineProps<{
+const props = withDefaults(defineProps<{
 	chatId: string
 	messages: ChatMessage[]
-	/** The chat's library, when the reader may change its files: the chat's files can be added to it. */
-	libraryId?: string | null
-}>()
+	/** The chat's libraries the reader may change: the chat's files can be added to them. */
+	libraries?: { id: string, name: string }[]
+}>(), { libraries: () => [] })
 
 const open = defineModel<boolean>('open', { default: false })
 
@@ -23,12 +23,11 @@ const queryCache = useQueryCache()
 
 /** "Add to library": a copy of the upload goes to the top of the library. */
 const adding = ref<string | null>(null)
-async function addToLibrary(fileId: string) {
-	if (!props.libraryId) return
+async function addToLibrary(fileId: string, libraryId: string) {
 	adding.value = fileId
-	const added = await act(`/api/v1/libraries/${props.libraryId}/files/from-chat`, { method: 'POST', body: { fileId }, success: 'Added to the library' })
+	const added = await act(`/api/v1/libraries/${libraryId}/files/from-chat`, { method: 'POST', body: { fileId }, success: 'Added to the library' })
 	adding.value = null
-	if (added) queryCache.invalidateQueries({ key: libraryEntriesQuery(props.libraryId).key })
+	if (added) queryCache.invalidateQueries({ key: libraryEntriesQuery(libraryId).key })
 }
 
 const tab = ref<'trajectory' | 'files' | 'context'>('trajectory')
@@ -179,16 +178,24 @@ function split(turn: Turn) {
 							<span class="text-xs text-muted truncate">{{ fileMessage(file.messageId) }}</span>
 						</div>
 						<span class="text-xs text-muted shrink-0">{{ file.mediaType }} · {{ fileSize(file.size) }}</span>
+						<!-- One library: a button; several: a menu to pick which. -->
 						<UButton
-							v-if="libraryId"
+							v-if="libraries.length === 1"
 							icon="i-lucide-folder-input"
 							label="Add to library"
 							color="neutral"
 							variant="subtle"
 							size="xs"
 							:loading="adding === file.id"
-							@click="addToLibrary(file.id)"
+							@click="addToLibrary(file.id, libraries[0]!.id)"
 						/>
+						<UDropdownMenu
+							v-else-if="libraries.length"
+							:items="libraries.map(library => ({ label: library.name, icon: 'i-lucide-library-big', onSelect: () => addToLibrary(file.id, library.id) }))"
+							:content="{ align: 'end' }"
+						>
+							<UButton icon="i-lucide-folder-input" label="Add to library" trailing-icon="i-lucide-chevron-down" color="neutral" variant="subtle" size="xs" :loading="adding === file.id" />
+						</UDropdownMenu>
 					</li>
 				</ul>
 			</template>

@@ -5,27 +5,25 @@ import * as tables from '../../db/schema'
 import type { ContextBlock } from '../../../shared/utils/chat'
 import type { Db } from '../core/settings'
 import { referencePartSchema } from '../chat/turns'
-import { entryPaths, entrySubtree, listEntries } from './libraries'
+import { entrySubtree, listSpace, type SpaceEntry } from './libraries'
+import type { LibraryRef } from '../../../shared/utils/librarySpace'
 
 type Part = UIMessage['parts'][number]
-type Entry = Awaited<ReturnType<typeof listEntries>>[number]
 
 const quote = (path: string) => path.replace(/"/g, '\'')
 
 /**
  * Expands the "@" references in a chat's messages where they stand: a note becomes its text, a file a file part
  * (`resolveAttachments` then reads it: text files as text, images and PDFs as attachments), and a folder everything
- * inside it. Content is read fresh on every turn. A reference to an entry that is gone, or that is not in the chat's
- * library, leaves a note. Each message's references follow its block in the trace.
+ * inside it. Content is read fresh on every turn. A reference to an entry that is gone, or that is in none of the
+ * chat's libraries, leaves a note. Each message's references follow its block in the trace.
  */
-export async function expandReferences(db: Db, libraryId: string | null, messages: UIMessage[], blocks: ContextBlock[]) {
+export async function expandReferences(db: Db, libraries: LibraryRef[], messages: UIMessage[], blocks: ContextBlock[]) {
 	const references = messages.flatMap(message => message.parts.flatMap(part => referencePartSchema.safeParse(part).data ?? []))
 	if (!references.length) return { messages, blocks }
 
-	const entries = libraryId ? await listEntries(db, libraryId) : []
-	const byId: Record<string, Entry> = Object.fromEntries(entries.map(entry => [entry.id, entry]))
-	const paths = entryPaths(entries)
-	const pathOf = (entry: Entry) => paths[entry.id] ?? entry.name
+	const entries = await listSpace(db, libraries)
+	const byId: Record<string, SpaceEntry> = Object.fromEntries(entries.map(entry => [entry.id, entry]))
 	/** What a reference brings: the entry, or the files and notes inside a folder; `undefined` when it is gone. */
 	const contentsOf = (entryId: string) => byId[entryId] && entrySubtree(entries, entryId).filter(entry => entry.kind !== 'folder')
 
@@ -45,11 +43,11 @@ export async function expandReferences(db: Db, libraryId: string | null, message
 			const reference = referencePartSchema.safeParse(part).data
 			if (!reference) return [part]
 			const contents = contentsOf(reference.data.entryId)
-			if (!contents) return [{ type: 'text', text: `[Reference "${quote(reference.data.name)}" left out: it was deleted.]` }]
+			if (!contents) return [{ type: 'text', text: `[Reference "${quote(reference.data.name)}" left out: it was deleted, or its library is no longer attached.]` }]
 			return contents.flatMap((entry): Part[] => {
 				if (sent[entry.id]) return []
 				sent[entry.id] = true
-				const path = pathOf(entry)
+				const path = entry.path
 				if (entry.kind === 'note') {
 					const text = `<file name="${quote(path)}">\n${noteText[entry.id] ?? ''}\n</file>`
 					trace.push({ kind: 'reference', role: 'user', label: path, size: text.length, messageId: message.id, entryId: entry.id })

@@ -26,14 +26,14 @@ test('"@" references expand where they stand: a note as text, a folder as what i
 	] as UIMessage[]
 	const blocks: ContextBlock[] = [{ kind: 'message', role: 'user', label: 'Message', size: 23, messageId: 'u1' }, { kind: 'message', role: 'assistant', label: 'Answer', size: 2, messageId: 'a1' }]
 
-	const result = await expandReferences(db, library!.id, messages, blocks)
+	const result = await expandReferences(db, [library!], messages, blocks)
 	expect(result.messages[0]!.parts).toEqual([
 		{ type: 'text', text: 'Read @plan.md and @docs' },
 		{ type: 'text', text: '<file name="plan.md">\nShip "it" Monday.\n</file>' },
 		{ type: 'file', url: `/api/v1/files/${pdf!.id}`, mediaType: 'application/pdf', filename: 'docs/brief.pdf' },
 		{ type: 'text', text: '<file name="docs/inner.md">\ninside\n</file>' },
 		// Named again on its own: sent once. Another library's note: left out, as if deleted.
-		{ type: 'text', text: '[Reference "secret.md" left out: it was deleted.]' },
+		{ type: 'text', text: '[Reference "secret.md" left out: it was deleted, or its library is no longer attached.]' },
 	])
 	expect(result.messages[1]).toBe(messages[1]!)
 	expect(result.blocks.map(block => `${block.kind}:${block.label}`)).toEqual([
@@ -41,5 +41,10 @@ test('"@" references expand where they stand: a note as text, a folder as what i
 	])
 
 	// A chat without a library brings nothing in.
-	expect((await expandReferences(db, null, messages, blocks)).messages[0]!.parts.slice(1).every(part => part.type === 'text' && part.text.includes('left out'))).toBe(true)
+	expect((await expandReferences(db, [], messages, blocks)).messages[0]!.parts.slice(1).every(part => part.type === 'text' && part.text.includes('left out'))).toBe(true)
+
+	// With both libraries attached, the other library's note comes in too, and paths name their library.
+	const both = await expandReferences(db, [library!, other!], messages, blocks)
+	expect(both.blocks.filter(block => block.kind === 'reference').map(block => block.label)).toEqual(['P/plan.md', 'P/docs/brief.pdf', 'P/docs/inner.md', 'Q/secret.md'])
+	expect(both.messages[0]!.parts.at(-1)).toEqual({ type: 'text', text: '<file name="Q/secret.md">\nno\n</file>' })
 })

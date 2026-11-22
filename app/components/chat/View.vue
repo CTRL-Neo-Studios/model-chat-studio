@@ -27,14 +27,27 @@ const sharedWith = ref(data.value?.sharedWith ?? [])
 // Renaming writes the cache (`useChatActions`), so the title is read from it.
 const title = computed(() => data.value?.title ?? null)
 const temporary = computed(() => data.value?.temporary ?? false)
-// The chat's libraries; "@" in the prompt names the files, notes and folders of the one it reads.
+// The chat's libraries, in attach order; "@" in the prompt names their files, notes and folders.
 const libraries = computed(() => data.value?.libraries ?? [])
-// ponytail: the first attached library only, as the turn route reads; 5.2 reads every attached one.
-const libraryId = computed(() => libraries.value[0]?.role ? libraries.value[0].id : null)
-// "Add to library" copies into the library, which only its owner and editors change.
-const canAddFiles = computed(() => libraries.value[0]?.role === 'owner' || libraries.value[0]?.role === 'editor')
-const { items: mentions, partsFor } = useLibraryMentions(() => isOwner.value ? libraryId.value : null)
+// "Add to library" copies into a library, which only its owner and editors change.
+const editableLibraries = computed(() => libraries.value.filter(library => library.role === 'owner' || library.role === 'editor'))
+const { items: mentions, partsFor } = useLibraryMentions(() => isOwner.value ? libraries.value.filter(library => library.role) : [])
 const references = ref<string[]>([])
+const { data: libraryList } = useQuery(() => ({ ...librariesQuery, enabled: isOwner.value }))
+/** Attaches and detaches libraries; shown at once, and read again from the server if it refuses one. */
+async function setLibraries(ids: string[]) {
+	const chat = queryCache.getQueryData(chatQuery(chatId).key)
+	if (!chat) return
+	const before = chat.libraries
+	const next = ids.flatMap(id => before.find(library => library.id === id)
+		?? (libraryList.value ?? []).filter(library => library.id === id).map(({ name, role }) => ({ id, name, role })))
+	queryCache.setQueryData(chatQuery(chatId).key, { ...chat, libraries: next })
+	const done = await Promise.all([
+		...ids.filter(id => !before.some(library => library.id === id)).map(id => act(`/api/v1/chats/${chatId}/libraries/${id}`, { method: 'PUT' })),
+		...before.filter(library => !ids.includes(library.id)).map(library => act(`/api/v1/chats/${chatId}/libraries/${library.id}`, { method: 'DELETE' })),
+	])
+	if (done.some(ok => !ok)) queryCache.invalidateQueries({ key: chatQuery(chatId).key })
+}
 /** The chat's structure profile, or `null` for none; shown at once, undone if the server refuses. */
 async function setStructureProfile(structureProfileId: string | null) {
 	const chat = queryCache.getQueryData(chatQuery(chatId).key)
@@ -432,8 +445,15 @@ onMounted(() => {
 								@stop="answers.stop()"
 								@command="runCommand"
 							>
-								<template v-if="libraryId" #tools>
-									<ChatContextSettings :library-id="libraryId" :settings="settings" :structure-profile-id="data?.structureProfileId ?? null" @change="chatLanes.setSettings($event)" @update:structure-profile-id="setStructureProfile" />
+								<template #tools>
+									<ChatContextSettings
+										:settings="settings"
+										:library-ids="libraries.map(library => library.id)"
+										:structure-profile-id="data?.structureProfileId ?? null"
+										@change="chatLanes.setSettings($event)"
+										@update:library-ids="setLibraries"
+										@update:structure-profile-id="setStructureProfile"
+									/>
 								</template>
 							</ChatPrompt>
 						</template>
@@ -442,5 +462,5 @@ onMounted(() => {
 			</div>
 		</template>
 	</UDashboardPanel>
-	<ChatOverview v-if="isOwner" v-model:open="overviewOpen" :chat-id="chatId" :messages="messages" :library-id="canAddFiles ? libraryId : null" />
+	<ChatOverview v-if="isOwner" v-model:open="overviewOpen" :chat-id="chatId" :messages="messages" :libraries="editableLibraries" />
 </template>

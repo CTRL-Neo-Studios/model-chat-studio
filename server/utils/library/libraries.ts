@@ -6,6 +6,7 @@ import * as tables from '../../db/schema'
 import type { Db } from '../core/settings'
 import { assertFolderParent } from '../chat/folders'
 import type { LibraryRole } from '../../../shared/abilities/libraryAbilities'
+import { type LibraryRef, spaceEntries } from '../../../shared/utils/librarySpace'
 
 export const libraryNameSchema = z.string().trim().min(1).max(100)
 export const libraryDescriptionSchema = z.string().trim().max(2000)
@@ -49,6 +50,9 @@ export async function chatLibraries(db: Db, chatId: string) {
 	const found = await Promise.all(rows.map(row => findLibrary(db, row.id)))
 	return found.filter(library => library !== undefined)
 }
+
+/** At most this many libraries attach to one chat. */
+export const MAX_CHAT_LIBRARIES = 5
 
 /** When someone leaves a library (or is removed): it comes off their chats. */
 export async function detachLibrary(db: Db, libraryId: string, userId: string) {
@@ -97,26 +101,13 @@ export function assertEntryParent(entries: EntryNode[], parentId: string | null,
 	assertFolderParent(entries.filter(entry => entry.kind === 'folder'), parentId, movingId)
 }
 
-/** Each entry's path in the library: folder names and its own, joined by `/`. */
-export function entryPaths(entries: (EntryNode & { name: string })[]): Record<string, string> {
-	const byId = Object.fromEntries(entries.map(entry => [entry.id, entry]))
-	const paths: Record<string, string> = {}
-	const pathOf = (entry: EntryNode & { name: string }, depth: number): string => {
-		const parent = entry.parentId ? byId[entry.parentId] : undefined
-		// Bounded, so a cycle left by two concurrent moves cannot loop forever.
-		return parent && depth < entries.length ? `${paths[parent.id] ?? pathOf(parent, depth + 1)}/${entry.name}` : entry.name
-	}
-	for (const entry of entries) paths[entry.id] = pathOf(entry, 0)
-	return paths
+/** The entries of a chat's libraries with their paths (`spaceEntries`), read now. */
+export async function listSpace(db: Db, libraries: LibraryRef[]) {
+	const lists = await Promise.all(libraries.map(library => listEntries(db, library.id)))
+	return spaceEntries(libraries, lists)
 }
 
-/** Finds a library's entries by path, case-insensitive and with or without slashes at the ends. */
-export async function pathResolver(db: Db, libraryId: string) {
-	const entries = await listEntries(db, libraryId)
-	const paths = entryPaths(entries)
-	const byPath = Object.fromEntries(entries.map(entry => [paths[entry.id]!.toLowerCase(), { entryId: entry.id, kind: entry.kind }]))
-	return (path: string) => byPath[path.replace(/^\/+|\/+$/g, '').toLowerCase()]
-}
+export type SpaceEntry = Awaited<ReturnType<typeof listSpace>>[number]
 
 /** An entry and everything inside it. */
 export function entrySubtree<T extends EntryNode>(entries: T[], id: string): T[] {

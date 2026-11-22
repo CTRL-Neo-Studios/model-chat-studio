@@ -2,18 +2,29 @@
 import { AUTO_FETCH_DEFAULTS, type AutoFetchSettings, type ChatSettings } from '#shared/utils/chat'
 
 /**
- * A chat's library settings, in the prompt's footer: the structure profile, auto-fetch and the file tools. Settings
- * changes are kept while the popover is open and saved when it closes, so a number stepped up five times is one save;
- * the structure profile is saved at once.
+ * A chat's context, in the prompt's footer: the libraries it reads, its structure profile, and (with libraries)
+ * auto-fetch and the file tools. Libraries and the profile change at once; the other settings are kept while the
+ * popover is open and saved when it closes, so a number stepped up five times is one save.
  */
 const props = defineProps<{
-	libraryId: string
 	settings: ChatSettings
 }>()
 
 const emit = defineEmits<{ change: [Pick<ChatSettings, 'autoFetch' | 'fileTools'>] }>()
-/** The chat's structure profile; `null`: none. Saved at once. */
+/** The libraries every lane reads, in attach order. */
+const libraryIds = defineModel<string[]>('libraryIds', { default: () => [] })
+/** The chat's structure profile; `null`: none. */
 const structureProfileId = defineModel<string | null>('structureProfileId', { default: null })
+
+const MAX_LIBRARIES = 5
+const { data: libraryList } = useQuery(librariesQuery)
+const libraryItems = computed(() => (libraryList.value ?? []).map(library => ({
+	label: library.name,
+	value: library.id,
+	description: library.role === 'owner' ? undefined : `Shared · ${library.role === 'editor' ? 'Editor' : 'Viewer'}`,
+	disabled: libraryIds.value.length >= MAX_LIBRARIES && !libraryIds.value.includes(library.id),
+})))
+const attached = computed(() => libraryIds.value.flatMap(id => (libraryList.value ?? []).find(library => library.id === id) ?? []))
 
 const { data: profileList } = useQuery(structureProfilesQuery)
 const NONE = 'none'
@@ -50,54 +61,69 @@ const scan = computed({
 	},
 })
 
-const { data: entryList } = useQuery(() => libraryEntriesQuery(props.libraryId))
-const folders = computed(() => {
-	const entries = entryList.value ?? []
-	const byId = Object.fromEntries(entries.map(entry => [entry.id, entry]))
-	const pathOf = (id: string, depth = 0): string => {
-		const entry = byId[id]
-		return entry?.parentId && depth < entries.length ? `${pathOf(entry.parentId, depth + 1)}/${entry.name}` : entry?.name ?? ''
-	}
-	return entries.filter(entry => entry.kind === 'folder').map(entry => ({ label: pathOf(entry.id), value: entry.id })).sort((a, b) => a.label.localeCompare(b.label))
-})
+// Folders of every attached library, by their paths as the model sees them.
+const space = useLibrarySpace(attached)
+const folders = computed(() => space.value
+	.filter(entry => entry.kind === 'folder')
+	.map(entry => ({ label: entry.path, value: entry.id }))
+	.sort((a, b) => a.label.localeCompare(b.label)))
 
 const label = computed(() => {
-	const on = [current.value.autoFetch.enabled && 'auto-fetch', current.value.fileTools && 'file tools'].filter(Boolean)
-	return on.length ? `Library: ${on.join(', ')}` : 'Library: off'
+	const count = libraryIds.value.length
+	return count ? `${count} ${count === 1 ? 'library' : 'libraries'}` : 'Context'
 })
+const active = computed(() => libraryIds.value.length > 0 || structureProfileId.value !== null)
 </script>
 
 <template>
 	<UPopover :content="{ side: 'top', align: 'start' }" @update:open="onOpen">
-		<UButton :label="label" icon="i-lucide-library-big" color="neutral" variant="ghost" size="sm" :class="label !== 'Library: off' && 'text-highlighted'" />
+		<UButton :label="label" icon="i-lucide-library-big" color="neutral" variant="ghost" size="sm" :class="active && 'text-highlighted'" />
 		<template #content>
 			<div class="w-80 p-3 flex flex-col gap-3 max-h-[70vh] overflow-y-auto">
+				<UFormField label="Libraries" :help="`Every model in the chat reads them, in this order. At most ${MAX_LIBRARIES}.`">
+					<USelectMenu
+						v-model="libraryIds"
+						:items="libraryItems"
+						value-key="value"
+						multiple
+						placeholder="No library"
+						icon="i-lucide-library-big"
+						size="sm"
+						class="w-full"
+					>
+						<template #empty>
+							No libraries yet. Create one on the Libraries page.
+						</template>
+					</USelectMenu>
+				</UFormField>
 				<UFormField label="Structure profile" help="How this chat's messages are arranged around your own blocks.">
 					<USelect v-model="profileChoice" :items="profileItems" size="sm" class="w-full" />
 				</UFormField>
-				<USeparator />
-				<USwitch v-model="draft.fileTools" label="Let models look through the files" description="Models that take tools can list, search and read the library's notes and text files when they need to." />
-				<USeparator />
-				<USwitch v-model="draft.autoFetch.enabled" label="Fetch matching library files" description="Files and notes whose tags appear in the conversation are sent with each answer." />
-				<template v-if="draft.autoFetch.enabled">
-					<UFormField label="Search in">
-						<UToggleGroup v-model="scan" type="multiple" :items="roles" size="xs" variant="outline" class="flex-wrap" />
-					</UFormField>
-					<div class="grid grid-cols-2 gap-3">
-						<UFormField label="Latest messages searched">
-							<UInputNumber v-model="draft.autoFetch.scanMessages" :min="1" :max="50" size="sm" />
+				<template v-if="libraryIds.length">
+					<USeparator />
+					<USwitch v-model="draft.fileTools" label="Let models look through the files" description="Models that take tools can list, search and read the libraries' notes and text files when they need to." />
+					<USeparator />
+					<USwitch v-model="draft.autoFetch.enabled" label="Fetch matching library files" description="Files and notes whose tags appear in the conversation are sent with each answer." />
+					<template v-if="draft.autoFetch.enabled">
+						<UFormField label="Search in">
+							<UToggleGroup v-model="scan" type="multiple" :items="roles" size="xs" variant="outline" class="flex-wrap" />
 						</UFormField>
-						<UFormField label="Most files per answer">
-							<UInputNumber v-model="draft.autoFetch.maxEntries" :min="1" :max="20" size="sm" />
+						<div class="grid grid-cols-2 gap-3">
+							<UFormField label="Latest messages searched">
+								<UInputNumber v-model="draft.autoFetch.scanMessages" :min="1" :max="50" size="sm" />
+							</UFormField>
+							<UFormField label="Most files per answer">
+								<UInputNumber v-model="draft.autoFetch.maxEntries" :min="1" :max="20" size="sm" />
+							</UFormField>
+						</div>
+						<UFormField label="Most characters of text" help="Images and PDFs do not count.">
+							<UInputNumber v-model="draft.autoFetch.maxChars" :min="1000" :max="500000" :step="5000" size="sm" />
 						</UFormField>
-					</div>
-					<UFormField label="Most characters of text" help="Images and PDFs do not count.">
-						<UInputNumber v-model="draft.autoFetch.maxChars" :min="1000" :max="500000" :step="5000" size="sm" />
-					</UFormField>
-					<UFormField label="Only from these folders" help="None chosen: the whole library.">
-						<USelectMenu v-model="draft.autoFetch.folders" :items="folders" value-key="value" multiple placeholder="Whole library" size="sm" class="w-full" />
-					</UFormField>
-					<USwitch v-model="draft.autoFetch.fuzzy" label="Also match by name and text" description="Also fetches files whose names resemble the conversation's words (even with typos) or whose text has them." />
+						<UFormField label="Only from these folders" help="None chosen: every library, whole.">
+							<USelectMenu v-model="draft.autoFetch.folders" :items="folders" value-key="value" multiple placeholder="Whole libraries" size="sm" class="w-full" />
+						</UFormField>
+						<USwitch v-model="draft.autoFetch.fuzzy" label="Also match by name and text" description="Also fetches files whose names resemble the conversation's words (even with typos) or whose text has them." />
+					</template>
 				</template>
 			</div>
 		</template>

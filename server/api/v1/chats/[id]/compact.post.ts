@@ -34,8 +34,7 @@ export default defineEventHandler(async (event) => {
 	const { platform, apiKey, byok, config } = inference
 	assertWithinBudget(budget, byok)
 	const catalog = await getCatalog(db, inference)
-	// ponytail: the first attached library only, as in the turn route; 5.2 reads every attached one.
-	const libraryId = (await chatLibraries(db, chat.id))[0]?.id ?? null
+	const libraries = (await chatLibraries(db, chat.id)).map(({ id, name }) => ({ id, name }))
 
 	const results = await Promise.allSettled(lanes.filter(lane => lane.enabled).slice(0, settings.maxChatModels).map(async (lane) => {
 		const thread = await listChatMessages(db, chat.id, lane.id) as UIMessage[]
@@ -47,8 +46,8 @@ export default defineEventHandler(async (event) => {
 		const model = chosen ?? catalog.find(model => model.id === config.defaultModel)
 		if (!model) throw new Error('This chat\'s model is not available')
 		const prepared = platform.prepare({ apiKey, model: model.id, userId: user.id, firstTurn: false, safetyCheck: settings.safetyCheck })
-		const { messages } = await expandReferences(db, libraryId, context.messages, [])
-		const history = await resolveAttachments({ db, inference, model, userId: user.id, chatId: chat.id, libraryId }, messages)
+		const { messages } = await expandReferences(db, libraries, context.messages, [])
+		const history = await resolveAttachments({ db, inference, model, userId: user.id, chatId: chat.id, libraryIds: libraries.map(library => library.id) }, messages)
 		const result = await generateText({
 			model: prepared.model,
 			providerOptions: prepared.providerOptions,

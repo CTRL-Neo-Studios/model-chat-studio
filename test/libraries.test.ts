@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
 import * as schema from '../server/db/schema'
 import { assertEntryParent, entrySubtree, listEntries, withUniqueName } from '../server/utils/library/libraries'
+import { spaceEntries, spaceResolver } from '../shared/utils/librarySpace'
 import { createTestDb } from './db'
 
 // docs > specs > draft.md, docs/plan.md, and notes.md at the top
@@ -26,6 +27,27 @@ test('a folder\'s subtree is everything inside it, and survives a cycle', () => 
 	expect(entrySubtree(entries, 'notes').map(entry => entry.id)).toEqual(['notes'])
 	const cycle = [{ id: 'a', parentId: 'b', kind: 'folder' }, { id: 'b', parentId: 'a', kind: 'folder' }]
 	expect(entrySubtree(cycle, 'a').map(entry => entry.id)).toEqual(['a', 'b'])
+})
+
+test('paths across two libraries: prefixed with the library when there are two; a shared path finds the first, or the named one', () => {
+	const libraries = [{ id: 'A', name: 'Specs' }, { id: 'B', name: 'Team notes' }]
+	const note = (id: string, name: string, parentId: string | null = null) => ({ id, parentId, kind: 'note', name })
+	const space = spaceEntries(libraries, [
+		[note('a-notes', 'notes.md'), { id: 'a-docs', parentId: null, kind: 'folder', name: 'docs' }, note('a-plan', 'plan.md', 'a-docs')],
+		[note('b-notes', 'NOTES.md'), note('b-only', 'only.md')],
+	])
+	expect(space.map(entry => entry.path)).toEqual(['Specs/notes.md', 'Specs/docs', 'Specs/docs/plan.md', 'Team notes/NOTES.md', 'Team notes/only.md'])
+
+	const find = spaceResolver(libraries, space)
+	expect(find('notes.md')?.id).toBe('a-notes')
+	expect(find('/team notes/notes.md/')?.id).toBe('b-notes')
+	expect(find('Specs/docs/plan.md')?.id).toBe('a-plan')
+	expect(find('docs/plan.md')?.id).toBe('a-plan')
+	expect(find('only.md')?.id).toBe('b-only')
+	expect(find('Team notes/plan.md')).toBeUndefined()
+
+	// One library: no prefix.
+	expect(spaceEntries([libraries[0]!], [[note('x', 'x.md')]]).map(entry => entry.path)).toEqual(['x.md'])
 })
 
 test('names are unique within a folder, the top level included; deleting a folder deletes what is in it', async () => {

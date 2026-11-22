@@ -59,6 +59,13 @@ const greeting = computed(() => {
 // Files upload to the new chat's id before the chat exists; creating it links them to the first message.
 const { uploads, promptFiles, uploading, parts: fileParts } = usePromptUploads(chatId)
 
+// The libraries the chat will read and its structure profile, chosen before the first message; "@" names their files.
+const libraryIds = ref<string[]>([])
+const structureProfileId = ref<string | null>(null)
+const { data: libraryList } = useQuery(librariesQuery)
+const { items: mentions, partsFor } = useLibraryMentions(() => libraryIds.value.flatMap(id => (libraryList.value ?? []).find(library => library.id === id) ?? []))
+const references = ref<string[]>([])
+
 async function createChat(prompt: string) {
 	if ((!prompt.trim() && !fileParts.value.length) || uploading.value || loading.value) return
 	if (!enabledLanes.value.length) {
@@ -73,10 +80,12 @@ async function createChat(prompt: string) {
 			headers: { [headerName]: csrf },
 			body: {
 				id: chatId,
-				message: { id: crypto.randomUUID(), role: 'user', parts: [...(prompt.trim() ? [{ type: 'text', text: prompt }] : []), ...fileParts.value] },
+				message: { id: crypto.randomUUID(), role: 'user', parts: [...(prompt.trim() ? [{ type: 'text', text: prompt }] : []), ...fileParts.value, ...partsFor(references.value)] },
 				settings: settings.value,
 				models: lanes.value.map(({ id: _, position: __, platform: ___, profileId, ...fields }) => ({ ...fields, profileId: profileId ?? undefined })),
 				temporary: props.temporary || undefined,
+				libraryIds: libraryIds.value,
+				structureProfileId: structureProfileId.value ?? undefined,
 			},
 		})
 	}
@@ -142,6 +151,8 @@ const quickChats = [
 					<ChatPrompt
 						v-model="input"
 						v-model:files="promptFiles"
+						v-model:references="references"
+						:mentions="mentions"
 						:web-search="settings.webSearch"
 						:models="answeringModels"
 						:uploads="uploads"
@@ -152,7 +163,11 @@ const quickChats = [
 						@update:web-search="chatLanes.setSettings({ webSearch: $event })"
 						@submit="createChat(input)"
 						@command="startTemporary"
-					/>
+					>
+						<template #tools>
+							<ChatContextSettings v-model:library-ids="libraryIds" v-model:structure-profile-id="structureProfileId" :settings="settings" @change="chatLanes.setSettings($event)" />
+						</template>
+					</ChatPrompt>
 
 					<div class="flex flex-wrap gap-2">
 						<UButton

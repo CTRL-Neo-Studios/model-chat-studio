@@ -11,7 +11,7 @@ const WEB_SEARCH_INSTRUCTIONS = `Web search is on in this chat: you can search t
 - Cite the pages you used.`
 
 // Added only in chats with a library and the file tools: without it a model does not know there are files to look at.
-const FILE_TOOLS_INSTRUCTIONS = `This chat has a library of notes and files.
+const FILE_TOOLS_INSTRUCTIONS = `This chat has libraries of notes and files attached.
 - When the user's question may be answered by them, look: list_files shows what there is, search_files finds words in them, read_file reads one.
 - Say which files you used.`
 

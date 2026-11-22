@@ -1,6 +1,6 @@
 # Milestones 5–6: modular chats, characters, group chat
 
-Status: 5.1 built; 5.2 next. It replaces the "project" of milestone 4 (`plans/milestones-2-4-profiles-organisation-projects.md`, section 5) with parts that attach to a chat. The conventions of milestone 1 (section 2 there) apply unchanged.
+Status: 5.1 and 5.2 built; 5.3 next. It replaces the "project" of milestone 4 (`plans/milestones-2-4-profiles-organisation-projects.md`, section 5) with parts that attach to a chat. The conventions of milestone 1 (section 2 there) apply unchanged.
 
 Goal, in build order:
 
@@ -112,6 +112,8 @@ The client already streams one request per answer into one list. In group mode i
 | 5.4 | "Shared with me": `GET /chats/shared`, the `/shared` page and its sidebar entry | with two accounts, a chat shared by person appears in the other's list and opens read-only; unsharing removes it; a public chat the user only opened by link does not appear |
 
 Built (5.1): the turn, `/compact`, "@" and the context popover read the chat's first attached library only (marked `ponytail:`); 5.2 reads them all. There is no attach route or picker yet, so only migrated chats have a library until 5.2. `PATCH /chats/:id` already takes `structureProfileId` on any chat. The profile editor's "add from this project" path picker went with the project page; paths are typed. A library's chips in the chat header replace the project badge. Deleting a library takes no `ownChats` choice: chats stay, without it.
+
+Built (5.2): paths and lookup live in `shared/utils/librarySpace.ts` (`spaceEntries`, `spaceResolver`), used by the server's readers and by the client's "@" menu and folder picker alike. `Library/path` is tried before the attach-order lookup, so a path the file tools hand out always finds its library. Attach order is `chatLibrary.createdAt`; `POST /chats` spaces its rows a millisecond apart. Detaching a library leaves its "@" references in old messages, which are then left out with a note. The popover's button reads "Context" without libraries, else "N libraries". The auto-fetch folder scope, when set, covers only the chosen folders, so libraries without a chosen folder are not fetched from.
 
 ## 4. Milestone 6: characters and group chat
 

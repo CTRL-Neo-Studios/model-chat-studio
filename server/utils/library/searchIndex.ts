@@ -6,10 +6,11 @@ import type { Db } from '#server/utils/core/settings'
 import { searchableText } from './search'
 
 /**
- * Fills the searchable text of a library's notes and text files that have none yet: new ones, changed ones, and
+ * Fills the searchable text of the libraries' notes and text files that have none yet: new ones, changed ones, and
  * ones from before full-text search. Text files are read from storage once; images and PDFs are not searched.
  */
-export async function fillSearchText(db: Db, libraryId: string) {
+export async function fillSearchText(db: Db, libraryIds: string[]) {
+	if (!libraryIds.length) return
 	const missing = await db.select({
 		id: schema.libraryEntry.id,
 		kind: schema.libraryEntry.kind,
@@ -19,7 +20,7 @@ export async function fillSearchText(db: Db, libraryId: string) {
 	}).from(schema.libraryEntry)
 		.leftJoin(schema.file, eq(schema.file.id, schema.libraryEntry.fileId))
 		.where(and(
-			eq(schema.libraryEntry.libraryId, libraryId),
+			inArray(schema.libraryEntry.libraryId, libraryIds),
 			isNull(schema.libraryEntry.searchText),
 			or(eq(schema.libraryEntry.kind, 'note'), inArray(schema.file.mediaType, [...FILE_UPLOAD.textTypes])),
 		))

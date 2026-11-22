@@ -62,8 +62,8 @@ interface AttachmentContext {
 	model: CatalogModel
 	userId: string
 	chatId: string
-	/** The chat's library, whose files "@" references bring in. */
-	libraryId: string | null
+	/** The chat's libraries, whose files "@" references bring in. */
+	libraryIds: string[]
 }
 
 /** The platform's id for an uploaded PDF, uploading it the first time (DeepSeek bills parsing per upload). */
@@ -98,13 +98,13 @@ const textTypes: readonly string[] = FILE_UPLOAD.textTypes
 export async function resolveAttachments(context: AttachmentContext, messages: UIMessage[]): Promise<UIMessage[]> {
 	const ids = messages.flatMap(message => message.parts.flatMap(part => part.type === 'file' ? [FILE_URL_PATTERN.exec(part.url)?.[1] ?? ''] : []))
 	if (!ids.length) return messages
-	// The chat's own uploads, and the files of its library (named with "@").
+	// The chat's own uploads, and the files of its libraries (named with "@").
 	const rows = await context.db.select().from(schema.file).where(and(
 		inArray(schema.file.id, ids.filter(Boolean)),
 		or(
 			eq(schema.file.chatId, context.chatId),
-			context.libraryId
-				? inArray(schema.file.id, context.db.select({ id: schema.libraryEntry.fileId }).from(schema.libraryEntry).where(eq(schema.libraryEntry.libraryId, context.libraryId)))
+			context.libraryIds.length
+				? inArray(schema.file.id, context.db.select({ id: schema.libraryEntry.fileId }).from(schema.libraryEntry).where(inArray(schema.libraryEntry.libraryId, context.libraryIds)))
 				: undefined,
 		),
 	))

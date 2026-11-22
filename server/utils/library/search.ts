@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, inArray, sql } from 'drizzle-orm'
 // Relative, not `hub:db`, so this module also loads in `bun test`.
 import * as tables from '../../db/schema'
 import type { Db } from '../core/settings'
@@ -35,20 +35,20 @@ export function searchWords(text: string) {
 }
 
 /**
- * Notes and text files of a library whose text has any of the words of `text`, best first: more and rarer matches
+ * Notes and text files of the libraries whose text has any of the words of `text`, best first: more and rarer matches
  * rank higher (`ts_rank`). Each comes with a short excerpt around the matches. Entries not yet filled are not
  * found; `fillSearchText` fills them first.
  */
-export async function searchEntryTexts(db: Db, libraryId: string, text: string, limit = 10) {
+export async function searchEntryTexts(db: Db, libraryIds: string[], text: string, limit = 10) {
 	const words = searchWords(text).slice(0, 30)
-	if (!words.length) return []
+	if (!words.length || !libraryIds.length) return []
 	const query = sql`websearch_to_tsquery('english', ${words.join(' or ')})`
 	return await db.select({
 		id: tables.libraryEntry.id,
 		rank: sql<number>`ts_rank(${tables.libraryEntry.searchVector}, ${query})`.mapWith(Number),
 		excerpt: sql<string>`ts_headline('english', ${tables.libraryEntry.searchText}, ${query}, 'MaxWords=24, MinWords=8, MaxFragments=2')`,
 	}).from(tables.libraryEntry)
-		.where(and(eq(tables.libraryEntry.libraryId, libraryId), sql`${tables.libraryEntry.searchVector} @@ ${query}`))
+		.where(and(inArray(tables.libraryEntry.libraryId, libraryIds), sql`${tables.libraryEntry.searchVector} @@ ${query}`))
 		.orderBy(desc(sql`ts_rank(${tables.libraryEntry.searchVector}, ${query})`))
 		.limit(limit)
 }

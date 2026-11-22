@@ -24,7 +24,7 @@ test('spike D\'s English and Chinese questions find their notes through the inde
 	}))).returning({ id: schema.libraryEntry.id, name: schema.libraryEntry.name })
 	await db.insert(schema.libraryEntry).values({ libraryId: other!.id, kind: 'note', name: 'budget.md', content: 'budget', searchText: searchableText('budget.md', 'budget') })
 	const nameOf = Object.fromEntries(rows.map(row => [row.id, row.name]))
-	const top = async (question: string) => (await searchEntryTexts(db, library!.id, question)).map(row => nameOf[row.id])
+	const top = async (question: string) => (await searchEntryTexts(db, [library!.id], question)).map(row => nameOf[row.id])
 
 	expect((await top('How much did we budget for marketing in Q3?'))[0]).toBe('budget-2027.md')
 	expect((await top('What are the deployment steps for kubernetes?'))[0]).toBe('k8s-deploy.md')
@@ -38,5 +38,5 @@ test('spike D\'s English and Chinese questions find their notes through the inde
 	// Stemming: "deploying" finds "deployment"'s note too.
 	expect(await top('deploying')).toContain('k8s-deploy.md')
 	// The excerpt shows the matching words.
-	expect((await searchEntryTexts(db, library!.id, 'sourdough'))[0]!.excerpt).toContain('<b>Sourdough</b>')
+	expect((await searchEntryTexts(db, [library!.id], 'sourdough'))[0]!.excerpt).toContain('<b>Sourdough</b>')
 })
