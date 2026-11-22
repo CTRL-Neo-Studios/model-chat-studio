@@ -136,6 +136,8 @@ export const chat = pgTable("chat", {
 	structureProfileId: uuid().references((): AnyPgColumn => structureProfile.id, { onDelete: "set null" }),
 	/** Who the user is in this chat: its name stands for `{{user}}`, its instructions tell the models about them. */
 	userCharacterId: uuid().references((): AnyPgColumn => character.id, { onDelete: "set null" }),
+	/** `separate`: each lane answers alone and sees only its own answers. `group`: one shared thread, lanes answer in turn. Set at creation. */
+	mode: text({ enum: ["separate", "group"] }).notNull().default("separate"),
 
 	...createdUpdatedAtColumns
 }, (t) => [

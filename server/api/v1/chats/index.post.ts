@@ -32,13 +32,16 @@ const bodySchema = z.object({
 	folderId: z.uuid().optional(),
 	/** Who the user is in this chat, one of their Characters or an instance one; `null`: nobody. Absent: their default. */
 	userCharacterId: z.uuid().nullable().optional(),
+	/** `group`: the lanes share one thread and answer in turn. Fixed once the chat exists. */
+	mode: z.enum(['separate', 'group']).optional(),
 })
 
 /** Creates a chat with its lanes and first message. Each lane's answer is requested with `POST /chats/:id`. */
 export default defineEventHandler(async (event) => {
 	const user = await useServerAuth().requireUser(event)
 	const body = await readValidatedBody(event, bodySchema)
-	const { id, message, settings, models, temporary, folderId } = body
+	const { id, message, settings, models, temporary, folderId, mode } = body
+	if (mode === 'group' && models.length < 2) throw createError({ status: 400, statusText: 'A group chat needs at least two models' })
 	let { libraryIds, structureProfileId } = body
 	if (folderId) {
 		if (temporary) throw createError({ status: 400, statusText: 'A temporary chat is not kept in a folder' })
@@ -69,7 +72,7 @@ export default defineEventHandler(async (event) => {
 	const lanes = await Promise.all(models.map(async (fields, position) => ({ chatId: id, position, ...await newLaneValues(db, user.id, fields) })))
 
 	return await db.transaction(async (tx) => {
-		const [chat] = await tx.insert(schema.chat).values({ id, userId: user.id, settings, temporary, folderId, structureProfileId, userCharacterId }).onConflictDoNothing().returning()
+		const [chat] = await tx.insert(schema.chat).values({ id, userId: user.id, settings, temporary, folderId, structureProfileId, userCharacterId, mode }).onConflictDoNothing().returning()
 		const [saved] = chat
 			? await tx.insert(schema.message).values({ id: message.id, chatId: id, role: 'user', parts: message.parts }).onConflictDoNothing().returning()
 			: []

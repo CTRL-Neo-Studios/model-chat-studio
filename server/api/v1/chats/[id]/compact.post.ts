@@ -13,6 +13,8 @@ import { chatLibraries } from '#server/utils/library/libraries'
 import { listChatModels } from '#server/utils/chat/lanes'
 import { assertWithinBudget, listChatMessages, monthlyBudgetStatus } from '#server/utils/chat/turns'
 import { getCatalog, getPriceOverride, useInference } from '#server/utils/inference'
+import { groupThread } from '#server/utils/chat/group'
+import { charactersById } from '#server/utils/chat/characters'
 
 const COMPACT_INSTRUCTIONS = `You write a summary of a conversation for yourself, so you can continue it later without the full history.
 - Keep the facts, decisions, names, numbers, code, open questions and the user's preferences and goals
@@ -21,8 +23,9 @@ const COMPACT_INSTRUCTIONS = `You write a summary of a conversation for yourself
 
 /**
  * `/compact`: each answering lane summarises its own thread with its own model. The summary is stored as a `system`
- * message of that lane; from then on the lane is sent the summary and what follows it. Summarised messages stay in
- * the chat, readable, above a divider. Billed as `compact`.
+ * message of that lane; from then on the lane is sent the summary and what follows it. In a group chat the first lane
+ * summarises the shared thread once, and every lane reads that summary. Summarised messages stay in the chat,
+ * readable, above a divider. Billed as `compact`.
  */
 export default defineEventHandler(async (event) => {
 	const [chat, { values: settings }] = await Promise.all([requireChat(event, 'manageChat'), getInstanceSettings(db)])
@@ -36,8 +39,14 @@ export default defineEventHandler(async (event) => {
 	const catalog = await getCatalog(db, inference)
 	const libraries = (await chatLibraries(db, chat.id)).map(({ id, name }) => ({ id, name }))
 
-	const results = await Promise.allSettled(lanes.filter(lane => lane.enabled).slice(0, settings.maxChatModels).map(async (lane) => {
-		const thread = await listChatMessages(db, chat.id, lane.id) as UIMessage[]
+	// In a group chat one summary of the shared thread, written by the first lane's model, which every lane reads.
+	const group = chat.mode === 'group'
+	const answering = lanes.filter(lane => lane.enabled).slice(0, settings.maxChatModels)
+	const userName = (chat.userCharacterId && (await charactersById(db, [chat.userCharacterId]))[chat.userCharacterId]?.name) || user.name || user.username
+	const results = await Promise.allSettled((group ? answering.slice(0, 1) : answering).map(async (lane) => {
+		const thread = group
+			? groupThread(await listChatMessages(db, chat.id) as UIMessage<MessageMetadata>[], { laneId: lane.id, userName })
+			: await listChatMessages(db, chat.id, lane.id) as UIMessage[]
 		const context = buildContext({ thread, systemPrompt: lane.systemPrompt, webSearch: false, memoryLength: null })
 		// Nothing new since the lane's last summary.
 		if (!context.blocks.some(block => block.kind === 'message')) return null
@@ -51,7 +60,7 @@ export default defineEventHandler(async (event) => {
 		const result = await generateText({
 			model: prepared.model,
 			providerOptions: prepared.providerOptions,
-			instructions: COMPACT_INSTRUCTIONS,
+			instructions: group ? `${COMPACT_INSTRUCTIONS}\n- This is a group chat: say who said what; your own answers are the assistant's` : COMPACT_INSTRUCTIONS,
 			messages: [...await convertToModelMessages(history), { role: 'user', content: 'Summarize our conversation so far, as instructed.' }],
 			maxRetries: settings.maxRetries,
 		})

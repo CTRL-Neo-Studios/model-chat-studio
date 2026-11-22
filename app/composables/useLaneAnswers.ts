@@ -33,6 +33,8 @@ export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, opt
 	onAnswered?: () => void
 	/** Whether a stopped answer leaves the lane's earlier answer in place (the member's preference). */
 	keepPreviousOnStop?: () => boolean
+	/** Whether lanes answer one after another (a group chat) rather than all at once. */
+	inTurn?: () => boolean
 }) {
 	const { csrf, headerName } = useCsrf()
 	// The server keeps the history: send only the new message, or what to answer again, and the lane.
@@ -66,6 +68,7 @@ export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, opt
 		messages.value = list.toSpliced(end, 0, answer)
 	}
 
+	/** Streams one lane's answer; resolves to whether it completed (not stopped, not failed). */
 	async function stream(laneId: string, question: ChatMessage, trigger: 'submit-message' | 'regenerate-message') {
 		const key = keyOf(question.id, laneId)
 		pending.value[key]?.controller.abort()
@@ -92,7 +95,7 @@ export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, opt
 		catch (error) {
 			if (!controller.signal.aborted) {
 				pending.value = { ...pending.value, [key]: { status: 'error', error: describeError(error), controller } }
-				return
+				return false
 			}
 			// The server keeps the earlier answer in this case too.
 			if (previous && replacing !== previous.id && options.keepPreviousOnStop?.()) place(previous, question.id, replacing)
@@ -101,17 +104,37 @@ export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, opt
 			const { [key]: _, ...rest } = pending.value
 			pending.value = rest
 		}
+		return !controller.signal.aborted
+	}
+
+	/**
+	 * Asks each lane to answer: all at once, or in a group chat one after another, so each speaker reads the answers
+	 * before it. There a stopped or failed answer ends the round.
+	 */
+	async function ask(laneIds: string[], question: ChatMessage, trigger: 'submit-message' | 'regenerate-message') {
+		if (!options.inTurn?.()) {
+			for (const laneId of laneIds) stream(laneId, question, trigger)
+			return
+		}
+		for (const laneId of laneIds) {
+			if (!await stream(laneId, question, trigger)) return
+		}
 	}
 
 	/** Adds a user message and asks each lane to answer it. */
 	function send(question: ChatMessage, laneIds: string[]) {
 		messages.value = [...messages.value, question]
-		for (const laneId of laneIds) stream(laneId, question, 'submit-message')
+		return ask(laneIds, question, 'submit-message')
 	}
 
 	/** Asks a lane to answer a user message again (or for the first time), replacing its earlier answer. */
 	function regenerate(laneId: string, question: ChatMessage) {
 		return stream(laneId, question, 'regenerate-message')
+	}
+
+	/** Asks each lane to answer a user message again, as `send` does. */
+	function regenerateAll(question: ChatMessage, laneIds: string[]) {
+		return ask(laneIds, question, 'regenerate-message')
 	}
 
 	/** Stops one lane's answer to a question, or every answer being written. */
@@ -127,5 +150,5 @@ export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, opt
 		pending.value = rest
 	}
 
-	return { pending, busy, keyOf, answerOf, send, regenerate, stop, dismiss }
+	return { pending, busy, keyOf, answerOf, send, regenerate, regenerateAll, stop, dismiss }
 }

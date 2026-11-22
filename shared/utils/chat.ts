@@ -91,10 +91,14 @@ export const profileFieldsSchema = z.object({
 
 export type ProfileFields = z.infer<typeof profileFieldsSchema>
 
-/** Stored on assistant messages and sent to the client as `UIMessage.metadata`. */
+/**
+ * Stored on messages and sent to the client as `UIMessage.metadata`: on answers and summaries, who wrote them and
+ * at what cost; on a group chat's user message, who answered it.
+ */
 export interface MessageMetadata {
-	platform: 'openrouter' | 'deepseek'
-	model: string
+	/** Answers and summaries only. */
+	platform?: 'openrouter' | 'deepseek'
+	model?: string
 	/** The upstream provider that served the turn, as the platform names it. */
 	provider?: string
 	inputTokens?: number
@@ -113,10 +117,12 @@ export interface MessageMetadata {
 	durationMs?: number
 	/** 1 for the first answer, then one more per regenerate (capped by `maxRegenerations`). */
 	attempt?: number
-	/** A `/compact` summary (role `system`) of a lane's thread up to it. */
+	/** A `/compact` summary (role `system`): of a lane's thread up to it, or in a group chat of the shared thread. */
 	kind?: 'summary'
 	/** Library files and notes auto-fetched for this answer, by path. */
 	fetched?: { entryId: string, name: string }[]
+	/** A group chat's user message: the lanes that answered it, in speaking order. */
+	speakers?: string[]
 }
 
 /**

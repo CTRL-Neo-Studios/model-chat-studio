@@ -6,7 +6,13 @@ import type { ChatLanes, Lane } from '~/composables/useChatLanes'
 
 const props = defineProps<{
 	chatLanes: ChatLanes
+	/** Offer the choice between separate answers and a group chat (the home page). */
+	chooseMode?: boolean
+	/** In a group chat: asks a lane to answer the last message, after whoever answered it. */
+	answerLast?: (lane: Lane) => void
 }>()
+/** `group`: the models share one thread and answer in turn. */
+const mode = defineModel<'separate' | 'group'>('mode', { default: 'separate' })
 
 const { lanes, enabledLanes, settings, laneName, laneColor, laneModel, saved, adding } = props.chatLanes
 const { models, maxChatModels } = useModels()
@@ -63,6 +69,7 @@ const items = computed<DropdownMenuItem[][]>(() => [
 		swatch: swatch(laneColor(lane)),
 		class: lane.enabled ? undefined : 'opacity-60',
 		children: [[
+			...(props.answerLast && lane.enabled ? [{ label: 'Answer the last message', icon: 'i-lucide-message-square-reply', onSelect: () => props.answerLast?.(lane) }] : []),
 			{ label: 'Edit...', icon: 'i-lucide-sliders-horizontal', onSelect: () => edit(lane) },
 			{
 				label: 'Answers',
@@ -113,13 +120,22 @@ const items = computed<DropdownMenuItem[][]>(() => [
 			[{ label: 'Choose a model...', icon: 'i-lucide-search', onSelect: addFromModel }],
 		].filter(group => group.length),
 	}],
-	[
-		{ label: 'Side by side', icon: 'i-lucide-columns-2', type: 'checkbox' as const, checked: settings.value.answerLayout !== 'stack', onSelect: () => props.chatLanes.setSettings({ answerLayout: 'columns' }) },
-		{ label: 'Stacked', icon: 'i-lucide-rows-2', type: 'checkbox' as const, checked: settings.value.answerLayout === 'stack', onSelect: () => props.chatLanes.setSettings({ answerLayout: 'stack' }) },
-	],
-])
+	// The home page offers group chat once two models answer; a group chat is always stacked, in speaking order.
+	props.chooseMode && enabledLanes.value.length >= 2
+		? [
+				{ label: 'Separate answers', icon: 'i-lucide-split', type: 'checkbox' as const, checked: mode.value !== 'group', onSelect: () => mode.value = 'separate' },
+				{ label: 'Group chat', icon: 'i-lucide-users', type: 'checkbox' as const, checked: mode.value === 'group', onSelect: () => mode.value = 'group' },
+			]
+		: [],
+	mode.value === 'group'
+		? []
+		: [
+				{ label: 'Side by side', icon: 'i-lucide-columns-2', type: 'checkbox' as const, checked: settings.value.answerLayout !== 'stack', onSelect: () => props.chatLanes.setSettings({ answerLayout: 'columns' }) },
+				{ label: 'Stacked', icon: 'i-lucide-rows-2', type: 'checkbox' as const, checked: settings.value.answerLayout === 'stack', onSelect: () => props.chatLanes.setSettings({ answerLayout: 'stack' }) },
+			],
+].filter(group => group.length))
 
-const label = computed(() => enabledLanes.value.length === 1 ? laneName(enabledLanes.value[0]!) : `${enabledLanes.value.length} models`)
+const label = computed(() => enabledLanes.value.length === 1 ? laneName(enabledLanes.value[0]!) : `${enabledLanes.value.length} models${mode.value === 'group' ? ' in a group' : ''}`)
 </script>
 
 <template>

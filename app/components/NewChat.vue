@@ -95,6 +95,9 @@ const userCharacterId = computed({
 const { items: mentions, partsFor } = useLibraryMentions(() => libraryIds.value.flatMap(id => (libraryList.value ?? []).find(library => library.id === id) ?? []))
 const references = ref<string[]>([])
 
+// Separate answers, or a group chat where the models share one thread and answer in turn; fixed once the chat starts.
+const mode = ref<'separate' | 'group'>('separate')
+
 async function createChat(prompt: string) {
 	// Typing can start at once; sending waits until the models and any folder defaults are in.
 	if ((!prompt.trim() && !fileParts.value.length) || uploading.value || loading.value || !ready.value) return
@@ -120,6 +123,8 @@ async function createChat(prompt: string) {
 				// Left out until changed here, so the server applies the member's default.
 				userCharacterId: userCharacterChoice.value,
 				folderId: folder.value?.id,
+				// A group needs two answering models; with fewer the chat starts as separate answers.
+				mode: mode.value === 'group' && enabledLanes.value.length >= 2 ? 'group' : undefined,
 			},
 		})
 	}
@@ -157,7 +162,7 @@ const quickChats = [
 		<template #header>
 			<Navbar>
 				<template #title>
-					<ChatModelsMenu v-if="!unavailable && lanesReady" :chat-lanes="chatLanes" />
+					<ChatModelsMenu v-if="!unavailable && lanesReady" v-model:mode="mode" :chat-lanes="chatLanes" choose-mode />
 					<USkeleton v-else-if="!unavailable" class="h-8 w-40" aria-label="Loading the models" />
 				</template>
 			</Navbar>

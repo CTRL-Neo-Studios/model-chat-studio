@@ -193,9 +193,10 @@ export async function answerAttempt(db: Db, chatModelId: string, parentId: strin
 
 /**
  * Saves a lane's answer to a user message, replacing the lane's earlier answer to it, if any. With
- * `keepPrevious`, an earlier answer stays and the new one is dropped. Returns whether it was saved.
+ * `keepPrevious`, an earlier answer stays and the new one is dropped. In a group chat (`speaker`), the lane joins
+ * the end of the user message's `speakers` unless it is there already. Returns whether it was saved.
  */
-export async function saveAnswer(db: Db, answer: { id: string, chatId: string, parentId: string, chatModelId: string, parts: UIMessage['parts'], metadata: MessageMetadata }, keepPrevious = false) {
+export async function saveAnswer(db: Db, answer: { id: string, chatId: string, parentId: string, chatModelId: string, parts: UIMessage['parts'], metadata: MessageMetadata }, keepPrevious = false, speaker = false) {
 	return await db.transaction(async (tx) => {
 		const previous = and(
 			eq(tables.message.role, 'assistant'),
@@ -205,6 +206,12 @@ export async function saveAnswer(db: Db, answer: { id: string, chatId: string, p
 		if (keepPrevious && (await tx.select({ id: tables.message.id }).from(tables.message).where(previous).limit(1)).length) return false
 		await tx.delete(tables.message).where(previous)
 		await tx.insert(tables.message).values({ ...answer, role: 'assistant' })
+		if (speaker) {
+			const speakers = sql`coalesce(${tables.message.metadata}->'speakers', '[]'::jsonb)`
+			await tx.update(tables.message)
+				.set({ metadata: sql`jsonb_set(coalesce(${tables.message.metadata}, '{}'::jsonb), '{speakers}', ${speakers} || jsonb_build_array(${answer.chatModelId}::text))` })
+				.where(and(eq(tables.message.id, answer.parentId), sql`not ${speakers} @> jsonb_build_array(${answer.chatModelId}::text)`))
+		}
 		return true
 	})
 }
@@ -240,6 +247,11 @@ export async function editMessage(db: Db, chatId: string, messageId: string, edi
 			if (message.parts.some(part => part.type === 'file')) throw createError({ status: 400, statusText: 'A message with attachments cannot be edited' })
 			// Its "@" references stay; the new text may name them or not.
 			parts = [{ type: 'text', text: edit.text }, ...message.parts.filter(part => part.type === 'data-reference')]
+			// Its answers go with "Save and resend", and so does the round's order.
+			if (edit.dropAfter && metadata?.speakers) {
+				const { speakers: _, ...rest } = metadata
+				metadata = Object.keys(rest).length ? rest : null
+			}
 		}
 		else if (message.role === 'assistant' && !edit.dropAfter) {
 			const first = message.parts.findIndex(part => part.type === 'text')

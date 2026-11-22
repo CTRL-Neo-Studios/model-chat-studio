@@ -22,6 +22,7 @@ import { spaceResolver } from '#shared/utils/librarySpace'
 import { findStructureProfile } from '#server/utils/chat/structureProfiles'
 import { charactersById, laneLibraries } from '#server/utils/chat/characters'
 import { fillPlaceholders, laneIdentity } from '#shared/utils/character'
+import { groupInstructions, groupThread } from '#server/utils/chat/group'
 import type { FinishedStep, Pricing } from '#server/utils/inference/types'
 
 const TITLE_INSTRUCTIONS = `Write a title for a chat that starts with the user's message below.
@@ -32,7 +33,8 @@ const REFUSAL = 'This answer was withheld by the content safety check.'
 
 /**
  * Streams one lane's answer. The client sends only the new message (or the regenerate target) and the lane,
- * never the history; the lane sees its own thread.
+ * never the history. A lane sees its own thread; in a group chat, the shared thread, and its answer joins the round's
+ * `speakers`. The client asks a group's speakers one after another, so each reads the answers before it.
  */
 export default defineEventHandler(async (event) => {
 	// Reads run in a few parallel groups, each one database round trip, before the model is called.
@@ -42,6 +44,7 @@ export default defineEventHandler(async (event) => {
 	// Each answer costs money; a stuck client or script should not be able to run up the bill.
 	assertRateLimit(`turn:${user.id}`, 20, 60_000, 'messages')
 	const chatId = chat.id
+	const group = chat.mode === 'group'
 
 	const startedAt = Date.now()
 	const [inference, lanes, budget] = await Promise.all([useInference(db, user.id), listChatModels(db, chatId), monthlyBudgetStatus(db, user)])
@@ -78,16 +81,17 @@ export default defineEventHandler(async (event) => {
 	const parentId = await applyTurnTrigger(db, chatId, request)
 	const [previousAttempt, thread] = await Promise.all([
 		answerAttempt(db, lane.id, parentId),
-		listChatMessages(db, chatId, lane.id) as Promise<UIMessage<MessageMetadata>[]>,
+		// A group speaker reads every lane's answers; a separate lane only its own.
+		listChatMessages(db, chatId, group ? undefined : lane.id) as Promise<UIMessage<MessageMetadata>[]>,
 	])
 	// Each regenerate is one more attempt at the lane's answer to this message; past the admin's cap it is refused.
 	const attempt = previousAttempt + 1
 	if (attempt > maxRegenerations + 1) {
 		throw createError({ status: 429, statusText: `This answer was regenerated ${maxRegenerations === 1 ? 'once' : `${maxRegenerations} times`}, the most allowed.` })
 	}
-	// The lane's thread up to the message being answered: a regenerated answer does not see what came after.
-	const history = thread.slice(0, thread.findIndex(message => message.id === parentId) + 1)
-	const firstText = history.find(message => message.role === 'user')?.parts.map(part => part.type === 'text' ? part.text : '').join(' ') ?? ''
+	// The thread up to the message being answered: a regenerated answer does not see what came after.
+	const upTo = thread.slice(0, thread.findIndex(message => message.id === parentId) + 1)
+	const firstText = upTo.find(message => message.role === 'user')?.parts.map(part => part.type === 'text' ? part.text : '').join(' ') ?? ''
 
 	// The first enabled lane names the chat, so a chat answered by several lanes is named once.
 	// A temporary chat gets no title; "Keep this chat" names it from its first message.
@@ -123,9 +127,18 @@ export default defineEventHandler(async (event) => {
 		userId: user.id, firstTurn, safetyCheck,
 	})
 	// Who the lane is (its Character, else its own name and prompt) and who the user is, with `{{char}}` and `{{user}}` filled.
-	const characters = await charactersById(db, [lane.characterId, chat.userCharacterId])
+	// A group speaker is also told who else answers in the chat.
+	const answering = lanes.filter(entry => entry.enabled).slice(0, maxChatModels)
+	const characters = await charactersById(db, [...(group ? answering : [lane]).map(entry => entry.characterId), chat.userCharacterId])
+	const userName = user.name ?? user.username
+	const userCharacter = chat.userCharacterId ? characters[chat.userCharacterId] : undefined
+	const identityOf = (entry: typeof lane, modelName: string) => laneIdentity({ lane: entry, character: entry.characterId ? characters[entry.characterId] : undefined, userCharacter, modelName, userName })
+	const identity = identityOf(lane, model.name)
 	const character = lane.characterId ? characters[lane.characterId] : undefined
-	const identity = laneIdentity({ lane, character, userCharacter: chat.userCharacterId ? characters[chat.userCharacterId] : undefined, modelName: model.name, userName: user.name ?? user.username })
+	const modelNameOf = (entry: typeof lane) => ((entry.platform === platform.id ? catalog.find(item => item.id === entry.modelId) : undefined) ?? catalog.find(item => item.id === config.defaultModel))?.name ?? 'Model'
+	const others = group ? answering.filter(entry => entry.id !== lane.id).map(entry => identityOf(entry, modelNameOf(entry)).names.char) : []
+	// A group speaker reads the shared thread, the others' answers under their names; otherwise the lane's own thread.
+	const history = group ? groupThread(thread, { laneId: lane.id, questionId: parentId, userName: identity.names.user }) : upTo
 	// The chat's libraries, then its Character's (those the chat's owner may read): this lane only.
 	const libraries = await laneLibraries(db, user, (await chatLibraries(db, chatId)).map(({ id, name }) => ({ id, name })), character?.libraryIds ?? [])
 	// The file tools: with libraries, unless turned off, for models that take tools, where the platform allows app tools.
@@ -140,6 +153,7 @@ export default defineEventHandler(async (event) => {
 	})
 	const built = buildContext({
 		thread: history, systemPrompt: identity.systemPrompt, promptLabel: identity.promptLabel, aboutUser: identity.aboutUser,
+		group: group ? groupInstructions({ speaker: identity.names.char, others, user: identity.names.user }) : undefined,
 		webSearch, memoryLength: chat.settings.memoryLength ?? null, fileTools: withFileTools, profile: profileBlocks, resolvePath,
 	})
 	// "@" references (and the profile's files) become the libraries' files and notes, read now, where they stand.
@@ -225,7 +239,7 @@ export default defineEventHandler(async (event) => {
 					// A stopped answer replaces the lane's earlier one unless the member chose to keep the earlier one.
 					const keepPrevious = isAborted && userPreferencesSchema.parse(user.preferences).stoppedRegenerate === 'keep-previous'
 					const saved = parts.length > 0
-						&& await saveAnswer(db, { id: responseMessage.id, chatId, parentId, chatModelId: lane.id, parts, metadata: stored }, keepPrevious)
+						&& await saveAnswer(db, { id: responseMessage.id, chatId, parentId, chatModelId: lane.id, parts, metadata: stored }, keepPrevious, group)
 					// What the answer was given, for the conversation overview.
 					if (saved) await db.insert(schema.turnTrace).values({ messageId: responseMessage.id, blocks: context.blocks })
 					if (firstTurn) {

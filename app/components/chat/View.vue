@@ -27,6 +27,8 @@ const sharedWith = ref(data.value?.sharedWith ?? [])
 // Renaming writes the cache (`useChatActions`), so the title is read from it.
 const title = computed(() => data.value?.title ?? null)
 const temporary = computed(() => data.value?.temporary ?? false)
+// A group chat: one shared thread, the models answer one after another. Fixed when the chat starts.
+const group = computed(() => data.value?.mode === 'group')
 // The chat's libraries, in attach order; "@" in the prompt names their files, notes and folders.
 const libraries = computed(() => data.value?.libraries ?? [])
 // "Add to library" copies into a library, which only its owner and editors change.
@@ -106,11 +108,13 @@ const messages = shallowRef<ChatMessage[]>((data.value?.messages ?? []) as ChatM
 const answers = useLaneAnswers(chatId, messages, {
 	onAnswered: refreshTitle,
 	keepPreviousOnStop: () => (me.value?.preferences.stoppedRegenerate ?? 'keep-previous') === 'keep-previous',
+	inTurn: () => group.value,
 })
 
-// The memory slider's range: the longest lane thread after its latest summary, in messages that count.
+// The memory slider's range: the longest lane thread after its latest summary, in messages that count. A group
+// chat has one thread, every answer in it.
 const memoryMax = computed(() => Math.max(1, ...lanes.value.map((lane) => {
-	const thread = messages.value.filter(message => message.role === 'user' || (message.chatModelId === lane.id
+	const thread = messages.value.filter(message => message.role === 'user' || ((group.value || message.chatModelId === lane.id)
 		&& (message.role === 'system' || message.parts.some(part => part.type === 'text' || part.type === 'file'))))
 	return thread.length - (thread.findLastIndex(message => message.role === 'system') + 1)
 })))
@@ -181,16 +185,29 @@ async function runCommand(kind: PromptCommand['kind']) {
 	})
 }
 
-/** One answer slot per lane that answered (or is answering) the question, then answers of removed lanes. */
+/**
+ * One answer slot per lane that answered (or is answering) the question, then answers of removed lanes. In a group
+ * chat, in speaking order: the round's `speakers`, then answers given since, as they arrived.
+ */
 function slotsFor(questionId: string) {
+	const speakers = group.value ? question(questionId).metadata?.speakers ?? [] : []
+	const place = (laneId: string | null | undefined) => {
+		const index = speakers.indexOf(laneId ?? '')
+		return index === -1 ? speakers.length : index
+	}
 	const given = messages.value.filter(message => message.role === 'assistant' && message.parentId === questionId)
-	const slots = lanes.value.flatMap((lane) => {
+	const ordered = group.value
+		? given.map((message, order) => ({ message, order })).sort((a, b) => place(a.message.chatModelId) - place(b.message.chatModelId) || a.order - b.order).map(({ message }) => message)
+		: given
+	const byLane = (lane: (typeof lanes.value)[number]) => {
 		const message = given.find(answer => answer.chatModelId === lane.id)
 		const pending = answers.pending.value[answers.keyOf(questionId, lane.id)]
-		if (!message && !pending) return []
-		return [{ key: lane.id, lane, message, pending, label: message?.metadata?.lane ?? { name: laneName(lane), color: laneColor(lane) } }]
-	})
-	const removed = given.filter(answer => !lanes.value.some(lane => lane.id === answer.chatModelId)).map(message => ({
+		return message || pending ? [{ key: lane.id, lane, message, pending, label: message?.metadata?.lane ?? { name: laneName(lane), color: laneColor(lane) } }] : []
+	}
+	const slots = group.value
+		? [...ordered.flatMap(message => lanes.value.filter(lane => lane.id === message.chatModelId)), ...lanes.value.filter(lane => !given.some(answer => answer.chatModelId === lane.id))].flatMap(byLane)
+		: lanes.value.flatMap(byLane)
+	const removed = ordered.filter(answer => !lanes.value.some(lane => lane.id === answer.chatModelId)).map(message => ({
 		key: message.id, lane: undefined, message, pending: undefined, label: message.metadata?.lane ?? { name: message.metadata?.model ?? 'Removed model', color: null },
 	}))
 	return [...slots, ...removed]
@@ -198,6 +215,12 @@ function slotsFor(questionId: string) {
 // Cards once more than one model answers; a single model's answer reads as before.
 const cards = (questionId: string) => lanes.value.length > 1 || slotsFor(questionId).length > 1
 const question = (id: string) => messages.value.find(message => message.id === id)!
+
+// "Answer" in a group chat: a lane answers the last message after the others, reading their answers.
+const lastQuestion = computed(() => messages.value.findLast(message => message.role === 'user'))
+function answerLast(lane: { id: string }) {
+	if (lastQuestion.value) answers.regenerate(lane.id, lastQuestion.value)
+}
 
 function handleSubmit(e: Event) {
 	e.preventDefault()
@@ -238,7 +261,7 @@ async function saveEdit(message: UIMessage, text: string, resend: boolean) {
 		toast.add({ description: serverMessage(error) ?? 'Failed to save the message', icon: 'i-lucide-alert-circle', color: 'error' })
 		return
 	}
-	if (resend) for (const lane of enabledLanes.value) answers.regenerate(lane.id, question(message.id))
+	if (resend) answers.regenerateAll(question(message.id), enabledLanes.value.map(lane => lane.id))
 }
 
 const deleteModal = useOverlay().create(LazyModalConfirm)
@@ -289,7 +312,7 @@ async function vote(message: UIMessage, isUpvoted: boolean) {
 onMounted(() => {
 	const [first] = messages.value
 	if (isOwner.value && messages.value.length === 1 && first && props.firstAnswer) {
-		for (const lane of enabledLanes.value) answers.regenerate(lane.id, first)
+		answers.regenerateAll(first, enabledLanes.value.map(lane => lane.id))
 	}
 })
 </script>
@@ -308,7 +331,7 @@ onMounted(() => {
 						:title="title"
 						:is-owner="isOwner"
 					/>
-					<ChatModelsMenu v-if="isOwner" :chat-lanes="chatLanes" />
+					<ChatModelsMenu v-if="isOwner" :chat-lanes="chatLanes" :mode="data?.mode" :answer-last="group && lastQuestion && !answers.busy.value ? answerLast : undefined" />
 				</template>
 
 				<!-- The chat's libraries: links for people who may open them; labels for someone reading by link or share. -->
@@ -366,7 +389,7 @@ onMounted(() => {
 						<template #content="{ message }">
 							<div
 								v-if="message.id.startsWith('answers:')"
-								:class="settings.answerLayout === 'stack' || !cards(message.id.slice(8)) ? 'flex flex-col gap-3' : 'flex gap-3 overflow-x-auto pb-2'"
+								:class="settings.answerLayout === 'stack' || group || !cards(message.id.slice(8)) ? 'flex flex-col gap-3' : 'flex gap-3 overflow-x-auto pb-2'"
 							>
 								<ChatAnswer
 									v-for="slot in slotsFor(message.id.slice(8))"
@@ -379,7 +402,7 @@ onMounted(() => {
 									:editing="!!slot.message && editingMessageId === slot.message.id"
 									:vote="slot.message ? getVote(slot.message.id) : null"
 									:regenerable="!!slot.lane"
-									:class="settings.answerLayout !== 'stack' && cards(message.id.slice(8)) ? 'min-w-80 flex-1 basis-0' : undefined"
+									:class="settings.answerLayout !== 'stack' && !group && cards(message.id.slice(8)) ? 'min-w-80 flex-1 basis-0' : undefined"
 									@regenerate="slot.lane && answers.regenerate(slot.lane.id, question(message.id.slice(8)))"
 									@stop="slot.lane && answers.stop(message.id.slice(8), slot.lane.id)"
 									@dismiss="slot.lane && answers.dismiss(message.id.slice(8), slot.lane.id)"
@@ -391,14 +414,14 @@ onMounted(() => {
 								/>
 							</div>
 							<div v-else-if="message.id.startsWith('summaries:')" class="flex flex-col gap-2 py-2">
-								<USeparator icon="i-lucide-fold-vertical" label="Compacted: each model now gets its summary and what follows" />
+								<USeparator icon="i-lucide-fold-vertical" :label="group ? 'Compacted: every model now gets the summary and what follows' : 'Compacted: each model now gets its summary and what follows'" />
 								<UCollapsible v-for="summary in summariesFrom(message.id.slice(10))" :key="summary.id" class="rounded-md border border-default">
 									<UButton
 										color="neutral"
 										variant="ghost"
 										block
 										trailing-icon="i-lucide-chevron-down"
-										:label="`Summary for ${summary.metadata?.lane?.name ?? summary.metadata?.model ?? 'a model'}`"
+										:label="group ? 'Summary of the chat' : `Summary for ${summary.metadata?.lane?.name ?? summary.metadata?.model ?? 'a model'}`"
 										:ui="{ trailingIcon: 'ms-auto group-data-[state=open]:rotate-180 transition-transform' }"
 									/>
 									<template #content>

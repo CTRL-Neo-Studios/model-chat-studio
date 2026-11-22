@@ -24,6 +24,8 @@ interface ContextInput {
 	promptLabel?: string
 	/** Who the user is (their Character), sent after the instructions. */
 	aboutUser?: string
+	/** A group chat's paragraph (who the speaker is, who else is here), at the very end of the instructions. */
+	group?: string
 	webSearch: boolean
 	/** Messages to send after the latest summary; `null` sends them all. */
 	memoryLength: number | null
@@ -55,7 +57,7 @@ const PROFILE_FILES_TEXT = 'Files from the library, as the structure profile inc
  *   as references, which `expandReferences` reads; a path the library does not have is left out and named in the
  *   trace. Its `autoFetch` block marks where auto-fetched files go: `autoFetchAt`, and a trace block that says so.
  */
-export function buildContext({ thread, systemPrompt, promptLabel = 'System prompt', aboutUser, webSearch, memoryLength, fileTools = false, profile, resolvePath }: ContextInput) {
+export function buildContext({ thread, systemPrompt, promptLabel = 'System prompt', aboutUser, group, webSearch, memoryLength, fileTools = false, profile, resolvePath }: ContextInput) {
 	const summaryIndex = thread.findLastIndex(message => message.role === 'system')
 	const summary = summaryIndex >= 0 ? thread[summaryIndex] : undefined
 	let kept = thread.slice(summaryIndex + 1)
@@ -92,8 +94,8 @@ export function buildContext({ thread, systemPrompt, promptLabel = 'System promp
 	const leading = blocks.findIndex(block => block.kind !== 'message' || block.role !== 'system')
 	const profileSystem = blocks.slice(0, leading === -1 ? blocks.length : leading).flatMap(block => block.kind === 'message' && block.text.trim() ? [block.text] : [])
 	const userText = aboutUser?.trim() ? aboutUser.trim() : null
-	const instructions = [systemPrompt ?? (profileSystem.length ? null : DEFAULT_INSTRUCTIONS), ...profileSystem, userText, webSearch && WEB_SEARCH_INSTRUCTIONS, fileTools && FILE_TOOLS_INSTRUCTIONS].filter(Boolean).join('\n\n')
-	const instructionsLabel = [systemPrompt ? promptLabel : profileSystem.length ? '' : 'Default instructions', profileSystem.length ? 'structure profile' : '', userText ? 'your Character' : ''].filter(Boolean).join(' + ')
+	const instructions = [systemPrompt ?? (profileSystem.length ? null : DEFAULT_INSTRUCTIONS), ...profileSystem, userText, webSearch && WEB_SEARCH_INSTRUCTIONS, fileTools && FILE_TOOLS_INSTRUCTIONS, group].filter(Boolean).join('\n\n')
+	const instructionsLabel = [systemPrompt ? promptLabel : profileSystem.length ? '' : 'Default instructions', profileSystem.length ? 'structure profile' : '', userText ? 'your Character' : '', group ? 'group chat' : ''].filter(Boolean).join(' + ')
 
 	const sent: UIMessage[] = []
 	const trace: ContextBlock[] = [{ kind: 'instructions', role: 'system', label: instructionsLabel.charAt(0).toUpperCase() + instructionsLabel.slice(1), size: instructions.length, text: instructions }]

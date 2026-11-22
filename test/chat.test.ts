@@ -295,3 +295,16 @@ test('only the owner may change a chat; shared and link access are read-only', a
 	await expect(manage(null, linkChat)).rejects.toMatchObject({ status: 403 })
 	await expect(manage(person('owner', 'user', true), linkChat)).rejects.toMatchObject({ status: 403 })
 })
+
+test('a group answer joins the round\'s speakers once, in the order answered; "Save and resend" clears them', async () => {
+	await applyTurnTrigger(db, chatId, say('u1'))
+	const save = (id: string, lane: string) => saveAnswer(db, { id, chatId, parentId: 'u1', chatModelId: lane, parts: [{ type: 'text', text: id }], metadata: {} }, false, true)
+	const speakers = async () => (await db.select().from(schema.message).where(eq(schema.message.id, 'u1')))[0]?.metadata?.speakers
+	await save('b1', laneB)
+	await save('a1', laneA)
+	// A regenerate keeps the lane's place.
+	await save('b2', laneB)
+	expect(await speakers()).toEqual([laneB, laneA])
+	await editMessage(db, chatId, 'u1', { text: 'again', dropAfter: true })
+	expect(await speakers()).toBeUndefined()
+})
