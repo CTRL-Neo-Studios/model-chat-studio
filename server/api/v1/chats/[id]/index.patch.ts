@@ -6,6 +6,9 @@ import { chatSettingsSchema } from '#shared/utils/chat'
 import type { Db } from '#server/utils/core/settings'
 import { requireChat } from '#server/utils/chat/access'
 import { fallbackTitle, listChatShares } from '#server/utils/chat/turns'
+import { profileAbilities } from '#shared/abilities/profileAbilities'
+import { authorize } from '#server/utils/core/authorize'
+import { findContextProfile } from '#server/utils/project/contextProfiles'
 
 const bodySchema = z.object({
 	title: z.string().trim().min(1).max(200),
@@ -17,9 +20,11 @@ const bodySchema = z.object({
 	folderId: z.uuid().nullable(),
 	/** "Keep this chat": a temporary chat becomes a normal one, named from its first message. */
 	temporary: z.literal(false),
+	/** Project chats: a context profile of the owner's (or an instance one) instead of the project's; `null`: the project's. */
+	contextProfileId: z.uuid().nullable(),
 }).partial().strict()
 
-/** Owner only: title, link access, people, folder, keeping a temporary chat, and the settings shared by every lane. */
+/** Owner only: title, link access, people, folder, keeping a temporary chat, context profile, and the settings shared by every lane. */
 export default defineEventHandler(async (event) => {
 	const chat = await requireChat(event, 'manageChat')
 	const { sharedWith, ...fields } = await readValidatedBody(event, bodySchema)
@@ -36,6 +41,8 @@ export default defineEventHandler(async (event) => {
 		))
 		if (!folder) throw createError({ status: 404, statusText: 'Folder not found' })
 	}
+	if (fields.contextProfileId !== undefined && !chat.projectId) throw createError({ status: 400, statusText: 'Context profiles are used in project chats' })
+	if (fields.contextProfileId) await authorize(event, profileAbilities().readProfile, await findContextProfile(db, fields.contextProfileId))
 	if (chat.temporary && fields.temporary === false && !chat.title && !fields.title) {
 		const [first] = await db.select({ parts: schema.message.parts }).from(schema.message)
 			.where(and(eq(schema.message.chatId, chat.id), eq(schema.message.role, 'user')))

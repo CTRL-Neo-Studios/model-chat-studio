@@ -122,9 +122,10 @@ export interface MessageMetadata {
 export interface ContextBlock {
 	/**
 	 * `reference`: a project file or note, named with "@" in the message before it or fetched by `autoFetch`, the
-	 * added message of auto-fetched files.
+	 * added message of auto-fetched files (or where a context profile puts them). `profile`: a context profile's
+	 * message or files block.
 	 */
-	kind: 'instructions' | 'omitted' | 'summary' | 'message' | 'reference' | 'autoFetch'
+	kind: 'instructions' | 'omitted' | 'summary' | 'message' | 'reference' | 'autoFetch' | 'profile'
 	role: 'system' | 'user' | 'assistant'
 	label: string
 	/** Characters of text; attachments are not counted. */

@@ -32,6 +32,13 @@ const projectId = computed(() => data.value?.projectId ?? null)
 const { data: project } = useQuery(() => ({ ...projectQuery(projectId.value ?? ''), enabled: !!projectId.value && isOwner.value }))
 const { items: mentions, partsFor } = useProjectMentions(() => isOwner.value ? projectId.value : null)
 const references = ref<string[]>([])
+/** The chat's own context profile, or `null` for the project's; shown at once, undone if the server refuses. */
+async function setContextProfile(contextProfileId: string | null) {
+	const chat = queryCache.getQueryData(chatQuery(chatId).key)
+	if (!chat) return
+	queryCache.setQueryData(chatQuery(chatId).key, { ...chat, contextProfileId })
+	if (!await act(`/api/v1/chats/${chatId}`, { method: 'PATCH', body: { contextProfileId } })) queryCache.setQueryData(chatQuery(chatId).key, chat)
+}
 
 const overviewOpen = ref(false)
 
@@ -421,7 +428,7 @@ onMounted(() => {
 								@command="runCommand"
 							>
 								<template v-if="projectId" #tools>
-									<ChatProjectSettings :project-id="projectId" :settings="settings" @change="chatLanes.setSettings($event)" />
+									<ChatProjectSettings :project-id="projectId" :settings="settings" :context-profile-id="data?.contextProfileId ?? null" @change="chatLanes.setSettings($event)" @update:context-profile-id="setContextProfile" />
 								</template>
 							</ChatPrompt>
 						</template>

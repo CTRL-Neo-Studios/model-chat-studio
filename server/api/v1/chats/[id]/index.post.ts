@@ -17,6 +17,8 @@ import { buildContext } from '#server/utils/chat/context'
 import { expandReferences } from '#server/utils/project/references'
 import { autoFetch } from '#server/utils/project/autoFetch'
 import { fileTools } from '#server/utils/project/fileTools'
+import { chatContextProfile } from '#server/utils/project/contextProfiles'
+import { pathResolver } from '#server/utils/project/projects'
 import type { FinishedStep, Pricing } from '#server/utils/inference/types'
 
 const TITLE_INSTRUCTIONS = `Write a title for a chat that starts with the user's message below.
@@ -119,21 +121,33 @@ export default defineEventHandler(async (event) => {
 	})
 	// The file tools: in project chats, unless turned off, for models that take tools, where the platform allows app tools.
 	const withFileTools = !!chat.projectId && chat.settings.fileTools !== false && model.supportedParameters.includes('tools') && prepared.appTools !== false
-	const built = buildContext({ thread: history, systemPrompt: lane.systemPrompt, webSearch, memoryLength: chat.settings.memoryLength ?? null, fileTools: withFileTools })
-	// "@" references become the project's files and notes, read now, where the message names them.
+	// A project chat's context profile (its own, or the project's) wraps the thread in its blocks.
+	const profile = await chatContextProfile(db, chat)
+	const resolvePath = chat.projectId && profile?.blocks.some(block => block.kind === 'files') ? await pathResolver(db, chat.projectId) : undefined
+	const built = buildContext({
+		thread: history, systemPrompt: lane.systemPrompt, webSearch, memoryLength: chat.settings.memoryLength ?? null,
+		fileTools: withFileTools, profile: profile?.blocks, resolvePath,
+	})
+	// "@" references (and the profile's files) become the project's files and notes, read now, where they stand.
 	const referenced = { ...built, ...await expandReferences(db, chat.projectId, built.messages, built.blocks) }
-	// Auto-fetch adds the project's matching files and notes as one message after the conversation, not stored.
+	// Auto-fetch adds the project's matching files and notes as one message, not stored: where the profile puts it,
+	// else after the conversation. Its `system` scan covers the profile's system blocks too.
 	const fetched = chat.projectId
 		? await autoFetch(db, {
 				projectId: chat.projectId,
 				settings: chat.settings.autoFetch,
 				thread: history,
-				systemPrompt: lane.systemPrompt,
+				systemPrompt: [lane.systemPrompt, ...(profile?.blocks ?? []).flatMap(block => block.kind === 'message' && block.role === 'system' ? [block.text] : [])].filter(Boolean).join('\n\n') || null,
 				exclude: referenced.blocks.flatMap(block => block.entryId ? [block.entryId] : []),
 			})
 		: undefined
+	const placeholder = referenced.blocks.findIndex(block => block.kind === 'autoFetch' && !block.messageId)
 	const context = fetched
-		? { ...referenced, messages: [...referenced.messages, fetched.message], blocks: [...referenced.blocks, ...fetched.blocks] }
+		? {
+				...referenced,
+				messages: referenced.messages.toSpliced(built.autoFetchAt ?? referenced.messages.length, 0, fetched.message),
+				blocks: placeholder === -1 ? [...referenced.blocks, ...fetched.blocks] : referenced.blocks.toSpliced(placeholder, 1, ...fetched.blocks),
+			}
 		: referenced
 	const tools: ToolSet = prepared.appTools === false
 		? prepared.tools

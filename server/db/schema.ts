@@ -18,6 +18,7 @@ import {relations, sql} from "drizzle-orm";
 import type {UIMessage} from "ai";
 import {type ChatSettings, type ContextBlock, LANE_COLORS, type MessageMetadata, type ModelParams} from "../../shared/utils/chat";
 import type {UserPreferences} from "../../shared/utils/preferences";
+import type {ProfileBlock} from "../../shared/utils/contextProfile";
 
 const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' })
 
@@ -132,6 +133,8 @@ export const chat = pgTable("chat", {
 	temporary: boolean().notNull().default(false),
 	/** The project the chat belongs to; `null` is a personal chat. Deleting the project keeps the chat as a personal one. */
 	projectId: uuid().references((): AnyPgColumn => project.id, { onDelete: "set null" }),
+	/** A project chat's own context profile; `null` uses the project's. */
+	contextProfileId: uuid().references((): AnyPgColumn => contextProfile.id, { onDelete: "set null" }),
 
 	...createdUpdatedAtColumns
 }, (t) => [
@@ -240,6 +243,20 @@ export const project = pgTable("project", {
 	ownerId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
 	name: text().notNull(),
 	description: text(),
+	/** The context profile the project's chats use unless a chat picks its own. */
+	contextProfileId: uuid().references((): AnyPgColumn => contextProfile.id, { onDelete: "set null" }),
+
+	...createdUpdatedAtColumns
+}, (t) => [
+	index().on(t.ownerId),
+]);
+
+/** Blocks of conversation data sent around a project chat's thread. `ownerId` `null` is an instance profile, published by an admin. */
+export const contextProfile = pgTable("contextProfile", {
+	id: uuid().primaryKey().defaultRandom(),
+	ownerId: uuid().references(() => user.id, { onDelete: "cascade" }),
+	name: text().notNull(),
+	blocks: jsonb().$type<ProfileBlock[]>().notNull(),
 
 	...createdUpdatedAtColumns
 }, (t) => [
@@ -311,7 +328,7 @@ export const usageEvent = pgTable("usageEvent", {
 	index().on(t.userId, t.createdAt),
 ]);
 
-export const pinKinds = ["chat", "chatFolder", "modelProfile", "project"] as const
+export const pinKinds = ["chat", "chatFolder", "modelProfile", "project", "contextProfile"] as const
 
 /**
  * What a member pinned to the top of a list. Per member, since instance profiles (and later shared projects)

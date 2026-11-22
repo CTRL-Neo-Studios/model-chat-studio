@@ -65,6 +65,8 @@ const projectId = !props.temporary && typeof projectParam === 'string' ? project
 const { data: project } = useQuery(() => ({ ...projectQuery(projectId ?? ''), enabled: !!projectId }))
 const { items: mentions, partsFor } = useProjectMentions(projectId)
 const references = ref<string[]>([])
+/** A context profile of its own for the new chat; `null` uses the project's. */
+const contextProfileId = ref<string | null>(null)
 
 async function createChat(prompt: string) {
 	if ((!prompt.trim() && !fileParts.value.length) || uploading.value || loading.value) return
@@ -85,6 +87,7 @@ async function createChat(prompt: string) {
 				models: lanes.value.map(({ id: _, position: __, platform: ___, profileId, ...fields }) => ({ ...fields, profileId: profileId ?? undefined })),
 				temporary: props.temporary || undefined,
 				projectId: projectId || undefined,
+				contextProfileId: projectId ? contextProfileId.value ?? undefined : undefined,
 			},
 		})
 	}
@@ -167,7 +170,7 @@ const quickChats = [
 						@command="startTemporary"
 					>
 						<template v-if="projectId" #tools>
-							<ChatProjectSettings :project-id="projectId" :settings="settings" @change="chatLanes.setSettings($event)" />
+							<ChatProjectSettings v-model:context-profile-id="contextProfileId" :project-id="projectId" :settings="settings" @change="chatLanes.setSettings($event)" />
 						</template>
 					</ChatPrompt>
 

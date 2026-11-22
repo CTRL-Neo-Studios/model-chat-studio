@@ -1,6 +1,7 @@
 import type { UIMessage } from 'ai'
 // Relative, not `#shared`, so this module also loads in `bun test`.
 import type { ContextBlock } from '../../../shared/utils/chat'
+import type { ProfileBlock } from '../../../shared/utils/contextProfile'
 import { DEFAULT_INSTRUCTIONS } from '../../../shared/utils/instructions'
 
 // Added only while web search is on. Without it, DeepSeek sometimes answered that it had no web
@@ -24,12 +25,18 @@ interface ContextInput {
 	memoryLength: number | null
 	/** A project chat whose model may use the file tools. */
 	fileTools?: boolean
+	/** A project chat's context profile: blocks sent around the thread. */
+	profile?: ProfileBlock[]
+	/** A context profile's `files` paths, resolved in the chat's project. */
+	resolvePath?: (path: string) => { entryId: string, kind: 'folder' | 'file' | 'note' } | undefined
 }
 
 const textOf = (message: Pick<UIMessage, 'parts'>) => message.parts.map(part => part.type === 'text' ? part.text : '').join('')
 
 /** An answer with nothing but reasoning carries nothing forward, so it does not count toward the memory length. */
 const counts = (message: UIMessage) => message.role !== 'assistant' || message.parts.some(part => part.type === 'text' || part.type === 'file')
+
+const PROFILE_FILES_TEXT = 'Files from the project, as the context profile includes them:'
 
 /**
  * What one lane's answer is given: the instructions, then its thread from the latest summary on, cut to the memory
@@ -38,42 +45,85 @@ const counts = (message: UIMessage) => message.role !== 'assistant' || message.p
  * - A summary (role `system`) is sent as a user message: the AI SDK takes system messages only as instructions.
  * - The cut never starts on an answer: an answer whose question was left out is left out too, so the thread
  *   always opens with a user message. This keeps at most one message fewer than asked.
+ * - With a context profile, its blocks are sent in order around the thread (its `history` block). Its `system`
+ *   messages at the very start join the instructions, after the lane's own prompt (they replace the default
+ *   instructions when the lane has none); later ones go as user messages. Its `files` blocks name project entries
+ *   as references, which `expandReferences` reads; a path the project does not have is left out and named in the
+ *   trace. Its `autoFetch` block marks where auto-fetched files go: `autoFetchAt`, and a trace block that says so.
  */
-export function buildContext({ thread, systemPrompt, webSearch, memoryLength, fileTools = false }: ContextInput) {
+export function buildContext({ thread, systemPrompt, webSearch, memoryLength, fileTools = false, profile, resolvePath }: ContextInput) {
 	const summaryIndex = thread.findLastIndex(message => message.role === 'system')
 	const summary = summaryIndex >= 0 ? thread[summaryIndex] : undefined
-	let messages = thread.slice(summaryIndex + 1)
+	let kept = thread.slice(summaryIndex + 1)
 
 	let start = 0
 	if (memoryLength !== null) {
-		start = messages.length
+		start = kept.length
 		for (let counted = 0; start > 0 && counted < memoryLength;) {
 			start--
-			if (counts(messages[start]!)) counted++
+			if (counts(kept[start]!)) counted++
 		}
-		while (start < messages.length - 1 && messages[start]!.role !== 'user') start++
+		while (start < kept.length - 1 && kept[start]!.role !== 'user') start++
 	}
 	const omitted = start
-	messages = messages.slice(start)
-
-	const instructions = [systemPrompt ?? DEFAULT_INSTRUCTIONS, webSearch && WEB_SEARCH_INSTRUCTIONS, fileTools && FILE_TOOLS_INSTRUCTIONS].filter(Boolean).join('\n\n')
+	kept = kept.slice(start)
 	const summaryText = summary && `Summary of the conversation so far:\n\n${textOf(summary)}`
 
-	const blocks: ContextBlock[] = [
-		{ kind: 'instructions', role: 'system', label: systemPrompt ? 'System prompt' : 'Default instructions', size: instructions.length, text: instructions },
-		...(omitted ? [{ kind: 'omitted' as const, role: 'user' as const, label: `${omitted} earlier ${omitted === 1 ? 'message' : 'messages'} left out by memory`, size: 0, count: omitted }] : []),
-		...(summary && summaryText ? [{ kind: 'summary' as const, role: 'user' as const, label: 'Summary', size: summaryText.length, text: summaryText, messageId: summary.id }] : []),
-		...messages.map((message): ContextBlock => ({
-			kind: 'message',
-			role: message.role === 'assistant' ? 'assistant' : 'user',
-			label: message.role === 'assistant' ? 'Answer' : 'Message',
-			size: textOf(message).length,
-			messageId: message.id,
-		})),
-	]
+	const history: { messages: UIMessage[], blocks: ContextBlock[] } = {
+		messages: summary && summaryText ? [{ id: summary.id, role: 'user', parts: [{ type: 'text', text: summaryText }] }, ...kept] : kept,
+		blocks: [
+			...(omitted ? [{ kind: 'omitted' as const, role: 'user' as const, label: `${omitted} earlier ${omitted === 1 ? 'message' : 'messages'} left out by memory`, size: 0, count: omitted }] : []),
+			...(summary && summaryText ? [{ kind: 'summary' as const, role: 'user' as const, label: 'Summary', size: summaryText.length, text: summaryText, messageId: summary.id }] : []),
+			...kept.map((message): ContextBlock => ({
+				kind: 'message',
+				role: message.role === 'assistant' ? 'assistant' : 'user',
+				label: message.role === 'assistant' ? 'Answer' : 'Message',
+				size: textOf(message).length,
+				messageId: message.id,
+			})),
+		],
+	}
 
-	const sent: UIMessage[] = summary && summaryText
-		? [{ id: summary.id, role: 'user', parts: [{ type: 'text', text: summaryText }] }, ...messages]
-		: messages
-	return { instructions, messages: sent, blocks }
+	const blocks = profile ?? [{ id: 'history', kind: 'history' as const }]
+	const leading = blocks.findIndex(block => block.kind !== 'message' || block.role !== 'system')
+	const profileSystem = blocks.slice(0, leading === -1 ? blocks.length : leading).flatMap(block => block.kind === 'message' && block.text.trim() ? [block.text] : [])
+	const instructions = [systemPrompt ?? (profileSystem.length ? null : DEFAULT_INSTRUCTIONS), ...profileSystem, webSearch && WEB_SEARCH_INSTRUCTIONS, fileTools && FILE_TOOLS_INSTRUCTIONS].filter(Boolean).join('\n\n')
+	const instructionsLabel = [systemPrompt ? 'System prompt' : profileSystem.length ? '' : 'Default instructions', profileSystem.length ? 'context profile' : ''].filter(Boolean).join(' + ')
+
+	const sent: UIMessage[] = []
+	const trace: ContextBlock[] = [{ kind: 'instructions', role: 'system', label: instructionsLabel.charAt(0).toUpperCase() + instructionsLabel.slice(1), size: instructions.length, text: instructions }]
+	let autoFetchAt: number | null = null
+	for (const block of blocks.slice(leading === -1 ? blocks.length : leading)) {
+		if (block.kind === 'history') {
+			sent.push(...history.messages)
+			trace.push(...history.blocks)
+		}
+		else if (block.kind === 'autoFetch') {
+			autoFetchAt = sent.length
+			trace.push({ kind: 'autoFetch', role: 'user', label: 'Auto-fetch: nothing matched', size: 0 })
+		}
+		else if (block.kind === 'message') {
+			if (!block.text.trim()) continue
+			const id = `profile-${block.id}`
+			const role = block.role === 'assistant' ? 'assistant' : 'user'
+			sent.push({ id, role, parts: [{ type: 'text', text: block.text }] })
+			trace.push({ kind: 'profile', role, label: `Profile: ${block.role} message`, size: block.text.length, text: block.text, messageId: id })
+		}
+		else {
+			const id = `profile-${block.id}`
+			const found = block.paths.map(path => ({ path, entry: resolvePath?.(path) }))
+			const missing = found.filter(item => !item.entry).map(item => item.path)
+			const references = found.flatMap(({ path, entry }) => entry ? [{ type: 'data-reference' as const, data: { entryId: entry.entryId, name: path, kind: entry.kind } }] : [])
+			if (references.length) sent.push({ id, role: 'user', parts: [{ type: 'text', text: PROFILE_FILES_TEXT }, ...references] })
+			trace.push({
+				kind: 'profile',
+				role: 'user',
+				label: `Profile: files${missing.length ? ` (not in this project: ${missing.join(', ')})` : ''}`,
+				size: references.length ? PROFILE_FILES_TEXT.length : 0,
+				text: references.length ? PROFILE_FILES_TEXT : 'None of the paths are in this project.',
+				...(references.length && { messageId: id }),
+			})
+		}
+	}
+	return { instructions, messages: sent, blocks: trace, autoFetchAt }
 }

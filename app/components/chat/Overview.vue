@@ -123,6 +123,7 @@ function split(turn: Turn) {
 		{ label: 'Earlier messages', size: size((block, index) => block.kind === 'message' && index < last), class: 'bg-info' },
 		{ label: 'New message', size: size((block, index) => block.kind === 'message' && index === last), class: 'bg-primary' },
 		{ label: 'Project notes ("@" and auto-fetch)', size: size(block => block.kind === 'reference' || block.kind === 'autoFetch'), class: 'bg-success' },
+		{ label: 'Context profile blocks', size: size(block => block.kind === 'profile'), class: 'bg-secondary' },
 	].filter(part => part.size > 0)
 }
 </script>

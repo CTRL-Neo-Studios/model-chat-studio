@@ -1,6 +1,6 @@
 # Milestones 2–4: model profiles, organisation, projects
 
-Status: milestones 2 and 3 done. Milestone 4: 4.P spikes done (all live runs passed; spike A found DeepSeek refuses app tools next to web search with thinking off, fixed in the turn route); 4.1 done (the project description is set through the API only; the page has no field for it yet); 4.2 done ("Add to project" sits in the conversation overview's Files tab; "@" in a chat is offered to its owner); 4.3 done; 4.4 built and checked with a scripted model (search, read, answer, next to web search), live run on both platforms pending; 4.5 next. Milestone 1 (`plans/milestone-1-chat-foundation.md`) is the base; its conventions (section 2 there) apply unchanged.
+Status: milestones 2 and 3 done. Milestone 4: 4.P spikes done (all live runs passed; spike A found DeepSeek refuses app tools next to web search with thinking off, fixed in the turn route); 4.1 done (the project description is set through the API only; the page has no field for it yet); 4.2 done ("Add to project" sits in the conversation overview's Files tab; "@" in a chat is offered to its owner); 4.3 done; 4.4 built and checked with a scripted model (search, read, answer, next to web search), live run on both platforms pending; 4.5 done; 4.6 next. Milestone 1 (`plans/milestone-1-chat-foundation.md`) is the base; its conventions (section 2 there) apply unchanged.
 
 Goal, in build order:
 
@@ -222,6 +222,8 @@ Context profile blocks, an ordered array of at most 30:
 | `files` | file or folder paths in the project's file space, always included |
 
 A profile is not tied to a project, so `files` blocks store paths, resolved in whichever project uses the profile. A path that does not resolve is skipped and flagged in the overview.
+
+Built (4.5): the `system` messages at the very top join the instructions after the lane's own prompt, and replace the default instructions when the lane has none; later `system` messages go as user messages. A project chat uses its own profile, else its project's; a chat cannot opt out of its project's profile (pick a near-empty one instead). Auto-fetch's `system` scan includes every `system` block of the profile. Blocks have ids, for dragging; the editor moves them by drag or by the arrows. "New profile" offers Blank and the brief's two examples (Roleplay, Programming) as starting points. Context profiles reuse the model profiles' abilities (own, instance, admins publish), and can be pinned. Routes: `GET/POST /context-profiles`, `PATCH/DELETE /context-profiles/:id`; `PATCH /projects/:id` and `POST/PATCH /chats` take `contextProfileId`. The project page's Chats tab picks the default (and edits it with that project's paths on offer); the prompt's "Project" popover picks a chat's own.
 
 ### How files reach the model
 

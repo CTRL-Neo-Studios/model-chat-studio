@@ -84,6 +84,14 @@ export function entryPaths(entries: (EntryNode & { name: string })[]): Record<st
 	return paths
 }
 
+/** Finds a project's entries by path, case-insensitive and with or without slashes at the ends. */
+export async function pathResolver(db: Db, projectId: string) {
+	const entries = await listEntries(db, projectId)
+	const paths = entryPaths(entries)
+	const byPath = Object.fromEntries(entries.map(entry => [paths[entry.id]!.toLowerCase(), { entryId: entry.id, kind: entry.kind }]))
+	return (path: string) => byPath[path.replace(/^\/+|\/+$/g, '').toLowerCase()]
+}
+
 /** An entry and everything inside it. */
 export function entrySubtree<T extends EntryNode>(entries: T[], id: string): T[] {
 	const found = entries.filter(entry => entry.id === id)

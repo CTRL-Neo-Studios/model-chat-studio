@@ -2,8 +2,9 @@
 import { AUTO_FETCH_DEFAULTS, type AutoFetchSettings, type ChatSettings } from '#shared/utils/chat'
 
 /**
- * A project chat's project settings, in the prompt's footer: auto-fetch and the file tools. Changes are kept while
- * the popover is open and saved when it closes, so a number stepped up five times is one save.
+ * A project chat's project settings, in the prompt's footer: the context profile, auto-fetch and the file tools.
+ * Settings changes are kept while the popover is open and saved when it closes, so a number stepped up five times is
+ * one save; the context profile is saved at once.
  */
 const props = defineProps<{
 	projectId: string
@@ -11,6 +12,23 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ change: [Pick<ChatSettings, 'autoFetch' | 'fileTools'>] }>()
+/** The chat's own context profile; `null` uses the project's. Saved at once. */
+const contextProfileId = defineModel<string | null>('contextProfileId', { default: null })
+
+const { data: project } = useQuery(() => projectQuery(props.projectId))
+const { data: profileList } = useQuery(contextProfilesQuery)
+const PROJECT_DEFAULT = 'project'
+const profileItems = computed(() => {
+	const fallback = profileList.value?.find(profile => profile.id === project.value?.contextProfileId)
+	return [
+		{ label: `Project's: ${fallback?.name ?? 'none'}`, value: PROJECT_DEFAULT },
+		...(profileList.value ?? []).map(profile => ({ label: profile.ownerId === null ? `${profile.name} (instance)` : profile.name, value: profile.id })),
+	]
+})
+const profileChoice = computed({
+	get: () => contextProfileId.value ?? PROJECT_DEFAULT,
+	set: (value: string) => contextProfileId.value = value === PROJECT_DEFAULT ? null : value,
+})
 
 const current = computed(() => ({
 	autoFetch: { ...AUTO_FETCH_DEFAULTS, ...props.settings.autoFetch } satisfies AutoFetchSettings,
@@ -58,6 +76,10 @@ const label = computed(() => {
 		<UButton :label="label" icon="i-lucide-folder-kanban" color="neutral" variant="ghost" size="sm" :class="label !== 'Project: off' && 'text-highlighted'" />
 		<template #content>
 			<div class="w-80 p-3 flex flex-col gap-3 max-h-[70vh] overflow-y-auto">
+				<UFormField label="Context profile" help="How this chat's messages are arranged around your own blocks.">
+					<USelect v-model="profileChoice" :items="profileItems" size="sm" class="w-full" />
+				</UFormField>
+				<USeparator />
 				<USwitch v-model="draft.fileTools" label="Let models look through the files" description="Models that take tools can list, search and read the project's notes and text files when they need to." />
 				<USeparator />
 				<USwitch v-model="draft.autoFetch.enabled" label="Fetch matching project files" description="Files and notes whose tags appear in the conversation are sent with each answer." />

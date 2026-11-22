@@ -56,6 +56,11 @@ export const modelProfilesQuery = defineQueryOptions({
 	query: () => useRequestFetch()('/api/v1/model-profiles'),
 })
 
+export const contextProfilesQuery = defineQueryOptions({
+	key: ['context-profiles'],
+	query: () => useRequestFetch()('/api/v1/context-profiles'),
+})
+
 export const projectsQuery = defineQueryOptions({
 	key: ['projects'],
 	query: () => useRequestFetch()('/api/v1/projects'),
