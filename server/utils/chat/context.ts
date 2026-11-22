@@ -9,6 +9,11 @@ const WEB_SEARCH_INSTRUCTIONS = `Web search is on in this chat: you can search t
 - Search for recent events and for facts you are not sure of; otherwise answer from what you know.
 - Cite the pages you used.`
 
+// Added only in project chats with the file tools: without it a model does not know there are files to look at.
+const FILE_TOOLS_INSTRUCTIONS = `This chat belongs to a project with its own notes and files.
+- When the user's question may be answered by them, look: list_files shows what there is, search_files finds words in them, read_file reads one.
+- Say which files you used.`
+
 interface ContextInput {
 	/** The lane's thread up to the message being answered, which is last. */
 	thread: UIMessage[]
@@ -17,6 +22,8 @@ interface ContextInput {
 	webSearch: boolean
 	/** Messages to send after the latest summary; `null` sends them all. */
 	memoryLength: number | null
+	/** A project chat whose model may use the file tools. */
+	fileTools?: boolean
 }
 
 const textOf = (message: Pick<UIMessage, 'parts'>) => message.parts.map(part => part.type === 'text' ? part.text : '').join('')
@@ -32,7 +39,7 @@ const counts = (message: UIMessage) => message.role !== 'assistant' || message.p
  * - The cut never starts on an answer: an answer whose question was left out is left out too, so the thread
  *   always opens with a user message. This keeps at most one message fewer than asked.
  */
-export function buildContext({ thread, systemPrompt, webSearch, memoryLength }: ContextInput) {
+export function buildContext({ thread, systemPrompt, webSearch, memoryLength, fileTools = false }: ContextInput) {
 	const summaryIndex = thread.findLastIndex(message => message.role === 'system')
 	const summary = summaryIndex >= 0 ? thread[summaryIndex] : undefined
 	let messages = thread.slice(summaryIndex + 1)
@@ -49,7 +56,7 @@ export function buildContext({ thread, systemPrompt, webSearch, memoryLength }: 
 	const omitted = start
 	messages = messages.slice(start)
 
-	const instructions = [systemPrompt ?? DEFAULT_INSTRUCTIONS, webSearch && WEB_SEARCH_INSTRUCTIONS].filter(Boolean).join('\n\n')
+	const instructions = [systemPrompt ?? DEFAULT_INSTRUCTIONS, webSearch && WEB_SEARCH_INSTRUCTIONS, fileTools && FILE_TOOLS_INSTRUCTIONS].filter(Boolean).join('\n\n')
 	const summaryText = summary && `Summary of the conversation so far:\n\n${textOf(summary)}`
 
 	const blocks: ContextBlock[] = [

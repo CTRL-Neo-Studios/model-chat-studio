@@ -48,11 +48,12 @@ describe('ranking and caps', () => {
 		expect(ids(rankEntries({ entries: tree, scanned, settings, exclude: ['inside'] }))).toEqual(['outside'])
 	})
 
-	test('fuzzy also finds entries by name and text, after tag matches', () => {
-		const withText = [entry('runbook', [], { name: 'kubernetes-deploy.md' }), entry('tagged', ['launch'])]
-		const words = [{ text: 'launch steps for kubernets', age: 0 }]
-		expect(ids(rankEntries({ entries: withText, scanned: words, settings }))).toEqual(['tagged'])
-		expect(ids(rankEntries({ entries: withText, scanned: words, settings: { ...settings, fuzzy: true } }))).toEqual(['tagged', 'runbook'])
+	test('fuzzy also finds entries by name (forgiving typos) and by text matches from the index, after tag matches', () => {
+		const withText = [entry('runbook', [], { name: 'kubernetes-deploy.md' }), entry('tagged', ['launch']), entry('notes', [])]
+		const words = [{ text: 'launch steps for kubernets', age: 0 }, { text: 'older', age: 1 }]
+		const textMatches = [{ id: 'notes', age: 1, score: 0.5 }, { id: 'unknown', age: 0, score: 1 }]
+		expect(ids(rankEntries({ entries: withText, scanned: words, settings, textMatches }))).toEqual(['tagged'])
+		expect(ids(rankEntries({ entries: withText, scanned: words, settings: { ...settings, fuzzy: true }, textMatches }))).toEqual(['tagged', 'runbook', 'notes'])
 	})
 })
 

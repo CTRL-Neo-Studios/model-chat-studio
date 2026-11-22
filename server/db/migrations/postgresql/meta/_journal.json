@@ -78,6 +78,13 @@
       "when": 1795312598730,
       "tag": "0010_project_chats",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795314109253,
+      "tag": "0011_project_search",
+      "breakpoints": true
     }
   ]
 }

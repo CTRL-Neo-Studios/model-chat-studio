@@ -7,7 +7,7 @@ import { projectAbilities } from '#shared/abilities/projectAbilities'
 import { authorize } from '#server/utils/core/authorize'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { readUpload } from '#server/utils/chat/files'
-import { assertEntryParent, entryNameSchema, findProject, listEntries, withUniqueName } from '#server/utils/project/projects'
+import { assertEntryParent, entryColumns, entryNameSchema, findProject, listEntries, withUniqueName } from '#server/utils/project/projects'
 
 /**
  * Uploads one file (form field `file`) into the project's file space, in the folder named by the form field
@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
 			await tx.insert(schema.file).values({ id, ownerId: user.id, blobPath, fileName: name.data, mediaType, size: upload.size })
 			const [entry] = await tx.insert(schema.projectEntry).values({
 				projectId: project!.id, parentId, kind: 'file', name: name.data, fileId: id, createdBy: user.id,
-			}).returning()
+			}).returning(entryColumns)
 			return { ...entry!, mediaType, size: upload.size }
 		}))
 	}

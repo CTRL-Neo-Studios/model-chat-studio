@@ -16,6 +16,7 @@ import { getCatalog, getEndpoints, getPriceOverride, useInference } from '#serve
 import { buildContext } from '#server/utils/chat/context'
 import { expandReferences } from '#server/utils/project/references'
 import { autoFetch } from '#server/utils/project/autoFetch'
+import { fileTools } from '#server/utils/project/fileTools'
 import type { FinishedStep, Pricing } from '#server/utils/inference/types'
 
 const TITLE_INSTRUCTIONS = `Write a title for a chat that starts with the user's message below.
@@ -112,7 +113,13 @@ export default defineEventHandler(async (event) => {
 		: Promise.resolve(undefined)
 
 	const webSearch = !!chat.settings.webSearch && model.webSearch
-	const built = buildContext({ thread: history, systemPrompt: lane.systemPrompt, webSearch, memoryLength: chat.settings.memoryLength ?? null })
+	const prepared = platform.prepare({
+		...params, apiKey, model: model.id, providers, reasoningLevel, webSearch,
+		userId: user.id, firstTurn, safetyCheck,
+	})
+	// The file tools: in project chats, unless turned off, for models that take tools, where the platform allows app tools.
+	const withFileTools = !!chat.projectId && chat.settings.fileTools !== false && model.supportedParameters.includes('tools') && prepared.appTools !== false
+	const built = buildContext({ thread: history, systemPrompt: lane.systemPrompt, webSearch, memoryLength: chat.settings.memoryLength ?? null, fileTools: withFileTools })
 	// "@" references become the project's files and notes, read now, where the message names them.
 	const referenced = { ...built, ...await expandReferences(db, chat.projectId, built.messages, built.blocks) }
 	// Auto-fetch adds the project's matching files and notes as one message after the conversation, not stored.
@@ -128,11 +135,9 @@ export default defineEventHandler(async (event) => {
 	const context = fetched
 		? { ...referenced, messages: [...referenced.messages, fetched.message], blocks: [...referenced.blocks, ...fetched.blocks] }
 		: referenced
-	const prepared = platform.prepare({
-		...params, apiKey, model: model.id, providers, reasoningLevel, webSearch,
-		userId: user.id, firstTurn, safetyCheck,
-	})
-	const tools: ToolSet = prepared.appTools === false ? prepared.tools : { ...prepared.tools, chart: chartTool }
+	const tools: ToolSet = prepared.appTools === false
+		? prepared.tools
+		: { ...prepared.tools, chart: chartTool, ...(withFileTools && chat.projectId && fileTools(db, chat.projectId)) }
 	const price = await getPriceOverride(db, platform.id, model.id)
 	const modelHistory = await resolveAttachments({ db, inference, model, userId: user.id, chatId, projectId: chat.projectId }, context.messages).catch((error) => {
 		console.error('[chat] attachment failed', error)

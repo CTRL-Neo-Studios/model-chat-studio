@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { projectAbilities } from '#shared/abilities/projectAbilities'
 import { authorize } from '#server/utils/core/authorize'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
-import { assertEntryParent, entryNameSchema, findProject, listEntries, noteContentSchema, tagsSchema, withUniqueName } from '#server/utils/project/projects'
+import { assertEntryParent, entryColumns, entryNameSchema, findProject, listEntries, noteContentSchema, tagsSchema, withUniqueName } from '#server/utils/project/projects'
 
 const bodySchema = z.discriminatedUnion('kind', [
 	z.object({ kind: z.literal('folder') }),
@@ -32,6 +32,6 @@ export default defineEventHandler(async (event) => {
 		tags: body.tags,
 		content: body.kind === 'note' ? body.content : null,
 		createdBy: user.id,
-	}).returning())
+	}).returning(entryColumns))
 	return entry!
 })

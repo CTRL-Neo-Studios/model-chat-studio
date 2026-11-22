@@ -47,6 +47,8 @@ export const chatSettingsSchema = z.object({
 		/** Most characters of text fetched for one answer. */
 		maxChars: z.number().int().min(1000).max(500_000),
 	}).partial().optional(),
+	/** Project chats: the model may list, search and read the project's notes and text files. Absent: on. */
+	fileTools: z.boolean().optional(),
 })
 
 export type ChatSettings = z.infer<typeof chatSettingsSchema>

@@ -421,7 +421,7 @@ onMounted(() => {
 								@command="runCommand"
 							>
 								<template v-if="projectId" #tools>
-									<ChatAutoFetch :project-id="projectId" :model-value="settings.autoFetch" @update:model-value="chatLanes.setSettings({ autoFetch: $event })" />
+									<ChatProjectSettings :project-id="projectId" :settings="settings" @change="chatLanes.setSettings($event)" />
 								</template>
 							</ChatPrompt>
 						</template>

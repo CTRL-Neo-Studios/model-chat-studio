@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { projectAbilities } from '#shared/abilities/projectAbilities'
 import { authorize } from '#server/utils/core/authorize'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
-import { assertEntryParent, entryNameSchema, findProject, listEntries, withUniqueName } from '#server/utils/project/projects'
+import { assertEntryParent, entryColumns, entryNameSchema, findProject, listEntries, withUniqueName } from '#server/utils/project/projects'
 
 const bodySchema = z.object({
 	/** An upload of one of the member's chats in this project. */
@@ -44,7 +44,7 @@ export default defineEventHandler(async (event) => {
 			await tx.insert(schema.file).values({ id, ownerId: user.id, blobPath, fileName: name.data, mediaType: source.file.mediaType, size: source.file.size })
 			const [entry] = await tx.insert(schema.projectEntry).values({
 				projectId: project!.id, parentId, kind: 'file', name: name.data, fileId: id, createdBy: user.id,
-			}).returning()
+			}).returning(entryColumns)
 			return { ...entry!, mediaType: source.file.mediaType, size: source.file.size }
 		}))
 	}

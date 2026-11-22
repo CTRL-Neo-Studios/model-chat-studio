@@ -1,5 +1,5 @@
 import { createError } from 'nuxt/server'
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, getTableColumns, sql } from 'drizzle-orm'
 import { z } from 'zod'
 // Relative, not `hub:db`, so this module also loads in `bun test`.
 import * as tables from '../../db/schema'
@@ -52,10 +52,14 @@ export async function listEntries(db: Db, projectId: string) {
 		.orderBy(sql`${tables.projectEntry.kind} <> 'folder'`, asc(sql`lower(${tables.projectEntry.name})`))
 }
 
+/** An entry's columns as routes return them: the search columns stay on the server. */
+const { searchText: _searchText, searchVector: _searchVector, ...columns } = getTableColumns(tables.projectEntry)
+export const entryColumns = columns
+
 /** One entry of a project, note text included, or `undefined`. */
 export async function findEntry(db: Db, projectId: string, id: string | undefined) {
 	if (!z.uuid().safeParse(id).success) return undefined
-	const [entry] = await db.select().from(tables.projectEntry)
+	const [entry] = await db.select(entryColumns).from(tables.projectEntry)
 		.where(and(eq(tables.projectEntry.id, id!), eq(tables.projectEntry.projectId, projectId)))
 	return entry
 }
@@ -65,6 +69,19 @@ interface EntryNode { id: string, parentId: string | null, kind: string }
 /** Refuses a parent that is not a folder of this project and, for a move, the entry itself or anything inside it. */
 export function assertEntryParent(entries: EntryNode[], parentId: string | null, movingId?: string) {
 	assertFolderParent(entries.filter(entry => entry.kind === 'folder'), parentId, movingId)
+}
+
+/** Each entry's path in the file space: folder names and its own, joined by `/`. */
+export function entryPaths(entries: (EntryNode & { name: string })[]): Record<string, string> {
+	const byId = Object.fromEntries(entries.map(entry => [entry.id, entry]))
+	const paths: Record<string, string> = {}
+	const pathOf = (entry: EntryNode & { name: string }, depth: number): string => {
+		const parent = entry.parentId ? byId[entry.parentId] : undefined
+		// Bounded, so a cycle left by two concurrent moves cannot loop forever.
+		return parent && depth < entries.length ? `${paths[parent.id] ?? pathOf(parent, depth + 1)}/${entry.name}` : entry.name
+	}
+	for (const entry of entries) paths[entry.id] = pathOf(entry, 0)
+	return paths
 }
 
 /** An entry and everything inside it. */

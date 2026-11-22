@@ -2,6 +2,7 @@ import {
 	type AnyPgColumn,
 	bigint,
 	boolean,
+	customType,
 	index,
 	integer,
 	jsonb,
@@ -17,6 +18,8 @@ import {relations, sql} from "drizzle-orm";
 import type {UIMessage} from "ai";
 import {type ChatSettings, type ContextBlock, LANE_COLORS, type MessageMetadata, type ModelParams} from "../../shared/utils/chat";
 import type {UserPreferences} from "../../shared/utils/preferences";
+
+const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' })
 
 const createdAt = timestamp({ withTimezone: true }).defaultNow().notNull()
 
@@ -256,6 +259,13 @@ export const projectEntry = pgTable("projectEntry", {
 	fileId: uuid().references(() => file.id, { onDelete: "cascade" }),
 	/** Markdown, for a note. */
 	content: text(),
+	/**
+	 * The name and text of a note or text file, with words split by the app (`Intl.Segmenter`, so Chinese words are
+	 * separate) for full-text search. `null` until filled: search fills what is missing, and a change of name or text
+	 * clears it.
+	 */
+	searchText: text(),
+	searchVector: tsvector().generatedAlwaysAs(sql`to_tsvector('english', coalesce("searchText", ''))`),
 	createdBy: uuid().references(() => user.id, { onDelete: "set null" }),
 
 	...createdUpdatedAtColumns
@@ -263,6 +273,7 @@ export const projectEntry = pgTable("projectEntry", {
 	// Names are unique within a folder, the top level included.
 	unique().on(t.projectId, t.parentId, t.name).nullsNotDistinct(),
 	index().on(t.fileId),
+	index().using('gin', t.searchVector),
 ]);
 
 /** A file uploaded to a platform (DeepSeek PDFs), cached per account key. */

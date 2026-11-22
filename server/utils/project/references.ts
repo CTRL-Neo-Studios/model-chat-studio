@@ -5,7 +5,7 @@ import * as tables from '../../db/schema'
 import type { ContextBlock } from '../../../shared/utils/chat'
 import type { Db } from '../core/settings'
 import { referencePartSchema } from '../chat/turns'
-import { entrySubtree, listEntries } from './projects'
+import { entryPaths, entrySubtree, listEntries } from './projects'
 
 type Part = UIMessage['parts'][number]
 type Entry = Awaited<ReturnType<typeof listEntries>>[number]
@@ -24,10 +24,8 @@ export async function expandReferences(db: Db, projectId: string | null, message
 
 	const entries = projectId ? await listEntries(db, projectId) : []
 	const byId: Record<string, Entry> = Object.fromEntries(entries.map(entry => [entry.id, entry]))
-	const pathOf = (entry: Entry, depth = 0): string => {
-		const parent = entry.parentId ? byId[entry.parentId] : undefined
-		return parent && depth < entries.length ? `${pathOf(parent, depth + 1)}/${entry.name}` : entry.name
-	}
+	const paths = entryPaths(entries)
+	const pathOf = (entry: Entry) => paths[entry.id] ?? entry.name
 	/** What a reference brings: the entry, or the files and notes inside a folder; `undefined` when it is gone. */
 	const contentsOf = (entryId: string) => byId[entryId] && entrySubtree(entries, entryId).filter(entry => entry.kind !== 'folder')
 

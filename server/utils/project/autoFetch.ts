@@ -1,34 +1,21 @@
-import { blob } from 'hub:blob'
-import { schema } from 'hub:db'
-import { inArray } from 'drizzle-orm'
 import type { UIMessage } from 'ai'
 import { AUTO_FETCH_DEFAULTS, type ChatSettings, type ContextBlock } from '#shared/utils/chat'
 import { FILE_UPLOAD } from '#shared/utils/file'
 import type { Db } from '#server/utils/core/settings'
 import { listEntries } from './projects'
-import { rankEntries, scannedTexts } from './matcher'
+import { rankEntries, type Scanned, scannedTexts } from './matcher'
+import { searchEntryTexts } from './search'
+import { fillSearchText } from './searchIndex'
 import { expandReferences } from './references'
 
-/** Fuzzy search reads at most this much of each note and text file. */
-const FUZZY_TEXT_CAP = 20_000
 const AUTO_FETCH_TEXT = 'Files and notes from the project that match this conversation, fetched automatically:'
 const textTypes: readonly string[] = FILE_UPLOAD.textTypes
 
-/** The text of notes and text files, for fuzzy search; capped per file (plan section 7). */
-async function searchableTexts(db: Db, entries: Awaited<ReturnType<typeof listEntries>>) {
-	const notes = entries.filter(entry => entry.kind === 'note').map(entry => entry.id)
-	const files = entries.filter(entry => entry.kind === 'file' && textTypes.includes(entry.mediaType ?? '') && entry.fileId)
-	const [noteRows, fileRows] = await Promise.all([
-		notes.length ? db.select({ id: schema.projectEntry.id, content: schema.projectEntry.content }).from(schema.projectEntry).where(inArray(schema.projectEntry.id, notes)) : [],
-		files.length ? db.select({ id: schema.file.id, blobPath: schema.file.blobPath }).from(schema.file).where(inArray(schema.file.id, files.map(entry => entry.fileId!))) : [],
-	])
-	const blobPathOf: Record<string, string> = Object.fromEntries(fileRows.map(row => [row.id, row.blobPath]))
-	const texts: Record<string, string> = Object.fromEntries(noteRows.map(row => [row.id, (row.content ?? '').slice(0, FUZZY_TEXT_CAP)]))
-	await Promise.all(files.map(async (entry) => {
-		const stored = blobPathOf[entry.fileId!] ? await blob.get(blobPathOf[entry.fileId!]!) : null
-		if (stored) texts[entry.id] = (await stored.text()).slice(0, FUZZY_TEXT_CAP)
-	}))
-	return texts
+/** Fuzzy auto-fetch: the notes and text files whose text has words of each scanned piece, from the full-text index. */
+async function textMatches(db: Db, projectId: string, scanned: Scanned[]) {
+	await fillSearchText(db, projectId)
+	const found = await Promise.all(scanned.map(async piece => (await searchEntryTexts(db, projectId, piece.text, 20)).map(row => ({ id: row.id, age: piece.age, score: row.rank }))))
+	return found.flat()
 }
 
 /**
@@ -56,7 +43,7 @@ export async function autoFetch(db: Db, input: {
 		})),
 		scanned,
 		settings,
-		texts: settings.fuzzy ? await searchableTexts(db, entries) : undefined,
+		textMatches: settings.fuzzy ? await textMatches(db, input.projectId, scanned) : undefined,
 		exclude: input.exclude,
 	})
 	if (!picked.length) return undefined

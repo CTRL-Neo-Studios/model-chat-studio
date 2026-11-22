@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { projectAbilities } from '#shared/abilities/projectAbilities'
 import { authorize } from '#server/utils/core/authorize'
-import { assertEntryParent, entryNameSchema, findProject, listEntries, noteContentSchema, tagsSchema, withUniqueName } from '#server/utils/project/projects'
+import { assertEntryParent, entryColumns, entryNameSchema, findProject, listEntries, noteContentSchema, tagsSchema, withUniqueName } from '#server/utils/project/projects'
 
 const bodySchema = z.object({
 	name: entryNameSchema,
@@ -27,9 +27,11 @@ export default defineEventHandler(async (event) => {
 	if (fields.content !== undefined && entry.kind !== 'note') throw createError({ status: 400, statusText: 'Only a note has text to edit' })
 	if (fields.parentId !== undefined) assertEntryParent(entries, fields.parentId, entry.id)
 
-	const [updated] = await withUniqueName(db.update(schema.projectEntry).set(fields)
+	// A new name or text is searched once search fills it again.
+	const searchText = fields.name !== undefined || fields.content !== undefined ? { searchText: null } : {}
+	const [updated] = await withUniqueName(db.update(schema.projectEntry).set({ ...fields, ...searchText })
 		.where(eq(schema.projectEntry.id, entry.id))
-		.returning())
+		.returning(entryColumns))
 	// A download is named after the entry.
 	if (fields.name && entry.fileId) await db.update(schema.file).set({ fileName: fields.name }).where(eq(schema.file.id, entry.fileId))
 	return updated!
