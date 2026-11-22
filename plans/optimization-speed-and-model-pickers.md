@@ -1,6 +1,6 @@
 # Optimization plan: page speed and the admin model pickers
 
-Status: O1 to O5 done. It sits between milestone 2 (waiting for its live smoke run) and milestone 3, and changes no feature. Deviations: changes are optimistic local or cache updates with rollback rather than `useMutation`, which would add nothing over them.
+Status: O1 to O5 done; O6 planned (section 7). It sits between milestone 2 (waiting for its live smoke run) and milestone 3, and changes no feature. Deviations: changes are optimistic local or cache updates with rollback rather than `useMutation`, which would add nothing over them.
 
 O5 (after milestone 6.1): the server no longer waits for data. Every query is lazy on the server (`enabled: () => import.meta.client` in `colada.options.ts`, Pinia Colada's "lazy queries"; a query with its own `enabled` adds `import.meta.client &&`), so a reload or a link gets the page with its skeletons and the browser fetches the data. Measured on `bun run dev` with the database 280 ms away: first byte 2 to 3.5 s before, 20 to 40 ms after; data in 0.8 to 1.8 s, skeletons meanwhile; no hydration warnings. The three places that still waited now show at once: `/admin/settings` (the form fills in when its settings arrive), the home page (the models menu is a placeholder until the profiles arrive) and "New chat here" (sending waits for the folder's defaults, typing does not). The server render no longer contains the data (view source shows skeletons).
 
@@ -136,3 +136,66 @@ A throwaway Nitro plugin, as used for the numbers above: it wraps the local data
 - Caching the user row between requests: role and ban checks stay per request, as milestone 1 decided.
 - Streaming server render or lazy hydration: not needed after O5.
 - Offline use or persisting the query cache across reloads.
+
+## 7. Phase O6: which pages arrive with their data, and a shorter wait on all of them
+
+Status: planned. One phase.
+
+### Findings
+
+Measured on `bun run dev` against the real dev database.
+
+| | Time |
+|---|---|
+| One trip to the database | 0.22 to 0.31 s |
+| One query with a parameter | 0.44 to 0.61 s: two trips |
+| A simple read (`/pins`: the user lookup, then one query) | 1.0 to 1.2 s |
+| The same read in a trial with prepared statements | 0.45 to 0.6 s |
+| A chat with its lanes and messages, same trial | 0.48 to 0.58 s |
+| A click to a page whose data is in the browser already | 0.15 s, no skeleton |
+
+- **Two trips per query.** Drizzle calls postgres-js with `prepare: false`. postgres-js then asks the database to describe the query (one trip) before it runs it (a second). A query without parameters takes one trip. O2 and O3 were measured with a delay added per query on the local database, which counts queries, not trips, so this never showed.
+- **Clicks inside the app never go through the server render.** Whether a click shows a skeleton depends only on whether the data is in the browser. Today that holds for the chat list, folders, pins, models and model profiles; every other page loads on its first click of a visit, and again after ten unused minutes.
+- **Nuxt's route rules do not fit signed-in pages.** `prerender`, `swr` and `isr` store a page and reuse it for the next visitor; here every page's HTML carries the signed-in user and a per-session CSRF token. `ssr: false` sends an empty page and moves the role gate to the browser. So the choice per route is only whether the server waits for that page's data.
+- **Pages carry no `Cache-Control` header**, so a proxy between the app and a browser may store a member's page.
+- **`bun run typecheck` while dev runs moved the dev server to the local database** (PGlite), most likely as the comment in `nuxt.config.ts` warns: it loads no `.env.dev`. Seen once, during these measurements.
+
+### Which pages wait for their data
+
+| Route | Opened by | The server waits for | Why |
+|---|---|---|---|
+| `/chat/:id` | members, people it is shared with, guests when link access is on; from links, bookmarks, reloads | the chat with its lanes and messages | the conversation is the page; a guest gets it in one response; the title is in `<title>` again |
+| `/libraries/:id` | members with access; from links other members send | the library and its file list, together | the files are the page |
+| `/` | members, the usual entry | nothing | nothing to read before typing |
+| `/characters`, `/libraries`, `/model-profiles`, `/structure-profiles`, `/shared`, `/settings` | members, by a click | nothing | reached from the menu, where the data is in the browser by then; a reload shows skeletons once |
+| `/admin/*` | admins and moderators, by a click | nothing | the same; the catalogs are large and load in the browser |
+| `/temporary` | members | nothing | its chat lives only in the browser |
+| `/signin` | signed-out visitors | nothing | reads no data |
+
+A page that waits sets `enabled: true` on its own query. Everything else on it (votes, preferences, the sidebar's lists) stays lazy, so the server makes one request for the page, not one after another.
+
+### What keeps it safe
+
+- The server reads through the same API routes, with the visitor's cookie (`useRequestFetch`). The page cannot hold more than the API gives that visitor; a guest gets what link access allows, and "not found" otherwise.
+- No page is stored and reused: no caching route rules, and `Cache-Control: private, no-store` on every rendered page.
+- The role gate (`auth.global.ts`) runs on the server before anything renders; the API checks again.
+- Reads return no secrets: `/users/me` names which keys are set, `/admin/settings` says `hasKey`.
+
+### Work
+
+- **One trip per query.** A server plugin makes the postgres-js client prepare what Drizzle sends (it wraps the client's `unsafe` to pass `prepare: true`). After a query's first use on a connection it takes one trip. It applies only while the client's own `prepare` option is on, so a database behind a transaction-mode pooler turns it off with `hub.db.connection.prepare: false`; PGlite has no such client and is left alone. Queries inside a transaction use the transaction's client: covered the same way if that is a few lines, else they keep two trips. Ceiling: statements stay per connection until postgres-js recycles it (30 to 60 minutes by default); a query over a list of varying length (`inArray`) counts once per length.
+- **Pages that arrive with their data**, per the table.
+- **Lists in the background.** Once the first page is up and the browser idle (`onNuxtReady`), the layout loads what the menus lead to: libraries, characters, structure profiles, shared chats, the member's profile and usage. Admin lists (settings, users, invites) load when pointer or focus reaches the Admin entry; a library when its card is hovered or focused, as chats do. Unused data is kept an hour instead of ten minutes.
+- **`Cache-Control: private, no-store`** on rendered pages, from Nitro's `render:response` hook, so assets and the API keep their own headers.
+- **`typecheck` loads `.env.dev`** (`nuxt typecheck --dotenv .env.dev`), so it writes the same database driver as dev.
+
+| # | Work | Done when |
+|---|---|---|
+| O6 | The five items above | on `bun run dev` with the real database: `/pins` answers in about 0.5 s (from 1.1 s); a reload of a chat and of a library arrives complete, with no skeleton and no hydration warning, and view source holds the messages; a guest gets a link-shared chat the same way, and a private chat's address gives "not found" with none of the chat in the source; after a fresh load of `/`, a click on each menu page shows its data with no skeleton; page responses carry `private, no-store`; after `bun run typecheck` with dev running, dev still answers from Postgres |
+
+### Not in O6
+
+- **The user lookup alongside the page's read** (one trip per read, about 0.3 s): every handler would start its read from the session's user id. A larger change; next if 0.5 s is still too long.
+- **The `node-postgres` driver**, which sends "describe" and "run" together: one trip with nothing kept, at the price of a dependency and a driver change.
+- **Waiting up to a time limit** and sending whatever is ready. Production's place is undecided; next to its database a trip is a few ms and every page could arrive with its data at no visible cost. Widen the table then.
+- **A chat's title in `og:title`**: link previews show the site name on every page, as before.
