@@ -275,7 +275,7 @@ A profile is not tied to a project, so `files` blocks store paths, resolved in w
 | 4.1 | Projects and the file space: schema, routes, pages, upload, notes, tags, drag | a project with nested folders, an uploaded PDF, a note and tags; entries moved by drag |
 | 4.2 | Project chats, their folders, "Add to project", "@" references | the fixture platform receives a referenced note, a referenced folder's files and a referenced PDF in the message that names them |
 | 4.3 | Auto-fetch and its settings | tests for the matcher (whole word, case, ranking, both caps, folder scope, roles); the fixture receives the fetched files as a final user message; off means none |
-| 4.4 | File tools | live on both platforms: the model lists, searches and reads a file it was not given, next to web search |
+| 4.4 | File tools, and Postgres full-text search behind them and fuzzy auto-fetch: a stored, searchable text per note and text file (words split in the app with `Intl.Segmenter`, so Chinese is searchable; text files' text stored at upload, existing ones filled once), a `tsvector` with a GIN index, queried with `websearch_to_tsquery`; Fuse stays for typo-tolerant matching of names and tags | live on both platforms: the model lists, searches and reads a file it was not given, next to web search; spike D's English and Chinese questions still find their files through the index |
 | 4.5 | Context profiles: routes, page, block editor, project default and chat override | the fixture receives the two example profiles from the brief block for block, in order |
 | 4.6 | Sharing: roles, project-visible chats, the badge, abilities | each role checked against the access table with three accounts; a non-member with a chat link sees the badge and cannot open a project file |
 
@@ -310,7 +310,7 @@ Scripts in `scripts/spikes/m4/` of the prep checkout. They import the main check
 
 - Lane threads are loaded whole and cut in memory.
 - The context split per block and the token counts in editors are estimates (characters ÷ 4). Totals are the platform's figures.
-- Fuzzy search builds its index from the project's text on each turn, capped per file. The upgrade is Postgres full-text search.
+- Until 4.4, fuzzy search reads the project's text on each turn, capped per file. 4.4 replaces that with Postgres full-text search (see 4.4). Full-text search does not forgive typos in file text; Fuse keeps doing that for names and tags. `pg_trgm` would add it, but NuxtHub creates the local PGlite without extensions.
 - File tools and fuzzy search do not read inside PDFs or images. Those reach the model through "@" and tags.
 - "@" content is read fresh each turn, so an old turn's context can differ from what the trace recorded.
 - Folder order is not manual.
