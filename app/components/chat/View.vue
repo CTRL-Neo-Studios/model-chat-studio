@@ -33,7 +33,7 @@ const libraries = computed(() => data.value?.libraries ?? [])
 const editableLibraries = computed(() => libraries.value.filter(library => library.role === 'owner' || library.role === 'editor'))
 const { items: mentions, partsFor } = useLibraryMentions(() => isOwner.value ? libraries.value.filter(library => library.role) : [])
 const references = ref<string[]>([])
-const { data: libraryList } = useQuery(() => ({ ...librariesQuery, enabled: isOwner.value }))
+const { data: libraryList } = useQuery(() => ({ ...librariesQuery, enabled: import.meta.client && isOwner.value }))
 /** Attaches and detaches libraries; shown at once, and read again from the server if it refuses one. */
 async function setLibraries(ids: string[]) {
 	const chat = queryCache.getQueryData(chatQuery(chatId).key)
@@ -80,11 +80,11 @@ async function keep() {
 
 useHead({ title: () => title.value || 'Chat' })
 
-const { data: votesData } = useQuery(() => ({ ...chatVotesQuery(chatId), enabled: isOwner.value }))
+const { data: votesData } = useQuery(() => ({ ...chatVotesQuery(chatId), enabled: import.meta.client && isOwner.value }))
 const votes = computed(() => votesData.value ?? [])
 
 // The member's preferences; until they load, the server's defaults apply.
-const { data: me } = useQuery(() => ({ ...meQuery, enabled: isOwner.value }))
+const { data: me } = useQuery(() => ({ ...meQuery, enabled: import.meta.client && isOwner.value }))
 
 const chatLanes = useChatLanes(data.value ?? undefined)
 const { lanes, enabledLanes, settings, laneModel, laneName, laneColor } = chatLanes

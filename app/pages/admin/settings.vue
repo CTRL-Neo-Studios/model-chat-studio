@@ -6,9 +6,7 @@ type PlatformId = 'openrouter' | 'deepseek'
 
 const act = useApiAction()
 const queryCache = useQueryCache()
-// The form starts from the settings, so a first visit waits for them.
-const { data: settings, refresh: loadSettings } = useQuery(adminSettingsQuery)
-if (!settings.value) await loadSettings()
+const { data: settings } = useQuery(adminSettingsQuery)
 
 const platformNames: Record<PlatformId, string> = { openrouter: 'OpenRouter', deepseek: 'DeepSeek' }
 const platformIds: PlatformId[] = ['openrouter', 'deepseek']
@@ -54,7 +52,12 @@ function fill(view: NonNullable<typeof settings.value>) {
 		Object.assign(platformForms[id], { apiKey: '', defaultModel: config.defaultModel ?? '', titleModel: config.titleModel ?? '', sttModel: config.sttModel ?? '' })
 	}
 }
-if (settings.value) fill(settings.value)
+// The form fills in once the settings arrive (the page shows skeletons until then); later refreshes leave edits alone.
+const stopFilling = watch(settings, (view) => {
+	if (!view) return
+	fill(view)
+	queueMicrotask(() => stopFilling())
+}, { immediate: true })
 
 const saving = ref<string | null>(null)
 async function save(section: string, body: Record<string, unknown>) {
@@ -218,5 +221,8 @@ const platformChoices = computed(() => [
 				</div>
 			</UPageCard>
 		</template>
+		<div v-else class="flex flex-col gap-4" aria-busy="true" aria-label="Loading the settings">
+			<USkeleton v-for="n in 4" :key="n" class="h-40 w-full" />
+		</div>
 	</AdminPanel>
 </template>

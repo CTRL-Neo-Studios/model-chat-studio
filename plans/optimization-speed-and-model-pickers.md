@@ -1,6 +1,8 @@
 # Optimization plan: page speed and the admin model pickers
 
-Status: O1 to O4 done. It sits between milestone 2 (waiting for its live smoke run) and milestone 3, and changes no feature. Deviations: the admin settings form still waits for its data on a first visit (the form starts from it); changes are optimistic local or cache updates with rollback rather than `useMutation`, which would add nothing over them.
+Status: O1 to O5 done. It sits between milestone 2 (waiting for its live smoke run) and milestone 3, and changes no feature. Deviations: changes are optimistic local or cache updates with rollback rather than `useMutation`, which would add nothing over them.
+
+O5 (after milestone 6.1): the server no longer waits for data. Every query is lazy on the server (`enabled: () => import.meta.client` in `colada.options.ts`, Pinia Colada's "lazy queries"; a query with its own `enabled` adds `import.meta.client &&`), so a reload or a link gets the page with its skeletons and the browser fetches the data. Measured on `bun run dev` with the database 280 ms away: first byte 2 to 3.5 s before, 20 to 40 ms after; data in 0.8 to 1.8 s, skeletons meanwhile; no hydration warnings. The three places that still waited now show at once: `/admin/settings` (the form fills in when its settings arrive), the home page (the models menu is a placeholder until the profiles arrive) and "New chat here" (sending waits for the folder's defaults, typing does not). The server render no longer contains the data (view source shows skeletons).
 
 ## 1. Findings
 
@@ -132,5 +134,5 @@ A throwaway Nitro plugin, as used for the numbers above: it wraps the local data
 
 - A shared cache (Redis) for settings and catalogs: the per-process cache has a 30 s ceiling across instances, which is fine for one instance.
 - Caching the user row between requests: role and ban checks stay per request, as milestone 1 decided.
-- Streaming server render or lazy hydration: revisit only if the first load is still slow after O2.
+- Streaming server render or lazy hydration: not needed after O5.
 - Offline use or persisting the query cache across reloads.

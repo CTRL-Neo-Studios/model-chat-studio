@@ -23,7 +23,7 @@ async function saveTags(tags: string[]) {
 }
 
 // A note's text, saved a moment after typing stops, and at once when another entry opens.
-const { data: full } = useQuery(() => ({ ...libraryEntryQuery({ libraryId: props.libraryId, entryId: props.entry.id }), enabled: props.entry.kind === 'note' }))
+const { data: full } = useQuery(() => ({ ...libraryEntryQuery({ libraryId: props.libraryId, entryId: props.entry.id }), enabled: import.meta.client && props.entry.kind === 'note' }))
 const text = ref<string>()
 let saved: string | undefined
 watch(full, (value) => {

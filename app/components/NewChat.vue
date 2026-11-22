@@ -36,19 +36,23 @@ const lastSettings = useCookie<ChatSettings>('chat-settings', { default: () => (
 const { autoFetch: _, ...lastShared } = lastSettings.value
 settings.value = { ...lastShared }
 
-// "Start a chat" on the profiles page starts from that profile alone. The lanes start from the profiles,
-// so the first visit waits for them; they are usually cached already.
-const { data: profilesData, refresh: refreshProfiles } = useQuery(modelProfilesQuery)
-if (!profilesData.value) await refreshProfiles()
-const profiles = computed(() => profilesData.value ?? [])
+// "Start a chat" on the profiles page starts from that profile alone. The lanes start from the profiles, so they
+// fill in once the profiles are here (usually cached already); until then the models menu is a placeholder.
+const { data: profilesData } = useQuery(modelProfilesQuery)
 const profileId = useRoute().query.profile
-const fromQuery = profiles.value.find(profile => profile.id === profileId)
-lanes.value = (fromQuery ? [{ profileId: fromQuery.id }] : lastLanes.value).flatMap((source) => {
-	if (!source.profileId) return [draft({ modelId: source.modelId ?? null })]
-	const profile = profiles.value.find(entry => entry.id === source.profileId)
-	return profile ? [draft(fromProfile(profile))] : []
-})
-if (!lanes.value.length) lanes.value = [draft({})]
+const lanesReady = ref(false)
+const stopLanes = watch(profilesData, (profiles) => {
+	if (!profiles || lanesReady.value) return
+	const fromQuery = profiles.find(profile => profile.id === profileId)
+	lanes.value = (fromQuery ? [{ profileId: fromQuery.id }] : lastLanes.value).flatMap((source) => {
+		if (!source.profileId) return [draft({ modelId: source.modelId ?? null })]
+		const profile = profiles.find(entry => entry.id === source.profileId)
+		return profile ? [draft(fromProfile(profile))] : []
+	})
+	if (!lanes.value.length) lanes.value = [draft({})]
+	lanesReady.value = true
+	queueMicrotask(() => stopLanes())
+}, { immediate: true })
 
 const greeting = computed(() => {
 	const hour = new Date().getHours()
@@ -62,18 +66,25 @@ const { uploads, promptFiles, uploading, parts: fileParts } = usePromptUploads(c
 
 // The libraries the chat will read and its structure profile, chosen before the first message; "@" names their files.
 // `?folder=` starts the chat in that folder, with the folder's defaults (or the nearest above) filled in, removable.
-const folderParam = useRoute().query.folder
-const { data: libraryList, refresh: refreshLibraries } = useQuery(librariesQuery)
-const { data: folderList, refresh: refreshFolders } = useQuery(foldersQuery)
-const { data: profileList, refresh: refreshStructureProfiles } = useQuery(structureProfilesQuery)
-if (!props.temporary && typeof folderParam === 'string') {
-	await Promise.all([!libraryList.value && refreshLibraries(), !folderList.value && refreshFolders(), !profileList.value && refreshStructureProfiles()])
-}
-const folder = props.temporary ? undefined : folderList.value?.find(entry => entry.id === folderParam)
-const defaults = folder ? nearestDefaults(folderList.value ?? [], folder.id) : null
-// Libraries left and profiles deleted since the defaults were set are skipped.
-const libraryIds = ref((defaults?.libraryIds ?? []).filter(id => libraryList.value?.some(library => library.id === id)))
-const structureProfileId = ref(profileList.value?.find(profile => profile.id === defaults?.structureProfileId)?.id ?? null)
+const folderParam = props.temporary ? undefined : useRoute().query.folder
+const { data: libraryList } = useQuery(librariesQuery)
+const { data: folderList } = useQuery(foldersQuery)
+const { data: profileList } = useQuery(structureProfilesQuery)
+const folder = computed(() => typeof folderParam === 'string' ? folderList.value?.find(entry => entry.id === folderParam) : undefined)
+const libraryIds = ref<string[]>([])
+const structureProfileId = ref<string | null>(null)
+// The defaults fill in once the folders, libraries and profiles are here; sending waits for that, so a chat started
+// at once does not go out without them. Libraries left and profiles deleted since the defaults were set are skipped.
+const defaultsReady = ref(typeof folderParam !== 'string')
+const stopDefaults = watch([folderList, libraryList, profileList], ([folders, libraries, profiles]) => {
+	if (defaultsReady.value || !folders || !libraries || !profiles) return
+	const defaults = folder.value ? nearestDefaults(folders, folder.value.id) : null
+	libraryIds.value = (defaults?.libraryIds ?? []).filter(id => libraries.some(library => library.id === id))
+	structureProfileId.value = profiles.find(profile => profile.id === defaults?.structureProfileId)?.id ?? null
+	defaultsReady.value = true
+	queueMicrotask(() => stopDefaults())
+}, { immediate: true })
+const ready = computed(() => lanesReady.value && defaultsReady.value)
 // Who the user is: their default Character from the settings until they pick another here.
 const { data: me } = useQuery(meQuery)
 const userCharacterChoice = ref<string | null>()
@@ -85,7 +96,8 @@ const { items: mentions, partsFor } = useLibraryMentions(() => libraryIds.value.
 const references = ref<string[]>([])
 
 async function createChat(prompt: string) {
-	if ((!prompt.trim() && !fileParts.value.length) || uploading.value || loading.value) return
+	// Typing can start at once; sending waits until the models and any folder defaults are in.
+	if ((!prompt.trim() && !fileParts.value.length) || uploading.value || loading.value || !ready.value) return
 	if (!enabledLanes.value.length) {
 		toast.add({ description: 'Turn on a model first', icon: 'i-lucide-alert-circle', color: 'warning' })
 		return
@@ -107,7 +119,7 @@ async function createChat(prompt: string) {
 				structureProfileId: structureProfileId.value,
 				// Left out until changed here, so the server applies the member's default.
 				userCharacterId: userCharacterChoice.value,
-				folderId: folder?.id,
+				folderId: folder.value?.id,
 			},
 		})
 	}
@@ -145,7 +157,8 @@ const quickChats = [
 		<template #header>
 			<Navbar>
 				<template #title>
-					<ChatModelsMenu v-if="!unavailable" :chat-lanes="chatLanes" />
+					<ChatModelsMenu v-if="!unavailable && lanesReady" :chat-lanes="chatLanes" />
+					<USkeleton v-else-if="!unavailable" class="h-8 w-40" aria-label="Loading the models" />
 				</template>
 			</Navbar>
 		</template>

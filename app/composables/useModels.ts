@@ -2,7 +2,7 @@
 export function useModels() {
 	// Guests only read shared chats; the catalog needs a member.
 	const { loggedIn } = useUserSession()
-	const { data, isPending } = useQuery(() => ({ ...modelsQuery, enabled: loggedIn.value }))
+	const { data, isPending } = useQuery(() => ({ ...modelsQuery, enabled: import.meta.client && loggedIn.value }))
 
 	const platform = computed(() => data.value?.platform ?? null)
 	const models = computed(() => data.value?.models ?? [])

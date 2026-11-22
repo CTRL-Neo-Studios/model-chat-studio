@@ -7,7 +7,7 @@ const sidebarOpen = ref(false)
 const searchOpen = ref(false)
 
 // Guests only ever see a chat shared by link, so they have no list.
-const { data: chatList } = useQuery(() => ({ ...chatsQuery, enabled: loggedIn.value }))
+const { data: chatList } = useQuery(() => ({ ...chatsQuery, enabled: import.meta.client && loggedIn.value }))
 const chats = computed(() => loggedIn.value ? (chatList.value ?? []).map(toUIChat) : [])
 
 /** Loads data the member is about to need, unless it is cached and fresh. */

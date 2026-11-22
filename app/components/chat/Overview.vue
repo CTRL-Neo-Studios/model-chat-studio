@@ -16,7 +16,7 @@ const props = withDefaults(defineProps<{
 
 const open = defineModel<boolean>('open', { default: false })
 
-const { data, isPending, error } = useQuery(() => ({ ...chatOverviewQuery(props.chatId), enabled: open.value }))
+const { data, isPending, error } = useQuery(() => ({ ...chatOverviewQuery(props.chatId), enabled: import.meta.client && open.value }))
 const { models } = useModels()
 const act = useApiAction()
 const queryCache = useQueryCache()
