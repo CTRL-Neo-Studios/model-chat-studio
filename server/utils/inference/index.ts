@@ -26,20 +26,25 @@ export interface ActiveInference {
 }
 
 /**
+ * A platform, active or not, and the key to use for this user: their own key for it, else the instance key. `null`
+ * without either. The decision model uses OpenRouter this way whichever platform answers.
+ */
+export async function platformInference(db: Db, userId: string, id: InferencePlatformId): Promise<ActiveInference | null> {
+	const config = await getSetting(db, `inference.${id}`)
+	const [own] = await db.select({ ciphertext: tables.userApiKey.ciphertext }).from(tables.userApiKey)
+		.where(and(eq(tables.userApiKey.userId, userId), eq(tables.userApiKey.platform, id)))
+	const sealed = own?.ciphertext ?? config.apiKey
+	if (!sealed) return null
+	return { platform: platformAdapters[id], apiKey: await openSecret(sealed), byok: !!own, config }
+}
+
+/**
  * The active platform and the key to use for this user: their own key for that platform, else the instance key.
  * `null` until an admin has chosen a platform and either key exists.
  */
 export async function useInference(db: Db, userId: string): Promise<ActiveInference | null> {
 	const id = await getSetting(db, 'inferencePlatform')
-	if (!id) return null
-	const config = await getSetting(db, `inference.${id}`)
-
-	const [own] = await db.select({ ciphertext: tables.userApiKey.ciphertext }).from(tables.userApiKey)
-		.where(and(eq(tables.userApiKey.userId, userId), eq(tables.userApiKey.platform, id)))
-	const sealed = own?.ciphertext ?? config.apiKey
-	if (!sealed) return null
-
-	return { platform: platformAdapters[id], apiKey: await openSecret(sealed), byok: !!own, config }
+	return id ? await platformInference(db, userId, id) : null
 }
 
 /** A platform with its instance key, active or not; `null` without a key. For the admin pages. */
@@ -71,12 +76,12 @@ export async function getFullCatalog(inference: ActiveInference): Promise<Catalo
 	return await cached(catalogCache, platform.id, 60 * 60_000, () => platform.listModels(apiKey))
 }
 
-/** The platform's speech-to-text models, cached for an hour; empty where none is chosen. */
-export async function getSttCatalog(inference: ActiveInference): Promise<CatalogModel[]> {
+/** A platform's speech-to-text or Decisions models, cached for an hour; empty where it has none. */
+export async function getKindCatalog(inference: ActiveInference, kind: 'stt' | 'decisions'): Promise<CatalogModel[]> {
 	const { platform, apiKey } = inference
-	const list = platform.listSttModels
+	const list = kind === 'stt' ? platform.listSttModels : platform.listDecisionModels
 	if (!list) return []
-	return await cached(catalogCache, `${platform.id}:stt`, 60 * 60_000, () => list(apiKey))
+	return await cached(catalogCache, `${platform.id}:${kind}`, 60 * 60_000, () => list(apiKey))
 }
 
 /** The platform's models, narrowed to the admin allowlist when it has entries. */

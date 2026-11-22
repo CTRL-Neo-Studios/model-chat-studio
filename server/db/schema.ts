@@ -365,7 +365,7 @@ export const usageEvent = pgTable("usageEvent", {
 	id: uuid().primaryKey().defaultRandom(),
 	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
 	chatId: uuid().references(() => chat.id, { onDelete: "set null" }),
-	kind: text({ enum: ["chat", "title", "stt", "parse", "compact"] }).notNull(),
+	kind: text({ enum: ["chat", "title", "stt", "parse", "compact", "decision"] }).notNull(),
 	platform: text({ enum: inferencePlatforms }).notNull(),
 	model: text(),
 	provider: text(),

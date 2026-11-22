@@ -102,12 +102,16 @@ export interface InferencePlatform {
 		nativeTitle: boolean
 		/** Speech to text needs a model chosen in the settings (`sttModel`). */
 		sttModel: boolean
+		/** Decisions models can pick a group round's speakers (`decisionModel`). */
+		decisions: boolean
 	}
 	/** Resolves false for a key the platform rejects; throws when the platform cannot be reached. */
 	checkKey(apiKey: string): Promise<boolean>
 	listModels(apiKey: string): Promise<CatalogModel[]>
 	/** Speech-to-text models, for platforms where one is chosen (`capabilities.sttModel`). */
 	listSttModels?(apiKey: string): Promise<CatalogModel[]>
+	/** Decisions models (`capabilities.decisions`), for the `decisionModel` setting. */
+	listDecisionModels?(apiKey: string): Promise<CatalogModel[]>
 	listEndpoints?(apiKey: string, modelId: string): Promise<CatalogEndpoint[]>
 	prepare(input: TurnInput): PreparedTurn
 	/** `price` is an admin override for platforms that report no cost. */

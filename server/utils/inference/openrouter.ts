@@ -120,7 +120,7 @@ function openrouterCost(raw: unknown): number | null {
 
 export const openrouterPlatform: InferencePlatform = {
 	id: 'openrouter',
-	capabilities: { providerRouting: true, safetyCheck: false, nativeTitle: false, sttModel: true },
+	capabilities: { providerRouting: true, safetyCheck: false, nativeTitle: false, sttModel: true, decisions: true },
 
 	async checkKey(apiKey) {
 		const response = await fetch(`${BASE_URL}/key`, { headers: { Authorization: `Bearer ${apiKey}` } })
@@ -144,6 +144,11 @@ export const openrouterPlatform: InferencePlatform = {
 			pricing: null,
 			pricePerMinute: model.pricing.prompt ? Number(model.pricing.prompt) * 60 : null,
 		}))
+	},
+
+	async listDecisionModels(apiKey) {
+		const { data } = await get<{ data: OpenRouterModel[] }>('/models?output_modalities=decisions', apiKey)
+		return data.map(toOpenRouterModel)
 	},
 
 	async listEndpoints(apiKey, modelId) {

@@ -11,16 +11,16 @@ const { data: settings } = useQuery(adminSettingsQuery)
 const platformNames: Record<PlatformId, string> = { openrouter: 'OpenRouter', deepseek: 'DeepSeek' }
 const platformIds: PlatformId[] = ['openrouter', 'deepseek']
 
-type CatalogKind = 'chat' | 'stt'
+type CatalogKind = 'chat' | 'stt' | 'decisions'
 // Each platform's catalog with its own key, active or not. Loaded in the browser: catalogs are large.
 function useAdminCatalog(platform: PlatformId, kind: CatalogKind) {
 	return useQuery(() => ({
 		...adminCatalogQuery({ platform, kind }),
 		enabled: import.meta.client && !!settings.value?.platforms[platform].hasKey
-			&& (kind === 'chat' || settings.value.capabilities[platform].sttModel),
+			&& (kind === 'chat' || (kind === 'stt' ? settings.value.capabilities[platform].sttModel : settings.value.capabilities[platform].decisions)),
 	}))
 }
-const catalogs = Object.fromEntries(platformIds.map(id => [id, { chat: useAdminCatalog(id, 'chat'), stt: useAdminCatalog(id, 'stt') }])) as Record<PlatformId, Record<CatalogKind, ReturnType<typeof useAdminCatalog>>>
+const catalogs = Object.fromEntries(platformIds.map(id => [id, { chat: useAdminCatalog(id, 'chat'), stt: useAdminCatalog(id, 'stt'), decisions: useAdminCatalog(id, 'decisions') }])) as Record<PlatformId, Record<CatalogKind, ReturnType<typeof useAdminCatalog>>>
 
 /** Props for a `ModelField` choosing from one platform's catalog. */
 function picker(id: PlatformId, kind: CatalogKind) {
@@ -37,7 +37,8 @@ function picker(id: PlatformId, kind: CatalogKind) {
 // Form state, filled from the server and refilled from each save's response.
 const general = reactive({ signupMode: 'invite' as 'invite' | 'open' | 'closed', defaultMonthlyBudgetUsd: null as number | null })
 const active = ref<PlatformId | 'none'>('none')
-const platformForms = reactive(Object.fromEntries(platformIds.map(id => [id, { apiKey: '', defaultModel: '', titleModel: '', sttModel: '' }])) as Record<PlatformId, { apiKey: string, defaultModel: string, titleModel: string, sttModel: string }>)
+type PlatformForm = { apiKey: string, defaultModel: string, titleModel: string, sttModel: string, decisionModel: string }
+const platformForms = reactive(Object.fromEntries(platformIds.map(id => [id, { apiKey: '', defaultModel: '', titleModel: '', sttModel: '', decisionModel: '' }])) as Record<PlatformId, PlatformForm>)
 const safetyCheck = ref(false)
 const limits = reactive({ maxChatModels: 4, maxRegenerations: 50, maxRetries: 5 })
 
@@ -49,7 +50,7 @@ function fill(view: NonNullable<typeof settings.value>) {
 	safetyCheck.value = view.safetyCheck
 	for (const id of platformIds) {
 		const config = view.platforms[id]
-		Object.assign(platformForms[id], { apiKey: '', defaultModel: config.defaultModel ?? '', titleModel: config.titleModel ?? '', sttModel: config.sttModel ?? '' })
+		Object.assign(platformForms[id], { apiKey: '', defaultModel: config.defaultModel ?? '', titleModel: config.titleModel ?? '', sttModel: config.sttModel ?? '', decisionModel: config.decisionModel ?? '' })
 	}
 }
 // The form fills in once the settings arrive (the page shows skeletons until then); later refreshes leave edits alone.
@@ -82,6 +83,7 @@ function savePlatform(id: PlatformId) {
 				defaultModel: form.defaultModel.trim() || null,
 				...(!capabilities.nativeTitle && { titleModel: form.titleModel.trim() || null }),
 				...(capabilities.sttModel && { sttModel: form.sttModel.trim() || null }),
+				...(capabilities.decisions && { decisionModel: form.decisionModel.trim() || null }),
 			},
 		},
 		...(capabilities.safetyCheck && { safetyCheck: safetyCheck.value }),
@@ -192,6 +194,21 @@ const platformChoices = computed(() => [
 						clearable
 						@update:model-value="platformForms[id].sttModel = $event ?? ''"
 						@retry="catalogs[id].stt.refetch()"
+					/>
+				</UFormField>
+
+				<UFormField
+					v-if="settings.capabilities[id].decisions"
+					label="Decision model"
+					description="Picks who answers in group chats when a message names nobody with “@”. Used whenever an OpenRouter key is stored, even while another platform answers. Suggested: TypeSafe Jev (typesafe/jev-1.14)."
+				>
+					<ModelField
+						v-bind="picker(id, 'decisions')"
+						:model-value="platformForms[id].decisionModel || null"
+						placeholder="None: names in the message decide"
+						clearable
+						@update:model-value="platformForms[id].decisionModel = $event ?? ''"
+						@retry="catalogs[id].decisions.refetch()"
 					/>
 				</UFormField>
 

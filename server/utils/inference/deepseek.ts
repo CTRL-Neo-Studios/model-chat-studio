@@ -149,7 +149,7 @@ function deepseekModel(input: TurnInput) {
 
 export const deepseekPlatform: InferencePlatform = {
 	id: 'deepseek',
-	capabilities: { providerRouting: false, safetyCheck: true, nativeTitle: true, sttModel: false },
+	capabilities: { providerRouting: false, safetyCheck: true, nativeTitle: true, sttModel: false, decisions: false },
 
 	async checkKey(apiKey) {
 		const response = await fetch(`${BASE_URL}/models`, { headers: { Authorization: `Bearer ${apiKey}` } })

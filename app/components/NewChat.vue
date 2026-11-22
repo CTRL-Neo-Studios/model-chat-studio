@@ -92,11 +92,14 @@ const userCharacterId = computed({
 	get: () => userCharacterChoice.value !== undefined ? userCharacterChoice.value : me.value?.preferences.characterId ?? null,
 	set: (value: string | null) => userCharacterChoice.value = value,
 })
-const { items: mentions, partsFor } = useLibraryMentions(() => libraryIds.value.flatMap(id => (libraryList.value ?? []).find(library => library.id === id) ?? []))
+const { items: libraryMentions, partsFor } = useLibraryMentions(() => libraryIds.value.flatMap(id => (libraryList.value ?? []).find(library => library.id === id) ?? []))
 const references = ref<string[]>([])
 
 // Separate answers, or a group chat where the models share one thread and answer in turn; fixed once the chat starts.
 const mode = ref<'separate' | 'group'>('separate')
+// "@" in a group chat names the participants first: picked ones answer the first round, in the order written.
+const participants = useParticipantMentions(() => mode.value === 'group' ? enabledLanes.value.map(lane => chatLanes.laneName(lane)) : [])
+const mentions = computed(() => [...participants.items.value, ...libraryMentions.value])
 
 async function createChat(prompt: string) {
 	// Typing can start at once; sending waits until the models and any folder defaults are in.
@@ -113,7 +116,7 @@ async function createChat(prompt: string) {
 			headers: { [headerName]: csrf },
 			body: {
 				id: chatId,
-				message: { id: crypto.randomUUID(), role: 'user', parts: [...(prompt.trim() ? [{ type: 'text', text: prompt }] : []), ...fileParts.value, ...partsFor(references.value)] },
+				message: { id: crypto.randomUUID(), role: 'user', parts: [...(prompt.trim() ? [{ type: 'text', text: prompt }] : []), ...fileParts.value, ...partsFor(references.value), ...(mode.value === 'group' ? participants.partsFor(references.value) : [])] },
 				settings: settings.value,
 				models: lanes.value.map(({ id: _, position: __, platform: ___, profileId, ...fields }) => ({ ...fields, profileId: profileId ?? undefined })),
 				temporary: props.temporary || undefined,

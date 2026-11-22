@@ -29,6 +29,8 @@ const emit = defineEmits<{
 
 const streaming = computed(() => props.pending?.status === 'streaming')
 const writing = computed(() => props.pending?.status === 'submitted' || streaming.value)
+// A group speaker still waiting for its turn in the round.
+const queued = computed(() => props.pending?.status === 'queued')
 </script>
 
 <template>
@@ -37,7 +39,7 @@ const writing = computed(() => props.pending?.status === 'submitted' || streamin
 			<span :class="['size-2.5 rounded-full shrink-0', label.color ? LANE_COLOR_CLASSES[label.color] : 'border border-dashed border-accented']" />
 			<span class="text-sm font-medium text-highlighted truncate">{{ label.name }}</span>
 			<UButton
-				v-if="writing && isOwner"
+				v-if="(writing || queued) && isOwner"
 				icon="i-lucide-square"
 				size="xs"
 				color="neutral"
@@ -54,6 +56,9 @@ const writing = computed(() => props.pending?.status === 'submitted' || streamin
 				<ChatIndicator />
 				<UChatShimmer text="Thinking..." class="text-sm" />
 			</div>
+			<p v-else-if="queued && !message" class="py-1 text-sm text-muted">
+				Answers after the ones above
+			</p>
 
 			<ChatMessageContent
 				v-if="message"

@@ -4,13 +4,13 @@ import { z } from 'zod'
 import { adminAbilities } from '#shared/abilities/adminAbilities'
 import { authorize } from '#server/utils/core/authorize'
 import { getInstanceSettings } from '#server/utils/core/settings'
-import { getFullCatalog, getSttCatalog, instanceInference } from '#server/utils/inference'
+import { getFullCatalog, getKindCatalog, instanceInference } from '#server/utils/inference'
 
 const querySchema = z.object({
 	/** Defaults to the active platform. */
 	platform: z.enum(['openrouter', 'deepseek']).optional(),
-	/** `stt`: speech-to-text models, for the `sttModel` setting. */
-	kind: z.enum(['chat', 'stt']).default('chat'),
+	/** `stt`: speech-to-text models, for the `sttModel` setting; `decisions`: for `decisionModel`. */
+	kind: z.enum(['chat', 'stt', 'decisions']).default('chat'),
 })
 
 /**
@@ -25,7 +25,7 @@ export default defineEventHandler(async (event) => {
 	const inference = await instanceInference(db, id)
 	if (!inference) return { platform: id, hasKey: false, models: [] }
 
-	const catalog = await (query.kind === 'stt' ? getSttCatalog(inference) : getFullCatalog(inference)).catch(() => {
+	const catalog = await (query.kind === 'chat' ? getFullCatalog(inference) : getKindCatalog(inference, query.kind)).catch(() => {
 		throw createError({ status: 502, statusText: 'The platform did not return its models. Check the key, or try again.' })
 	})
 	const byModel = Object.fromEntries((await getInstanceSettings(db)).models.filter(row => row.platform === id).map(row => [row.modelId, row]))

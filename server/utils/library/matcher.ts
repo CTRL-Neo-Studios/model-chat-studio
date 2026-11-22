@@ -21,11 +21,17 @@ export interface Scanned {
 
 const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-/** Whether a tag appears in a text: case-insensitive, and as a whole word when it is plain Latin letters and digits. */
-export function tagMatches(tag: string, text: string) {
-	if (/^[a-z0-9]+$/i.test(tag)) return new RegExp(`(?<![a-z0-9])${escape(tag)}(?![a-z0-9])`, 'i').test(text)
-	return text.toLowerCase().includes(tag.toLowerCase())
+/**
+ * Where a tag first appears in a text, or -1: case-insensitive, and as a whole word when it is plain Latin letters and
+ * digits. Also how a group chat finds a participant's name in a message.
+ */
+export function tagIndex(tag: string, text: string) {
+	if (/^[a-z0-9]+$/i.test(tag)) return text.search(new RegExp(`(?<![a-z0-9])${escape(tag)}(?![a-z0-9])`, 'i'))
+	return text.toLowerCase().indexOf(tag.toLowerCase())
 }
+
+/** Whether a tag appears in a text, by the rule of `tagIndex`. */
+export const tagMatches = (tag: string, text: string) => tagIndex(tag, text) !== -1
 
 /**
  * What auto-fetch searches: the last `scanMessages` messages of the scanned roles together (the newest has age 0)

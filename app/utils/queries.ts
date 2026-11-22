@@ -120,7 +120,7 @@ export const adminSettingsQuery = defineQueryOptions({
 })
 
 /** A platform's catalog with its instance key; without `platform`, the active one's. */
-export const adminCatalogQuery = defineQueryOptions(({ platform, kind = 'chat' }: { platform?: 'openrouter' | 'deepseek', kind?: 'chat' | 'stt' }) => ({
+export const adminCatalogQuery = defineQueryOptions(({ platform, kind = 'chat' }: { platform?: 'openrouter' | 'deepseek', kind?: 'chat' | 'stt' | 'decisions' }) => ({
 	key: ['admin', 'catalog', platform ?? 'active', kind],
 	query: () => useRequestFetch()('/api/v1/admin/models', { query: { platform, kind } }),
 	staleTime: FIVE_MINUTES,

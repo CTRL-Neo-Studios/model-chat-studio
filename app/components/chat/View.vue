@@ -33,7 +33,7 @@ const group = computed(() => data.value?.mode === 'group')
 const libraries = computed(() => data.value?.libraries ?? [])
 // "Add to library" copies into a library, which only its owner and editors change.
 const editableLibraries = computed(() => libraries.value.filter(library => library.role === 'owner' || library.role === 'editor'))
-const { items: mentions, partsFor } = useLibraryMentions(() => isOwner.value ? libraries.value.filter(library => library.role) : [])
+const { items: libraryMentions, partsFor } = useLibraryMentions(() => isOwner.value ? libraries.value.filter(library => library.role) : [])
 const references = ref<string[]>([])
 const { data: libraryList } = useQuery(() => ({ ...librariesQuery, enabled: import.meta.client && isOwner.value }))
 /** Attaches and detaches libraries; shown at once, and read again from the server if it refuses one. */
@@ -91,6 +91,9 @@ const { data: me } = useQuery(() => ({ ...meQuery, enabled: import.meta.client &
 const chatLanes = useChatLanes(data.value ?? undefined)
 const { lanes, enabledLanes, settings, laneModel, laneName, laneColor } = chatLanes
 const answeringModels = computed(() => enabledLanes.value.flatMap(lane => laneModel(lane) ?? []))
+// "@" in a group chat names the participants first, then the libraries' files.
+const participants = useParticipantMentions(() => group.value ? enabledLanes.value.map(lane => laneName(lane)) : [])
+const mentions = computed(() => [...participants.items.value, ...libraryMentions.value])
 
 const input = ref('')
 const { uploads, promptFiles, uploading, parts: fileParts, clear: clearFiles } = usePromptUploads(chatId)
@@ -187,7 +190,8 @@ async function runCommand(kind: PromptCommand['kind']) {
 
 /**
  * One answer slot per lane that answered (or is answering) the question, then answers of removed lanes. In a group
- * chat, in speaking order: the round's `speakers`, then answers given since, as they arrived.
+ * chat, in speaking order: the round's `speakers` (those still waiting included), then answers given since, as they
+ * arrived.
  */
 function slotsFor(questionId: string) {
 	const speakers = group.value ? question(questionId).metadata?.speakers ?? [] : []
@@ -196,17 +200,17 @@ function slotsFor(questionId: string) {
 		return index === -1 ? speakers.length : index
 	}
 	const given = messages.value.filter(message => message.role === 'assistant' && message.parentId === questionId)
-	const ordered = group.value
-		? given.map((message, order) => ({ message, order })).sort((a, b) => place(a.message.chatModelId) - place(b.message.chatModelId) || a.order - b.order).map(({ message }) => message)
-		: given
+	const arrived = (laneId: string) => {
+		const index = given.findIndex(answer => answer.chatModelId === laneId)
+		return index === -1 ? given.length : index
+	}
 	const byLane = (lane: (typeof lanes.value)[number]) => {
 		const message = given.find(answer => answer.chatModelId === lane.id)
 		const pending = answers.pending.value[answers.keyOf(questionId, lane.id)]
 		return message || pending ? [{ key: lane.id, lane, message, pending, label: message?.metadata?.lane ?? { name: laneName(lane), color: laneColor(lane) } }] : []
 	}
-	const slots = group.value
-		? [...ordered.flatMap(message => lanes.value.filter(lane => lane.id === message.chatModelId)), ...lanes.value.filter(lane => !given.some(answer => answer.chatModelId === lane.id))].flatMap(byLane)
-		: lanes.value.flatMap(byLane)
+	const slots = (group.value ? lanes.value.toSorted((a, b) => place(a.id) - place(b.id) || arrived(a.id) - arrived(b.id)) : lanes.value).flatMap(byLane)
+	const ordered = group.value ? given.toSorted((a, b) => place(a.chatModelId) - place(b.chatModelId)) : given
 	const removed = ordered.filter(answer => !lanes.value.some(lane => lane.id === answer.chatModelId)).map(message => ({
 		key: message.id, lane: undefined, message, pending: undefined, label: message.metadata?.lane ?? { name: message.metadata?.model ?? 'Removed model', color: null },
 	}))
@@ -233,10 +237,23 @@ function handleSubmit(e: Event) {
 	}
 	input.value = ''
 	clearFiles()
-	const parts = [...(text.trim() ? [{ type: 'text' as const, text }] : []), ...files, ...partsFor(references.value)]
+	const parts = [...(text.trim() ? [{ type: 'text' as const, text }] : []), ...files, ...partsFor(references.value), ...participants.partsFor(references.value)]
 	references.value = []
-	answers.send({ id: crypto.randomUUID(), role: 'user', parts }, enabledLanes.value.map(lane => lane.id))
+	answers.send({ id: crypto.randomUUID(), role: 'user', parts }, roundOrder(parts))
 }
+
+/** Who answers a group round, in order, as the server chooses; nobody when it cannot be asked. */
+async function speakersFor(parts: UIMessage['parts']) {
+	try {
+		return (await $fetch(`/api/v1/chats/${chatId}/speakers`, { method: 'POST', headers: { [headerName]: csrf }, body: speakersQuestion(parts) })).speakers
+	}
+	catch (error) {
+		toast.add({ description: serverMessage(error) ?? 'Could not choose who answers', icon: 'i-lucide-alert-circle', color: 'error' })
+		return []
+	}
+}
+/** A round's lanes: in a group chat those the server chooses, else every model that is on. */
+const roundOrder = (parts: UIMessage['parts']) => group.value ? speakersFor(parts) : enabledLanes.value.map(lane => lane.id)
 
 const editingMessageId = ref<string | null>(null)
 
@@ -261,7 +278,7 @@ async function saveEdit(message: UIMessage, text: string, resend: boolean) {
 		toast.add({ description: serverMessage(error) ?? 'Failed to save the message', icon: 'i-lucide-alert-circle', color: 'error' })
 		return
 	}
-	if (resend) answers.regenerateAll(question(message.id), enabledLanes.value.map(lane => lane.id))
+	if (resend) answers.regenerateAll(question(message.id), roundOrder(question(message.id).parts))
 }
 
 const deleteModal = useOverlay().create(LazyModalConfirm)
@@ -312,7 +329,7 @@ async function vote(message: UIMessage, isUpvoted: boolean) {
 onMounted(() => {
 	const [first] = messages.value
 	if (isOwner.value && messages.value.length === 1 && first && props.firstAnswer) {
-		answers.regenerateAll(first, enabledLanes.value.map(lane => lane.id))
+		answers.regenerateAll(first, roundOrder(first.parts))
 	}
 })
 </script>

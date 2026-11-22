@@ -4,9 +4,12 @@ import type { MessageMetadata } from '#shared/utils/chat'
 /** A message as the chat page holds it: answers know their lane and the user message they answer. */
 export type ChatMessage = UIMessage<MessageMetadata> & { chatModelId?: string | null, parentId?: string | null, createdAt?: string | Date }
 
-/** An answer being written, or one that failed before it was saved. Keyed by `<question id>:<lane id>`. */
+/**
+ * An answer being written, waiting for its turn in a group round (`queued`), or one that failed before it was saved.
+ * Keyed by `<question id>:<lane id>`.
+ */
 export interface PendingAnswer {
-	status: 'submitted' | 'streaming' | 'error'
+	status: 'queued' | 'submitted' | 'streaming' | 'error'
 	error?: string
 	controller: AbortController
 }
@@ -49,7 +52,9 @@ export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, opt
 	})
 
 	const pending = ref<Record<string, PendingAnswer>>({})
-	const busy = computed(() => Object.values(pending.value).some(entry => entry.status !== 'error'))
+	// While a group chat asks who answers the round.
+	const deciding = ref(false)
+	const busy = computed(() => deciding.value || Object.values(pending.value).some(entry => entry.status !== 'error'))
 	const keyOf = (questionId: string, laneId: string) => `${questionId}:${laneId}`
 
 	const answerOf = (questionId: string, laneId: string) =>
@@ -107,22 +112,38 @@ export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, opt
 		return !controller.signal.aborted
 	}
 
+	/** Shows a round's order at once, as the server will record it while the speakers answer. */
+	function setSpeakers(questionId: string, speakers: string[]) {
+		messages.value = messages.value.map(message => message.id === questionId ? { ...message, metadata: { ...message.metadata, speakers } } : message)
+	}
+
+	/** Forgets the speakers still waiting for their turn in a round that ended. */
+	function clearQueued(questionId: string) {
+		pending.value = Object.fromEntries(Object.entries(pending.value).filter(([key, entry]) => !(entry.status === 'queued' && key.startsWith(`${questionId}:`))))
+	}
+
 	/**
 	 * Asks each lane to answer: all at once, or in a group chat one after another, so each speaker reads the answers
-	 * before it. There a stopped or failed answer ends the round.
+	 * before it; those still waiting show as queued. There a stopped or failed answer ends the round.
 	 */
-	async function ask(laneIds: string[], question: ChatMessage, trigger: 'submit-message' | 'regenerate-message') {
+	async function ask(order: string[] | Promise<string[]>, question: ChatMessage, trigger: 'submit-message' | 'regenerate-message') {
+		deciding.value = true
+		const laneIds = await Promise.resolve(order).finally(() => deciding.value = false)
 		if (!options.inTurn?.()) {
 			for (const laneId of laneIds) stream(laneId, question, trigger)
 			return
 		}
+		setSpeakers(question.id, laneIds)
+		pending.value = { ...pending.value, ...Object.fromEntries(laneIds.map(laneId => [keyOf(question.id, laneId), { status: 'queued' as const, controller: new AbortController() }])) }
 		for (const laneId of laneIds) {
-			if (!await stream(laneId, question, trigger)) return
+			const waiting = pending.value[keyOf(question.id, laneId)]
+			if (waiting?.status !== 'queued' || waiting.controller.signal.aborted || !await stream(laneId, question, trigger)) break
 		}
+		clearQueued(question.id)
 	}
 
-	/** Adds a user message and asks each lane to answer it. */
-	function send(question: ChatMessage, laneIds: string[]) {
+	/** Adds a user message and asks each lane to answer it; in a group chat, the lanes chosen for the round, in order. */
+	function send(question: ChatMessage, laneIds: string[] | Promise<string[]>) {
 		messages.value = [...messages.value, question]
 		return ask(laneIds, question, 'submit-message')
 	}
@@ -133,7 +154,7 @@ export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, opt
 	}
 
 	/** Asks each lane to answer a user message again, as `send` does. */
-	function regenerateAll(question: ChatMessage, laneIds: string[]) {
+	function regenerateAll(question: ChatMessage, laneIds: string[] | Promise<string[]>) {
 		return ask(laneIds, question, 'regenerate-message')
 	}
 

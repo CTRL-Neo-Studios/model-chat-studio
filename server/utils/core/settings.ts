@@ -14,6 +14,8 @@ const platformConfigSchema = z.object({
 	defaultModel: z.string().optional(),
 	titleModel: z.string().optional(),
 	sttModel: z.string().optional(),
+	/** OpenRouter only: the Decisions model that picks a group round's speakers; empty is off. */
+	decisionModel: z.string().optional(),
 })
 
 export type PlatformConfig = z.infer<typeof platformConfigSchema>

@@ -24,11 +24,17 @@ export const referencePartSchema = z.object({
 	id: z.string().max(64).optional(),
 	data: z.object({ entryId: z.uuid(), name: z.string().max(2000), kind: z.enum(['folder', 'file', 'note']) }),
 })
+/** An "@" pick of a participant in a group chat, by name; it chooses who answers (`POST /chats/:id/speakers`). */
+export const mentionPartSchema = z.object({
+	type: z.literal('data-mention'),
+	id: z.string().max(64).optional(),
+	data: z.object({ name: z.string().min(1).max(200) }),
+})
 
 export const userMessageSchema = z.object({
 	id: z.string().min(1).max(64),
 	role: z.literal('user'),
-	parts: z.array(z.discriminatedUnion('type', [textPartSchema, filePartSchema, referencePartSchema])).min(1).max(40),
+	parts: z.array(z.discriminatedUnion('type', [textPartSchema, filePartSchema, referencePartSchema, mentionPartSchema])).min(1).max(40),
 })
 
 type UserMessageParts = z.infer<typeof userMessageSchema>['parts']
@@ -245,8 +251,8 @@ export async function editMessage(db: Db, chatId: string, messageId: string, edi
 		let metadata = message.metadata
 		if (message.role === 'user') {
 			if (message.parts.some(part => part.type === 'file')) throw createError({ status: 400, statusText: 'A message with attachments cannot be edited' })
-			// Its "@" references stay; the new text may name them or not.
-			parts = [{ type: 'text', text: edit.text }, ...message.parts.filter(part => part.type === 'data-reference')]
+			// Its "@" references and mentions stay; the new text may name them or not.
+			parts = [{ type: 'text', text: edit.text }, ...message.parts.filter(part => part.type === 'data-reference' || part.type === 'data-mention')]
 			// Its answers go with "Save and resend", and so does the round's order.
 			if (edit.dropAfter && metadata?.speakers) {
 				const { speakers: _, ...rest } = metadata
