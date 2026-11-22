@@ -41,7 +41,7 @@ test('a lane started from a profile copies it, with the given fields on top; ano
 	]).returning()
 
 	expect(await newLaneValues(db, a!.id, { profileId: mine!.id })).toEqual({
-		profileId: mine!.id, name: 'Mine', color: 'violet', platform: 'openrouter', modelId: 'x/one', systemPrompt: 'Be brief.', params: { temperature: 0.3 },
+		profileId: mine!.id, name: 'Mine', color: 'violet', platform: 'openrouter', modelId: 'x/one', systemPrompt: 'Be brief.', params: { temperature: 0.3 }, characterId: null,
 	})
 	expect(await newLaneValues(db, a!.id, { profileId: published!.id, systemPrompt: '', params: { topK: 5 } })).toMatchObject({
 		profileId: published!.id, modelId: 'x/two', systemPrompt: null, params: { topK: 5 },

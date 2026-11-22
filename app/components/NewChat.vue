@@ -74,6 +74,13 @@ const defaults = folder ? nearestDefaults(folderList.value ?? [], folder.id) : n
 // Libraries left and profiles deleted since the defaults were set are skipped.
 const libraryIds = ref((defaults?.libraryIds ?? []).filter(id => libraryList.value?.some(library => library.id === id)))
 const structureProfileId = ref(profileList.value?.find(profile => profile.id === defaults?.structureProfileId)?.id ?? null)
+// Who the user is: their default Character from the settings until they pick another here.
+const { data: me } = useQuery(meQuery)
+const userCharacterChoice = ref<string | null>()
+const userCharacterId = computed({
+	get: () => userCharacterChoice.value !== undefined ? userCharacterChoice.value : me.value?.preferences.characterId ?? null,
+	set: (value: string | null) => userCharacterChoice.value = value,
+})
 const { items: mentions, partsFor } = useLibraryMentions(() => libraryIds.value.flatMap(id => (libraryList.value ?? []).find(library => library.id === id) ?? []))
 const references = ref<string[]>([])
 
@@ -98,6 +105,8 @@ async function createChat(prompt: string) {
 				// Sent as chosen, so a default removed here stays removed.
 				libraryIds: libraryIds.value,
 				structureProfileId: structureProfileId.value,
+				// Left out until changed here, so the server applies the member's default.
+				userCharacterId: userCharacterChoice.value,
 				folderId: folder?.id,
 			},
 		})
@@ -181,7 +190,7 @@ const quickChats = [
 						@command="startTemporary"
 					>
 						<template #tools>
-							<ChatContextSettings v-model:library-ids="libraryIds" v-model:structure-profile-id="structureProfileId" :settings="settings" @change="chatLanes.setSettings($event)" />
+							<ChatContextSettings v-model:library-ids="libraryIds" v-model:structure-profile-id="structureProfileId" v-model:user-character-id="userCharacterId" :settings="settings" @change="chatLanes.setSettings($event)" />
 						</template>
 					</ChatPrompt>
 

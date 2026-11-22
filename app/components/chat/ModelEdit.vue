@@ -31,8 +31,8 @@ async function reset() {
 		toast.add({ description: 'The profile no longer exists', icon: 'i-lucide-alert-circle', color: 'error' })
 		return
 	}
-	const { name, color, modelId, systemPrompt, params } = profile
-	draft.value = { ...draft.value, name, color, modelId, systemPrompt, params: { ...params } }
+	const { name, color, modelId, systemPrompt, params, characterId } = profile
+	draft.value = { ...draft.value, name, color, modelId, systemPrompt, params: { ...params }, characterId }
 }
 </script>
 

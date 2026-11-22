@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { laneFieldsSchema } from '#shared/utils/chat'
 import { requireChat } from '#server/utils/chat/access'
 import { assertLaneLimit, countEnabledLanes, findChatModel, laneValues } from '#server/utils/chat/lanes'
+import { assertCharacterUsable } from '#server/utils/chat/characters'
 
 const bodySchema = laneFieldsSchema.partial().extend({
 	/** Display order; the client swaps two lanes' positions to move one. */
@@ -22,6 +23,7 @@ export default defineEventHandler(async (event) => {
 	])
 	if (!lane) throw createError({ status: 404, statusText: 'Model not found in this chat' })
 	if (fields.enabled && !lane.enabled) await assertLaneLimit(db, enabled + 1)
+	await assertCharacterUsable(db, chat.userId, fields.characterId)
 
 	const [updated] = await db.update(schema.chatModel).set(await laneValues(db, fields))
 		.where(eq(schema.chatModel.id, lane.id))

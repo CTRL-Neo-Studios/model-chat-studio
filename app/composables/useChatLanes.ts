@@ -16,6 +16,7 @@ export interface LaneSource {
 	modelId: string
 	systemPrompt: string | null
 	params: LaneFields['params']
+	characterId: string | null
 }
 
 interface SavedChat {
@@ -39,13 +40,17 @@ export function useChatLanes(chat?: SavedChat) {
 
 	/** The model a lane answers with: its own while offered, else the platform's default. */
 	const laneModel = (lane: Pick<Lane, 'modelId'>) => resolveModel(lane.modelId ?? undefined)
-	const laneName = (lane: Pick<Lane, 'name' | 'modelId'>) => lane.name ?? laneModel(lane)?.name ?? lane.modelId ?? 'Default model'
+	// A lane with a Character is called by the Character's name, and wears its colour unless it has its own.
+	const { data: characterList } = useQuery(charactersQuery)
+	const laneCharacter = (lane: Pick<Lane, 'characterId'>) => lane.characterId ? characterList.value?.find(character => character.id === lane.characterId) : undefined
+	const laneName = (lane: Pick<Lane, 'name' | 'modelId' | 'characterId'>) => laneCharacter(lane)?.name ?? lane.name ?? laneModel(lane)?.name ?? lane.modelId ?? 'Default model'
+	const laneColor = (lane: Pick<Lane, 'color' | 'characterId'>) => lane.color ?? laneCharacter(lane)?.color ?? null
 
 	function draft(fields: Partial<Lane>): Lane {
-		return { id: crypto.randomUUID(), profileId: null, position: 0, platform: null, enabled: true, name: null, color: null, modelId: null, systemPrompt: null, params: {}, ...fields }
+		return { id: crypto.randomUUID(), profileId: null, position: 0, platform: null, enabled: true, name: null, color: null, modelId: null, systemPrompt: null, params: {}, characterId: null, ...fields }
 	}
 	const fromProfile = (profile: LaneSource): Partial<Lane> => ({
-		profileId: profile.id, name: profile.name, color: profile.color, modelId: profile.modelId, systemPrompt: profile.systemPrompt, params: { ...profile.params },
+		profileId: profile.id, name: profile.name, color: profile.color, modelId: profile.modelId, systemPrompt: profile.systemPrompt, params: { ...profile.params }, characterId: profile.characterId,
 	})
 
 	function replace(lane: Lane) {
@@ -127,7 +132,7 @@ export function useChatLanes(chat?: SavedChat) {
 		if (base && !await act(base, { method: 'PATCH', body: { settings: settings.value } })) settings.value = before
 	}
 
-	return { saved: !!chat, lanes, settings, enabledLanes, adding, laneModel, laneName, draft, fromProfile, add, duplicate, update, remove, move, applyToProfile, setSettings }
+	return { saved: !!chat, lanes, settings, enabledLanes, adding, laneModel, laneName, laneColor, draft, fromProfile, add, duplicate, update, remove, move, applyToProfile, setSettings }
 }
 
 export type ChatLanes = ReturnType<typeof useChatLanes>

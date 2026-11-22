@@ -1,4 +1,5 @@
 import { defineEventHandler, getRouterParam, readValidatedBody } from 'nuxt/server'
+import { assertProfileCharacter } from '#server/utils/chat/characters'
 import { db, schema } from 'hub:db'
 import { eq } from 'drizzle-orm'
 import { profileAbilities } from '#shared/abilities/profileAbilities'
@@ -16,6 +17,7 @@ export default defineEventHandler(async (event) => {
 	const profile = await findModelProfile(db, getRouterParam(event, 'id', { decode: true }))
 	await authorize(event, profileAbilities().manageProfile, profile)
 	const fields = await readValidatedBody(event, bodySchema)
+	await assertProfileCharacter(db, user.id, fields.characterId, profile!.ownerId)
 
 	const [updated] = await db.update(schema.modelProfile).set({
 		...fields,

@@ -1,4 +1,5 @@
 import { defineEventHandler, readValidatedBody } from 'nuxt/server'
+import { assertProfileCharacter } from '#server/utils/chat/characters'
 import { db, schema } from 'hub:db'
 import { z } from 'zod'
 import { profileAbilities } from '#shared/abilities/profileAbilities'
@@ -18,6 +19,7 @@ export default defineEventHandler(async (event) => {
 	await authorize(event, profileAbilities().useProfiles)
 	const { instance, ...fields } = await readValidatedBody(event, bodySchema)
 	if (instance) await authorize(event, profileAbilities().publishProfiles)
+	await assertProfileCharacter(db, user.id, fields.characterId, instance ? null : user.id)
 
 	const { platform, model } = await findOfferedModel(db, user.id, fields.modelId)
 	const [profile] = await db.insert(schema.modelProfile).values({

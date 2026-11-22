@@ -9,6 +9,7 @@ import { fallbackTitle, listChatShares } from '#server/utils/chat/turns'
 import { profileAbilities } from '#shared/abilities/profileAbilities'
 import { authorize } from '#server/utils/core/authorize'
 import { findStructureProfile } from '#server/utils/chat/structureProfiles'
+import { assertCharacterUsable } from '#server/utils/chat/characters'
 
 const bodySchema = z.object({
 	title: z.string().trim().min(1).max(200),
@@ -22,9 +23,11 @@ const bodySchema = z.object({
 	temporary: z.literal(false),
 	/** A structure profile of the owner's (or an instance one); `null`: none. */
 	structureProfileId: z.uuid().nullable(),
+	/** Who the user is in this chat: one of the owner's Characters or an instance one; `null`: nobody. */
+	userCharacterId: z.uuid().nullable(),
 }).partial().strict()
 
-/** Owner only: title, link access, people, folder, keeping a temporary chat, structure profile, and the settings shared by every lane. */
+/** Owner only: title, link access, people, folder, keeping a temporary chat, structure profile, the user's Character, and the settings shared by every lane. */
 export default defineEventHandler(async (event) => {
 	const chat = await requireChat(event, 'manageChat')
 	const { sharedWith, ...fields } = await readValidatedBody(event, bodySchema)
@@ -41,6 +44,7 @@ export default defineEventHandler(async (event) => {
 		if (!folder) throw createError({ status: 404, statusText: 'Folder not found' })
 	}
 	if (fields.structureProfileId) await authorize(event, profileAbilities().readProfile, await findStructureProfile(db, fields.structureProfileId))
+	await assertCharacterUsable(db, chat.userId, fields.userCharacterId)
 	if (chat.temporary && fields.temporary === false && !chat.title && !fields.title) {
 		const [first] = await db.select({ parts: schema.message.parts }).from(schema.message)
 			.where(and(eq(schema.message.chatId, chat.id), eq(schema.message.role, 'user')))

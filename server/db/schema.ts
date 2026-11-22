@@ -134,6 +134,8 @@ export const chat = pgTable("chat", {
 	temporary: boolean().notNull().default(false),
 	/** The chat's structure profile: blocks sent around its thread. `null` sends the thread as it is. */
 	structureProfileId: uuid().references((): AnyPgColumn => structureProfile.id, { onDelete: "set null" }),
+	/** Who the user is in this chat: its name stands for `{{user}}`, its instructions tell the models about them. */
+	userCharacterId: uuid().references((): AnyPgColumn => character.id, { onDelete: "set null" }),
 
 	...createdUpdatedAtColumns
 }, (t) => [
@@ -152,6 +154,8 @@ export const modelProfile = pgTable("modelProfile", {
 	/** `null` uses the default instructions. */
 	systemPrompt: text(),
 	params: jsonb().$type<ModelParams>().notNull().default({}),
+	/** The Character lanes started from this profile begin with. */
+	characterId: uuid().references((): AnyPgColumn => character.id, { onDelete: "set null" }),
 
 	...createdUpdatedAtColumns
 }, (t) => [
@@ -175,6 +179,8 @@ export const chatModel = pgTable("chatModel", {
 	modelId: text(),
 	systemPrompt: text(),
 	params: jsonb().$type<ModelParams>().notNull().default({}),
+	/** Who the lane is; its instructions replace `systemPrompt` while it is set. Edits to the Character apply at once. */
+	characterId: uuid().references((): AnyPgColumn => character.id, { onDelete: "set null" }),
 	createdAt,
 }, (t) => [
 	index().on(t.chatId, t.position),
@@ -283,6 +289,32 @@ export const structureProfile = pgTable("structureProfile", {
 	index().on(t.ownerId),
 ]);
 
+/**
+ * A Character: who a lane is in a chat (an Engineer, a Designer, a persona), or who the user is. Its instructions take
+ * the place of the lane's system prompt. `ownerId` `null` is an instance Character, published by an admin.
+ */
+export const character = pgTable("character", {
+	id: uuid().primaryKey().defaultRandom(),
+	ownerId: uuid().references(() => user.id, { onDelete: "cascade" }),
+	name: text().notNull(),
+	color: text({ enum: LANE_COLORS }),
+	instructions: text().notNull().default(""),
+
+	...createdUpdatedAtColumns
+}, (t) => [
+	index().on(t.ownerId),
+]);
+
+/** A library a Character reads, in every chat it joins, for its own lane only. Attach order is `createdAt`. */
+export const characterLibrary = pgTable("characterLibrary", {
+	characterId: uuid().notNull().references(() => character.id, { onDelete: "cascade" }),
+	libraryId: uuid().notNull().references(() => library.id, { onDelete: "cascade" }),
+	createdAt,
+}, (t) => [
+	primaryKey({ columns: [t.characterId, t.libraryId] }),
+	index().on(t.libraryId),
+]);
+
 /** One node of a library: a folder, an uploaded file or a Markdown note. */
 export const libraryEntry = pgTable("libraryEntry", {
 	id: uuid().primaryKey().defaultRandom(),
@@ -348,7 +380,7 @@ export const usageEvent = pgTable("usageEvent", {
 	index().on(t.userId, t.createdAt),
 ]);
 
-export const pinKinds = ["chat", "chatFolder", "modelProfile", "library", "structureProfile"] as const
+export const pinKinds = ["chat", "chatFolder", "modelProfile", "library", "structureProfile", "character"] as const
 
 /**
  * What a member pinned to the top of a list. Per member, since instance profiles and shared libraries

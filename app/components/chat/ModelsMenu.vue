@@ -8,7 +8,7 @@ const props = defineProps<{
 	chatLanes: ChatLanes
 }>()
 
-const { lanes, enabledLanes, settings, laneName, laneModel, saved, adding } = props.chatLanes
+const { lanes, enabledLanes, settings, laneName, laneColor, laneModel, saved, adding } = props.chatLanes
 const { models, maxChatModels } = useModels()
 // At the admin's limit, nothing more can be turned on or added until one is turned off.
 const full = computed(() => enabledLanes.value.length >= maxChatModels.value)
@@ -60,7 +60,7 @@ const items = computed<DropdownMenuItem[][]>(() => [
 	lanes.value.map((lane, index) => ({
 		label: laneName(lane),
 		slot: 'lane' as const,
-		swatch: swatch(lane.color),
+		swatch: swatch(laneColor(lane)),
 		class: lane.enabled ? undefined : 'opacity-60',
 		children: [[
 			{ label: 'Edit...', icon: 'i-lucide-sliders-horizontal', onSelect: () => edit(lane) },
@@ -126,7 +126,7 @@ const label = computed(() => enabledLanes.value.length === 1 ? laneName(enabledL
 	<UDropdownMenu v-model:open="open" :items="items" :content="{ align: 'start' }" :ui="{ content: 'w-60' }">
 		<UButton color="neutral" variant="ghost" trailing-icon="i-lucide-chevron-down" class="data-[state=open]:bg-elevated min-w-0" :ui="{ label: 'truncate' }">
 			<span class="flex -space-x-1 shrink-0">
-				<span v-for="lane in enabledLanes.slice(0, 4)" :key="lane.id" :class="['size-3 rounded-full ring-2 ring-(--ui-bg)', swatch(lane.color)]" />
+				<span v-for="lane in enabledLanes.slice(0, 4)" :key="lane.id" :class="['size-3 rounded-full ring-2 ring-(--ui-bg)', swatch(laneColor(lane))]" />
 			</span>
 			<span class="truncate max-w-48">{{ label }}</span>
 			<UIcon v-if="adding" name="i-lucide-loader-circle" class="size-4 shrink-0 animate-spin text-dimmed" aria-label="Adding a model" />

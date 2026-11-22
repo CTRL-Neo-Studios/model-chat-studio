@@ -46,6 +46,20 @@ async function setStoppedRegenerate(value: string) {
 	queryCache.setQueryData(meQuery.key, { ...before, preferences: { ...before.preferences, stoppedRegenerate: value as typeof before.preferences.stoppedRegenerate } })
 	if (!await act('/api/v1/me/preferences', { method: 'PATCH', body: { stoppedRegenerate: value }, success: 'Saved' })) queryCache.setQueryData(meQuery.key, before)
 }
+
+const { data: characterList } = useQuery(charactersQuery)
+const NONE = 'none'
+const characterItems = computed(() => [
+	{ label: 'Yourself', value: NONE },
+	...(characterList.value ?? []).map(character => ({ label: character.ownerId === null ? `${character.name} (instance)` : character.name, value: character.id })),
+])
+async function setCharacter(value: string) {
+	const before = me.value
+	if (!before) return
+	const characterId = value === NONE ? null : value
+	queryCache.setQueryData(meQuery.key, { ...before, preferences: { ...before.preferences, characterId } })
+	if (!await act('/api/v1/me/preferences', { method: 'PATCH', body: { characterId }, success: 'Saved' })) queryCache.setQueryData(meQuery.key, before)
+}
 </script>
 
 <template>
@@ -110,6 +124,11 @@ async function setStoppedRegenerate(value: string) {
 						<USkeleton class="h-5 w-56" />
 						<USkeleton class="h-5 w-56" />
 					</div>
+				</UPageCard>
+
+				<UPageCard title="You in new chats" description="The Character you are in new chats; each chat can pick another. Its name stands for {{user}} and its instructions tell the models about you." variant="subtle">
+					<USelect v-if="me" :model-value="me.preferences.characterId ?? NONE" :items="characterItems" class="w-full sm:w-72" @update:model-value="setCharacter" />
+					<USkeleton v-else class="h-8 w-72" />
 				</UPageCard>
 			</div>
 		</template>

@@ -19,6 +19,12 @@ export const sharedChatsQuery = defineQueryOptions({
 	query: () => useRequestFetch()('/api/v1/me/shared-chats'),
 })
 
+/** The member's own Characters and the instance ones, each with its `libraryIds`. */
+export const charactersQuery = defineQueryOptions({
+	key: ['characters'],
+	query: () => useRequestFetch()('/api/v1/characters'),
+})
+
 export const foldersQuery = defineQueryOptions({
 	key: ['folders'],
 	query: () => useRequestFetch()('/api/v1/folders'),

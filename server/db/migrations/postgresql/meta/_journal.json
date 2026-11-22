@@ -113,6 +113,13 @@
       "when": 1795326774302,
       "tag": "0015_folder_defaults",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1795369042662,
+      "tag": "0016_characters",
+      "breakpoints": true
     }
   ]
 }

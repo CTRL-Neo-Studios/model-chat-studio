@@ -34,6 +34,17 @@ const promptMode = computed({
 })
 const promptTokens = computed(() => estimateTokens(draft.value.systemPrompt ?? DEFAULT_INSTRUCTIONS))
 
+const { data: characterList } = useQuery(charactersQuery)
+const NONE = 'none'
+const characterItems = computed(() => [
+	{ label: 'None', value: NONE },
+	...(characterList.value ?? []).map(character => ({ label: character.ownerId === null ? `${character.name} (instance)` : character.name, value: character.id })),
+])
+const characterChoice = computed({
+	get: () => draft.value.characterId ?? NONE,
+	set: (value: string) => { draft.value.characterId = value === NONE ? null : value },
+})
+
 const levelLabels: Record<string, string> = { none: 'Off', on: 'On', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' }
 const reasoningItems = computed(() => {
 	const reasoning = model.value?.reasoning
@@ -128,7 +139,11 @@ const customized = computed(() => sliders.value.filter(slider => params.value[sl
 			</template>
 		</div>
 
-		<UFormField label="System prompt" :help="`About ${promptTokens.toLocaleString('en-US')} tokens`">
+		<UFormField label="Character" :help="draft.characterId ? 'Its instructions replace the system prompt; removing it brings the prompt back.' : 'Who this model is in a chat. Characters are made on the Characters page.'">
+			<USelect v-model="characterChoice" :items="characterItems" class="w-full" />
+		</UFormField>
+
+		<UFormField v-if="!draft.characterId" label="System prompt" :help="`About ${promptTokens.toLocaleString('en-US')} tokens`">
 			<template #hint>
 				<UTabs
 					v-model="promptMode"

@@ -5,6 +5,7 @@ import { laneFieldsSchema, type LaneFields } from '../../../shared/utils/chat'
 // Relative, not `hub:db`, so this module also loads in `bun test`.
 import * as tables from '../../db/schema'
 import { type Db, getSetting } from '../core/settings'
+import { assertCharacterUsable } from './characters'
 
 const laneColumns = {
 	id: tables.chatModel.id,
@@ -17,6 +18,7 @@ const laneColumns = {
 	modelId: tables.chatModel.modelId,
 	systemPrompt: tables.chatModel.systemPrompt,
 	params: tables.chatModel.params,
+	characterId: tables.chatModel.characterId,
 }
 
 /** A lane to create: lane fields, optionally starting from a profile (`profileId`) that they are applied over. */
@@ -66,7 +68,7 @@ export async function laneValues(db: Db, fields: Partial<LaneFields>) {
 
 /**
  * The values of a new lane. From a profile, the lane copies it (and keeps its id, for "Apply to profile");
- * the given fields apply on top. Only the member's own profiles and the instance profiles can be used.
+ * the given fields apply on top. Only the member's own profiles and Characters, and the instance ones, can be used.
  */
 export async function newLaneValues(db: Db, userId: string, { profileId, ...fields }: z.infer<typeof newLaneSchema>) {
 	let base = {}
@@ -76,8 +78,9 @@ export async function newLaneValues(db: Db, userId: string, { profileId, ...fiel
 			or(isNull(tables.modelProfile.ownerId), eq(tables.modelProfile.ownerId, userId)),
 		))
 		if (!profile) throw createError({ status: 404, statusText: 'Profile not found' })
-		const { name, color, platform, modelId, systemPrompt, params } = profile
-		base = { profileId, name, color, platform, modelId, systemPrompt, params }
+		const { name, color, platform, modelId, systemPrompt, params, characterId } = profile
+		base = { profileId, name, color, platform, modelId, systemPrompt, params, characterId }
 	}
+	await assertCharacterUsable(db, userId, fields.characterId)
 	return { ...base, ...await laneValues(db, fields) }
 }

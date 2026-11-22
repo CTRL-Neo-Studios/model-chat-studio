@@ -20,6 +20,8 @@ import { fileTools } from '#server/utils/library/fileTools'
 import { chatLibraries, listSpace } from '#server/utils/library/libraries'
 import { spaceResolver } from '#shared/utils/librarySpace'
 import { findStructureProfile } from '#server/utils/chat/structureProfiles'
+import { charactersById, laneLibraries } from '#server/utils/chat/characters'
+import { fillPlaceholders, laneIdentity } from '#shared/utils/character'
 import type { FinishedStep, Pricing } from '#server/utils/inference/types'
 
 const TITLE_INSTRUCTIONS = `Write a title for a chat that starts with the user's message below.
@@ -120,19 +122,25 @@ export default defineEventHandler(async (event) => {
 		...params, apiKey, model: model.id, providers, reasoningLevel, webSearch,
 		userId: user.id, firstTurn, safetyCheck,
 	})
-	const libraries = (await chatLibraries(db, chatId)).map(({ id, name }) => ({ id, name }))
+	// Who the lane is (its Character, else its own name and prompt) and who the user is, with `{{char}}` and `{{user}}` filled.
+	const characters = await charactersById(db, [lane.characterId, chat.userCharacterId])
+	const character = lane.characterId ? characters[lane.characterId] : undefined
+	const identity = laneIdentity({ lane, character, userCharacter: chat.userCharacterId ? characters[chat.userCharacterId] : undefined, modelName: model.name, userName: user.name ?? user.username })
+	// The chat's libraries, then its Character's (those the chat's owner may read): this lane only.
+	const libraries = await laneLibraries(db, user, (await chatLibraries(db, chatId)).map(({ id, name }) => ({ id, name })), character?.libraryIds ?? [])
 	// The file tools: with libraries, unless turned off, for models that take tools, where the platform allows app tools.
 	const withFileTools = libraries.length > 0 && chat.settings.fileTools !== false && model.supportedParameters.includes('tools') && prepared.appTools !== false
 	// The chat's structure profile wraps the thread in its blocks; its `files` paths are looked up in the libraries.
 	const profile = await findStructureProfile(db, chat.structureProfileId)
+	const profileBlocks = profile?.blocks.map(block => block.kind === 'message' ? { ...block, text: fillPlaceholders(block.text, identity.names) } : block)
 	const find = libraries.length && profile?.blocks.some(block => block.kind === 'files') ? spaceResolver(libraries, await listSpace(db, libraries)) : undefined
 	const resolvePath = find && ((path: string) => {
 		const entry = find(path)
 		return entry && { entryId: entry.id, kind: entry.kind }
 	})
 	const built = buildContext({
-		thread: history, systemPrompt: lane.systemPrompt, webSearch, memoryLength: chat.settings.memoryLength ?? null,
-		fileTools: withFileTools, profile: profile?.blocks, resolvePath,
+		thread: history, systemPrompt: identity.systemPrompt, promptLabel: identity.promptLabel, aboutUser: identity.aboutUser,
+		webSearch, memoryLength: chat.settings.memoryLength ?? null, fileTools: withFileTools, profile: profileBlocks, resolvePath,
 	})
 	// "@" references (and the profile's files) become the libraries' files and notes, read now, where they stand.
 	const referenced = { ...built, ...await expandReferences(db, libraries, built.messages, built.blocks) }
@@ -143,7 +151,7 @@ export default defineEventHandler(async (event) => {
 				libraries,
 				settings: chat.settings.autoFetch,
 				thread: history,
-				systemPrompt: [lane.systemPrompt, ...(profile?.blocks ?? []).flatMap(block => block.kind === 'message' && block.role === 'system' ? [block.text] : [])].filter(Boolean).join('\n\n') || null,
+				systemPrompt: [identity.systemPrompt, ...(profileBlocks ?? []).flatMap(block => block.kind === 'message' && block.role === 'system' ? [block.text] : [])].filter(Boolean).join('\n\n') || null,
 				exclude: referenced.blocks.flatMap(block => block.entryId ? [block.entryId] : []),
 			})
 		: undefined
@@ -185,7 +193,7 @@ export default defineEventHandler(async (event) => {
 		},
 	}))
 	// The lane as it is now, so the answer keeps its label after the lane is renamed or deleted.
-	const laneLabel = { name: lane.name ?? model.name, color: lane.color }
+	const laneLabel = { name: identity.names.char, color: identity.color }
 	const metadata = (finishReason?: string): MessageMetadata => {
 		const { title: _, ...usage } = platform.usage({ model: model.id, steps, price })
 		return {

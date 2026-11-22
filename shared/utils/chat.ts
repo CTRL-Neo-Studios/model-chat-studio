@@ -71,6 +71,8 @@ export const laneFieldsSchema = z.object({
 	systemPrompt: z.string().trim().max(20_000).nullable(),
 	params: modelParamsSchema,
 	enabled: z.boolean(),
+	/** Who the lane is: its instructions replace the system prompt; `null`: none. */
+	characterId: z.uuid().nullable(),
 })
 
 export type LaneFields = z.infer<typeof laneFieldsSchema>
@@ -83,6 +85,8 @@ export const profileFieldsSchema = z.object({
 	/** `null` uses the default instructions. */
 	systemPrompt: z.string().trim().max(20_000).nullable(),
 	params: modelParamsSchema,
+	/** The Character lanes started from it begin with; `null`: none. */
+	characterId: z.uuid().nullable(),
 })
 
 export type ProfileFields = z.infer<typeof profileFieldsSchema>

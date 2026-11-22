@@ -13,6 +13,8 @@ import { findStructureProfile } from '#server/utils/chat/structureProfiles'
 import { listFolders } from '#server/utils/chat/folders'
 import { nearestDefaults } from '#shared/utils/folderDefaults'
 import { allows } from 'nuxt-authorization/utils'
+import { assertCharacterUsable } from '#server/utils/chat/characters'
+import { userPreferencesSchema } from '#shared/utils/preferences'
 
 const bodySchema = z.object({
 	id: z.uuid(),
@@ -28,6 +30,8 @@ const bodySchema = z.object({
 	structureProfileId: z.uuid().nullable().optional(),
 	/** One of the person's folders, to start the chat in. */
 	folderId: z.uuid().optional(),
+	/** Who the user is in this chat, one of their Characters or an instance one; `null`: nobody. Absent: their default. */
+	userCharacterId: z.uuid().nullable().optional(),
 })
 
 /** Creates a chat with its lanes and first message. Each lane's answer is requested with `POST /chats/:id`. */
@@ -55,11 +59,17 @@ export default defineEventHandler(async (event) => {
 	libraryIds ??= []
 	for (const libraryId of libraryIds) await authorize(event, libraryAbilities().readLibrary, await findLibrary(db, libraryId))
 	if (structureProfileId) await authorize(event, profileAbilities().readProfile, await findStructureProfile(db, structureProfileId))
+	// Absent: the member's default Character, while they may still use it.
+	const preferred = userPreferencesSchema.parse(user.preferences ?? {}).characterId
+	const userCharacterId = body.userCharacterId !== undefined
+		? body.userCharacterId
+		: preferred && await assertCharacterUsable(db, user.id, preferred).then(() => preferred, () => null)
+	await assertCharacterUsable(db, user.id, userCharacterId)
 	await assertLaneLimit(db, models.filter(fields => fields.enabled !== false).length)
 	const lanes = await Promise.all(models.map(async (fields, position) => ({ chatId: id, position, ...await newLaneValues(db, user.id, fields) })))
 
 	return await db.transaction(async (tx) => {
-		const [chat] = await tx.insert(schema.chat).values({ id, userId: user.id, settings, temporary, folderId, structureProfileId }).onConflictDoNothing().returning()
+		const [chat] = await tx.insert(schema.chat).values({ id, userId: user.id, settings, temporary, folderId, structureProfileId, userCharacterId }).onConflictDoNothing().returning()
 		const [saved] = chat
 			? await tx.insert(schema.message).values({ id: message.id, chatId: id, role: 'user', parts: message.parts }).onConflictDoNothing().returning()
 			: []

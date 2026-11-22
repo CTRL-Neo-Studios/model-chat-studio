@@ -55,6 +55,13 @@ async function setStructureProfile(structureProfileId: string | null) {
 	queryCache.setQueryData(chatQuery(chatId).key, { ...chat, structureProfileId })
 	if (!await act(`/api/v1/chats/${chatId}`, { method: 'PATCH', body: { structureProfileId } })) queryCache.setQueryData(chatQuery(chatId).key, chat)
 }
+/** Who the user is in this chat, or `null` for themselves; shown at once, undone if the server refuses. */
+async function setUserCharacter(userCharacterId: string | null) {
+	const chat = queryCache.getQueryData(chatQuery(chatId).key)
+	if (!chat) return
+	queryCache.setQueryData(chatQuery(chatId).key, { ...chat, userCharacterId })
+	if (!await act(`/api/v1/chats/${chatId}`, { method: 'PATCH', body: { userCharacterId } })) queryCache.setQueryData(chatQuery(chatId).key, chat)
+}
 
 const overviewOpen = ref(false)
 
@@ -80,7 +87,7 @@ const votes = computed(() => votesData.value ?? [])
 const { data: me } = useQuery(() => ({ ...meQuery, enabled: isOwner.value }))
 
 const chatLanes = useChatLanes(data.value ?? undefined)
-const { lanes, enabledLanes, settings, laneModel, laneName } = chatLanes
+const { lanes, enabledLanes, settings, laneModel, laneName, laneColor } = chatLanes
 const answeringModels = computed(() => enabledLanes.value.flatMap(lane => laneModel(lane) ?? []))
 
 const input = ref('')
@@ -181,7 +188,7 @@ function slotsFor(questionId: string) {
 		const message = given.find(answer => answer.chatModelId === lane.id)
 		const pending = answers.pending.value[answers.keyOf(questionId, lane.id)]
 		if (!message && !pending) return []
-		return [{ key: lane.id, lane, message, pending, label: message?.metadata?.lane ?? { name: laneName(lane), color: lane.color } }]
+		return [{ key: lane.id, lane, message, pending, label: message?.metadata?.lane ?? { name: laneName(lane), color: laneColor(lane) } }]
 	})
 	const removed = given.filter(answer => !lanes.value.some(lane => lane.id === answer.chatModelId)).map(message => ({
 		key: message.id, lane: undefined, message, pending: undefined, label: message.metadata?.lane ?? { name: message.metadata?.model ?? 'Removed model', color: null },
@@ -450,9 +457,11 @@ onMounted(() => {
 										:settings="settings"
 										:library-ids="libraries.map(library => library.id)"
 										:structure-profile-id="data?.structureProfileId ?? null"
+										:user-character-id="data?.userCharacterId ?? null"
 										@change="chatLanes.setSettings($event)"
 										@update:library-ids="setLibraries"
 										@update:structure-profile-id="setStructureProfile"
+										@update:user-character-id="setUserCharacter"
 									/>
 								</template>
 							</ChatPrompt>

@@ -2,9 +2,9 @@
 import { AUTO_FETCH_DEFAULTS, type AutoFetchSettings, type ChatSettings } from '#shared/utils/chat'
 
 /**
- * A chat's context, in the prompt's footer: the libraries it reads, its structure profile, and (with libraries)
- * auto-fetch and the file tools. Libraries and the profile change at once; the other settings are kept while the
- * popover is open and saved when it closes, so a number stepped up five times is one save.
+ * A chat's context, in the prompt's footer: the libraries it reads, its structure profile, who the user is, and (with
+ * libraries) auto-fetch and the file tools. Libraries, the profile and the user's Character change at once; the other
+ * settings are kept while the popover is open and saved when it closes, so a number stepped up five times is one save.
  */
 const props = defineProps<{
 	settings: ChatSettings
@@ -15,6 +15,8 @@ const emit = defineEmits<{ change: [Pick<ChatSettings, 'autoFetch' | 'fileTools'
 const libraryIds = defineModel<string[]>('libraryIds', { default: () => [] })
 /** The chat's structure profile; `null`: none. */
 const structureProfileId = defineModel<string | null>('structureProfileId', { default: null })
+/** Who the user is in this chat; `null`: themselves. */
+const userCharacterId = defineModel<string | null>('userCharacterId', { default: null })
 
 const MAX_LIBRARIES = 5
 const { data: libraryList } = useQuery(librariesQuery)
@@ -35,6 +37,16 @@ const profileItems = computed(() => [
 const profileChoice = computed({
 	get: () => structureProfileId.value ?? NONE,
 	set: (value: string) => structureProfileId.value = value === NONE ? null : value,
+})
+
+const { data: characterList } = useQuery(charactersQuery)
+const characterItems = computed(() => [
+	{ label: 'Yourself', value: NONE },
+	...(characterList.value ?? []).map(character => ({ label: character.ownerId === null ? `${character.name} (instance)` : character.name, value: character.id })),
+])
+const userCharacterChoice = computed({
+	get: () => userCharacterId.value ?? NONE,
+	set: (value: string) => userCharacterId.value = value === NONE ? null : value,
 })
 
 const current = computed(() => ({
@@ -72,7 +84,7 @@ const label = computed(() => {
 	const count = libraryIds.value.length
 	return count ? `${count} ${count === 1 ? 'library' : 'libraries'}` : 'Context'
 })
-const active = computed(() => libraryIds.value.length > 0 || structureProfileId.value !== null)
+const active = computed(() => libraryIds.value.length > 0 || structureProfileId.value !== null || userCharacterId.value !== null)
 </script>
 
 <template>
@@ -98,6 +110,9 @@ const active = computed(() => libraryIds.value.length > 0 || structureProfileId.
 				</UFormField>
 				<UFormField label="Structure profile" help="How this chat's messages are arranged around your own blocks.">
 					<USelect v-model="profileChoice" :items="profileItems" size="sm" class="w-full" />
+				</UFormField>
+				<UFormField label="You are" help="Your Character in this chat: its name stands for {{user}}, and its instructions tell the models about you.">
+					<USelect v-model="userCharacterChoice" :items="characterItems" size="sm" class="w-full" />
 				</UFormField>
 				<template v-if="libraryIds.length">
 					<USeparator />

@@ -31,7 +31,9 @@ const editor = overlay.create(LazyModelProfileEditor)
 const confirm = overlay.create(LazyModalConfirm)
 
 const modelName = (profile: Profile) => models.value.find(entry => entry.id === profile.modelId)?.name ?? profile.modelId
-const fields = ({ name, color, modelId, systemPrompt, params }: Profile | Draft) => ({ name, color, modelId, systemPrompt, params })
+const { data: characterList } = useQuery(charactersQuery)
+const characterName = (profile: Profile) => profile.characterId ? characterList.value?.find(character => character.id === profile.characterId)?.name : undefined
+const fields = ({ name, color, modelId, systemPrompt, params, characterId }: Profile | Draft) => ({ name, color, modelId, systemPrompt, params, characterId })
 
 /** Adding and copying need the server's new profile; the add button shows the wait. */
 const adding = ref(false)
@@ -130,7 +132,8 @@ function actions(profile: Profile): DropdownMenuItem[][] {
 							{{ modelName(profile) }}
 						</p>
 						<div class="flex flex-wrap gap-1.5 mt-auto">
-							<UBadge v-if="profile.systemPrompt" label="Custom system prompt" color="neutral" variant="subtle" size="sm" />
+							<UBadge v-if="characterName(profile)" :label="`Character: ${characterName(profile)}`" icon="i-lucide-drama" color="neutral" variant="subtle" size="sm" />
+							<UBadge v-else-if="profile.systemPrompt" label="Custom system prompt" color="neutral" variant="subtle" size="sm" />
 							<UBadge v-if="platform && profile.platform !== platform.id" label="Other platform" color="warning" variant="subtle" size="sm" />
 						</div>
 					</li>

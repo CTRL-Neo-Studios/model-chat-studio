@@ -1,6 +1,6 @@
 # Milestones 5–6: modular chats, characters, group chat
 
-Status: milestone 5 built (5.1 to 5.4); spikes F and G done (section 5); 6.1 next. It replaces the "project" of milestone 4 (`plans/milestones-2-4-profiles-organisation-projects.md`, section 5) with parts that attach to a chat. The conventions of milestone 1 (section 2 there) apply unchanged.
+Status: milestone 5 built (5.1 to 5.4); spikes F and G done (section 5); 6.1 built; 6.2 next. It replaces the "project" of milestone 4 (`plans/milestones-2-4-profiles-organisation-projects.md`, section 5) with parts that attach to a chat. The conventions of milestone 1 (section 2 there) apply unchanged.
 
 Goal, in build order:
 
@@ -180,6 +180,8 @@ Structure profile blocks, added:
 | 6.2 | Group mode: `chat.mode`, the shared thread, rounds one after another in lane order, `speakers`, regenerate, "Answer", `/compact` | tests for the thread builder (labels, own answers, regenerate sees only earlier speakers); the fixture's second request holds the first speaker's answer under its name, and the first request holds none of the second's |
 | 6.3 | Who answers: mentions, the decision model and its setting, name matching, last speakers | tests for the order rule, each step and its fallback; with DeepSeek active and an OpenRouter key stored, the fixture shows the decision call going to OpenRouter and the answers to DeepSeek |
 | 6.4 | The two new blocks, a "Group" starting point for structure profiles, live run | live on both platforms: "Engineer, solve this; Designer, visualise the Engineer's solution afterwards" is answered by the Engineer first and by the Designer second, about the Engineer's answer |
+
+Built (6.1): migration `0016_characters`. Characters reuse the model profiles' abilities (own, instance, admins publish); a copy leaves out libraries, which the new owner may not read. An instance model profile may only name an instance Character. A lane is called by its Character's name and wears its colour unless the lane has its own; an empty Character prompt means the default instructions, not the lane's prompt. `{{char}}` and `{{user}}` are also filled in a lane's own prompt. The user's Character goes after the instructions as "The user is X." plus its instructions (6.4 adds the block that places it); the turn trace names it. Without a chosen Character a new chat takes the member's default from Settings ("You in new chats"); the popover's "You are" changes it per chat. A Character's libraries reach only its lane: "@" still offers the chat's libraries alone, and `/compact` reads only the chat's.
 
 ## 5. To verify before building
 
