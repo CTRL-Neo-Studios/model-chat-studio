@@ -113,7 +113,8 @@ const size = computed(() => {
 			/>
 		</div>
 
-		<template v-if="entry.kind === 'note'">
+		<!-- The editor is the browser's; the server shows the placeholder, so an entry opened from a link hydrates cleanly. -->
+		<ClientOnly v-if="entry.kind === 'note'">
 			<UEditor
 				v-if="text !== undefined"
 				v-slot="{ editor }"
@@ -129,7 +130,12 @@ const size = computed(() => {
 			<div v-else class="flex flex-col gap-2 p-6" aria-busy="true" aria-label="Loading the note">
 				<USkeleton v-for="n in 4" :key="n" class="h-5 w-full" />
 			</div>
-		</template>
+			<template #fallback>
+				<div class="flex flex-col gap-2 p-6" aria-busy="true" aria-label="Loading the note">
+					<USkeleton v-for="n in 4" :key="n" class="h-5 w-full" />
+				</div>
+			</template>
+		</ClientOnly>
 
 		<div v-else-if="entry.kind === 'file'" class="flex-1 flex flex-col gap-3 p-6">
 			<img v-if="isImage" :src="fileUrl" :alt="entry.name" class="max-w-full max-h-[70vh] object-contain self-start rounded-md border border-default">

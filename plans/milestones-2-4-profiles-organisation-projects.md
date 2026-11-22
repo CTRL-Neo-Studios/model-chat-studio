@@ -1,6 +1,6 @@
 # Milestones 2–4: model profiles, organisation, projects
 
-Status: milestones 2 and 3 done. Milestone 4: 4.P spikes done (all live runs passed; spike A found DeepSeek refuses app tools next to web search with thinking off, fixed in the turn route); 4.1 done (the project description is set through the API only; the page has no field for it yet); 4.2 done ("Add to project" sits in the conversation overview's Files tab; "@" in a chat is offered to its owner); 4.3 done; 4.4 built and checked with a scripted model (search, read, answer, next to web search), live run on both platforms pending; 4.5 done; 4.6 next. Milestone 1 (`plans/milestone-1-chat-foundation.md`) is the base; its conventions (section 2 there) apply unchanged.
+Status: milestones 2 to 4 built. Open: 4.4's live run on both platforms (file tools next to web search) needs the user's keys. Milestone 4: 4.P spikes done; 4.1 done (the project description is set through the API only); 4.2 done ("Add to project" sits in the conversation overview's Files tab); 4.3 done; 4.4 checked with a scripted model; 4.5 done; 4.6 done (checked with three accounts against the access table). Milestone 1 (`plans/milestone-1-chat-foundation.md`) is the base; its conventions (section 2 there) apply unchanged.
 
 Goal, in build order:
 
@@ -251,12 +251,14 @@ Built (4.5): the `system` messages at the very top join the instructions after t
 | Route | Purpose |
 |---|---|
 | `GET /projects`, `POST /projects`, `GET /projects/:id`, `PATCH …`, `DELETE …` | own and shared projects |
-| `PUT /projects/:id/members/:userId`, `DELETE …` | owner: set a role, remove. A member can remove themselves |
+| `PUT /projects/:id/members/:userId`, `DELETE …` | owner: set a role, remove. A member can remove themselves (leave). Their chats in the project become ordinary chats and their folders in it go |
 | `GET /projects/:id/entries`, `POST …`, `GET /projects/:id/entries/:entryId`, `PATCH …`, `DELETE …` | the tree as a flat list (no note text); create a folder or a note; one entry with a note's text; rename, move, tag, edit a note; delete (a folder with everything in it). A name taken in the folder is a 409 |
 | `PUT /projects/:id/files` | upload into a folder: same types and 8 MB limit as chat uploads |
 | `POST /projects/:id/files/from-chat` | "Add to project": copies an upload of one of the caller's chats in this project to the top of the file space (a copy, so each side can be deleted on its own). Under `files/`, not `entries/`, so its path does not overlap `entries/:entryId` |
 | `GET /chats`, `GET /folders` | return `projectId`: the sidebar shows the personal ones, a project's page its own. One cache each, so moves, renames and pins work the same in both places |
-| `GET /projects/:id/chats` | 4.6: the project-visible chats of others (the caller's own come with `GET /chats`) |
+| `GET /projects/:id/chats` | the project-visible chats of others, with their author (the caller's own come with `GET /chats`) |
+| `GET /projects/:id/members` | the owner and the people with their roles, for anyone in the project |
+| `GET /projects/:id` | also the caller's `role`, the default context profile's name, and (owner) the counts the delete dialog names. `DELETE /projects/:id?ownChats=delete\|keep` (default keep) |
 | `POST /chats` | accepts `projectId` (refused with `temporary`). `POST /folders` accepts `projectId`; a folder, and a chat's folder, stay in their own tree |
 | `PATCH /chats/:id` | accepts `projectVisible`, `contextProfileId`, `settings.autoFetch`, `settings.fileTools` |
 | `GET /context-profiles`, `POST …`, `PATCH /context-profiles/:id`, `DELETE …` | own and instance profiles |
