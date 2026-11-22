@@ -66,7 +66,7 @@ function actions(profile: Profile): DropdownMenuItem[][] {
 	], ...(canEdit.value ? [[{ label: 'Delete', icon: 'i-lucide-trash', color: 'error' as const, onSelect: () => remove(profile) }]] : [])]
 }
 
-const kindLabel: Record<ProfileBlock['kind'], string> = { message: 'message', history: 'conversation', autoFetch: 'auto-fetch', files: 'files' }
+const kindLabel: Record<ProfileBlock['kind'], string> = { message: 'message', history: 'conversation', autoFetch: 'auto-fetch', files: 'files', userCharacter: 'your Character', participants: 'participants' }
 const summary = (blocks: ProfileBlock[]) => blocks.map(block => block.kind === 'message' ? `${block.role} ${kindLabel.message}` : kindLabel[block.kind]).join(' → ')
 </script>
 

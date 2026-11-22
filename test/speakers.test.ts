@@ -37,11 +37,13 @@ test('nobody named: last round\'s speakers in their order, else everyone in lane
 const noul = (value: number): DecisionAnswer => ({ type: 'noul', noul: value })
 const choice = (value: string): DecisionAnswer => ({ type: 'choice', choice: value })
 
-test('a decision: the asked ones by their places, then asked but unplaced in the usual order', () => {
+test('a decision: the asked ones by their places up to the first "nobody", then asked but unplaced in the usual order', () => {
 	// Asked: Designer and Architect; places say Architect first.
-	expect(readDecision({ asks_0: noul(0.1), asks_1: noul(0.9), asks_2: noul(0.8), place_0: choice('p2'), place_1: choice('nobody'), place_2: choice('p0') }, participants)).toEqual(['a', 'd'])
-	// A place naming someone not asked is ignored.
+	expect(readDecision({ asks_0: noul(0.1), asks_1: noul(0.9), asks_2: noul(0.8), place_0: choice('p2'), place_1: choice('p1') }, participants)).toEqual(['a', 'd'])
+	// A place naming someone not asked is skipped.
 	expect(readDecision({ asks_0: noul(0.9), asks_1: noul(0.2), asks_2: noul(0.2), place_0: choice('p1'), place_1: choice('p0') }, participants)).toEqual(['e'])
+	// Places after "nobody" do not count: the usual order decides the rest.
+	expect(readDecision({ asks_0: noul(0.9), asks_1: noul(0.9), asks_2: noul(0.1), place_0: choice('nobody'), place_1: choice('p1') }, participants)).toEqual(['e', 'd'])
 })
 
 test('not decided: nobody asked, or a yes/no refused or missing', () => {

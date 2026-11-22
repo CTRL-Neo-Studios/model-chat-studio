@@ -87,3 +87,35 @@ test('a programming profile: the thread first, then its messages (later system o
 	expect(context.autoFetchAt).toBeNull()
 	expect(context.blocks.at(-1)!.label).toBe('Profile: files (not in the library: missing.md)')
 })
+
+const aboutUser = 'The user is Captain.'
+const group = 'This is a group chat. You are Engineer.'
+
+test('without the blocks, the user\'s Character follows the instructions and the group paragraph ends them', () => {
+	const context = buildContext({ thread, systemPrompt: 'Be brief.', aboutUser, group, webSearch: true, memoryLength: null })
+	expect(context.instructions.split('\n\n').map(part => part.split('\n')[0])).toEqual(['Be brief.', aboutUser, 'Web search is on in this chat: you can search the web and read pages.', group])
+	expect(context.blocks[0]!.label).toBe('System prompt + your Character + group chat')
+})
+
+test('the blocks place them: at the top in the instructions, in that order; later as user messages', () => {
+	const top: ProfileBlock[] = [{ id: 'g1', kind: 'participants' }, { id: 'g2', kind: 'userCharacter' }, { id: 'g3', kind: 'message', role: 'system', text: 'Keep it short.' }, { id: 'g4', kind: 'history' }]
+	const placed = buildContext({ thread: thread.slice(-1), systemPrompt: null, aboutUser, group, webSearch: false, memoryLength: null, profile: top })
+	// The profile's system message replaces the default instructions; nothing is said twice.
+	expect(placed.instructions).toBe(`${group}\n\n${aboutUser}\n\nKeep it short.`)
+	expect(shape(placed)).toEqual(['user:u4'])
+
+	const later: ProfileBlock[] = [{ id: 'h', kind: 'history' }, { id: 'p', kind: 'participants' }, { id: 'c', kind: 'userCharacter' }]
+	const sent = buildContext({ thread: thread.slice(-1), systemPrompt: 'Be brief.', aboutUser, group, webSearch: false, memoryLength: null, profile: later })
+	expect(sent.instructions).toBe('Be brief.')
+	expect(shape(sent)).toEqual(['user:u4', 'user:profile-p', 'user:profile-c'])
+	expect(sent.messages[1]!.parts).toEqual([{ type: 'text', text: group }])
+	expect(sent.blocks.slice(-2).map(block => block.label)).toEqual(['Profile: participants', 'Profile: your Character'])
+})
+
+test('with nothing to place (a separate chat, no Character), the blocks are left out', () => {
+	const profile: ProfileBlock[] = [{ id: 'p', kind: 'participants' }, { id: 'h', kind: 'history' }, { id: 'c', kind: 'userCharacter' }]
+	const context = buildContext({ thread: thread.slice(-1), systemPrompt: null, webSearch: false, memoryLength: null, profile })
+	expect(context.instructions).toBe(DEFAULT_INSTRUCTIONS)
+	expect(shape(context)).toEqual(['user:u4'])
+	expect(context.blocks.map(block => block.kind)).toEqual(['instructions', 'message'])
+})

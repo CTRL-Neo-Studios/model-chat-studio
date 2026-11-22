@@ -21,11 +21,13 @@ const roles = [
 	{ label: 'User', value: 'user' },
 	{ label: 'Assistant', value: 'assistant' },
 ]
-const hasAutoFetch = computed(() => draft.value.blocks.some(block => block.kind === 'autoFetch'))
+const has = (kind: ProfileBlock['kind']) => draft.value.blocks.some(block => block.kind === kind)
 const addItems = computed<DropdownMenuItem[]>(() => [
 	{ label: 'Message', icon: 'i-lucide-message-square-text', onSelect: () => add({ id: newId(), kind: 'message', role: 'user', text: '' }) },
 	{ label: 'Library files', icon: 'i-lucide-files', onSelect: () => add({ id: newId(), kind: 'files', paths: [] }) },
-	{ label: 'Auto-fetched files', icon: 'i-lucide-folder-search', disabled: hasAutoFetch.value, onSelect: () => add({ id: newId(), kind: 'autoFetch' }) },
+	{ label: 'Auto-fetched files', icon: 'i-lucide-folder-search', disabled: has('autoFetch'), onSelect: () => add({ id: newId(), kind: 'autoFetch' }) },
+	{ label: 'Your Character', icon: 'i-lucide-drama', disabled: has('userCharacter'), onSelect: () => add({ id: newId(), kind: 'userCharacter' }) },
+	{ label: 'Participants (group chats)', icon: 'i-lucide-users', disabled: has('participants'), onSelect: () => add({ id: newId(), kind: 'participants' }) },
 ])
 const add = (block: ProfileBlock) => {
 	draft.value.blocks = [...draft.value.blocks, block]
@@ -49,8 +51,8 @@ function onDrop(index: number) {
 	dragging.value = over.value = null
 }
 
-const label: Record<ProfileBlock['kind'], string> = { message: 'Message', history: 'Conversation', autoFetch: 'Auto-fetched files', files: 'Library files' }
-const icon: Record<ProfileBlock['kind'], string> = { message: 'i-lucide-message-square-text', history: 'i-lucide-messages-square', autoFetch: 'i-lucide-folder-search', files: 'i-lucide-files' }
+const label: Record<ProfileBlock['kind'], string> = { message: 'Message', history: 'Conversation', autoFetch: 'Auto-fetched files', files: 'Library files', userCharacter: 'Your Character', participants: 'Participants' }
+const icon: Record<ProfileBlock['kind'], string> = { message: 'i-lucide-message-square-text', history: 'i-lucide-messages-square', autoFetch: 'i-lucide-folder-search', files: 'i-lucide-files', userCharacter: 'i-lucide-drama', participants: 'i-lucide-users' }
 const estimate = (text: string) => Math.ceil(text.length / 4)
 </script>
 
@@ -62,7 +64,7 @@ const estimate = (text: string) => Math.ceil(text.length / 4)
 					<UInput v-model="draft.name" :maxlength="100" placeholder="e.g. Roleplay, Code review" class="w-full" />
 				</UFormField>
 				<p class="text-sm text-muted">
-					Blocks are sent in this order, around the conversation. System messages at the very top become the instructions; later ones are sent as user messages.
+					Blocks are sent in this order, around the conversation. System messages at the very top become the instructions; later ones are sent as user messages. “Your Character” and “Participants” do the same: at the top they join the instructions, later they are sent as user messages.
 				</p>
 
 				<ol class="flex flex-col gap-2">
@@ -98,6 +100,12 @@ const estimate = (text: string) => Math.ceil(text.length / 4)
 						</p>
 						<p v-else-if="block.kind === 'autoFetch'" class="text-xs text-muted">
 							Where the files auto-fetch finds go. Without this block they go at the end.
+						</p>
+						<p v-else-if="block.kind === 'userCharacter'" class="text-xs text-muted">
+							Who you are in the chat: your Character's name and instructions, when you have one. Without this block they go after the instructions.
+						</p>
+						<p v-else-if="block.kind === 'participants'" class="text-xs text-muted">
+							Group chats only: who the model is, who else is here, and to answer only as itself. Without this block it goes at the end of the instructions.
 						</p>
 						<template v-else>
 							<UInputTags v-model="block.paths" placeholder="A path, e.g. docs/conventions.md" add-on-blur add-on-paste :max="50" class="w-full" />

@@ -22,9 +22,9 @@ interface ContextInput {
 	systemPrompt: string | null
 	/** How the trace names `systemPrompt`: "System prompt", or the Character's name. */
 	promptLabel?: string
-	/** Who the user is (their Character), sent after the instructions. */
+	/** Who the user is (their Character): after the instructions, or where the profile's `userCharacter` block puts it. */
 	aboutUser?: string
-	/** A group chat's paragraph (who the speaker is, who else is here), at the very end of the instructions. */
+	/** A group chat's paragraph (who the speaker is, who else is here): at the end of the instructions, or where the profile's `participants` block puts it. */
 	group?: string
 	webSearch: boolean
 	/** Messages to send after the latest summary; `null` sends them all. */
@@ -53,9 +53,12 @@ const PROFILE_FILES_TEXT = 'Files from the library, as the structure profile inc
  *   always opens with a user message. This keeps at most one message fewer than asked.
  * - With a structure profile, its blocks are sent in order around the thread (its `history` block). Its `system`
  *   messages at the very start join the instructions, after the lane's own prompt (they replace the default
- *   instructions when the lane has none); later ones go as user messages. Its `files` blocks name library entries
- *   as references, which `expandReferences` reads; a path the library does not have is left out and named in the
- *   trace. Its `autoFetch` block marks where auto-fetched files go: `autoFetchAt`, and a trace block that says so.
+ *   instructions when the lane has none); later ones go as user messages. Its `userCharacter` and `participants`
+ *   blocks place the user's Character and a group chat's paragraph the same way: in the instructions at the start,
+ *   as user messages later; without the block they keep their default place, and with nothing to say they are left
+ *   out. Its `files` blocks name library entries as references, which `expandReferences` reads; a path the library
+ *   does not have is left out and named in the trace. Its `autoFetch` block marks where auto-fetched files go:
+ *   `autoFetchAt`, and a trace block that says so.
  */
 export function buildContext({ thread, systemPrompt, promptLabel = 'System prompt', aboutUser, group, webSearch, memoryLength, fileTools = false, profile, resolvePath }: ContextInput) {
 	const summaryIndex = thread.findLastIndex(message => message.role === 'system')
@@ -91,11 +94,19 @@ export function buildContext({ thread, systemPrompt, promptLabel = 'System promp
 	}
 
 	const blocks = profile ?? [{ id: 'history', kind: 'history' as const }]
-	const leading = blocks.findIndex(block => block.kind !== 'message' || block.role !== 'system')
-	const profileSystem = blocks.slice(0, leading === -1 ? blocks.length : leading).flatMap(block => block.kind === 'message' && block.text.trim() ? [block.text] : [])
-	const userText = aboutUser?.trim() ? aboutUser.trim() : null
-	const instructions = [systemPrompt ?? (profileSystem.length ? null : DEFAULT_INSTRUCTIONS), ...profileSystem, userText, webSearch && WEB_SEARCH_INSTRUCTIONS, fileTools && FILE_TOOLS_INSTRUCTIONS, group].filter(Boolean).join('\n\n')
-	const instructionsLabel = [systemPrompt ? promptLabel : profileSystem.length ? '' : 'Default instructions', profileSystem.length ? 'structure profile' : '', userText ? 'your Character' : '', group ? 'group chat' : ''].filter(Boolean).join(' + ')
+	// What the `userCharacter` and `participants` blocks place; without the block, its default place in the instructions.
+	const placed = { userCharacter: aboutUser?.trim() || null, participants: group?.trim() || null }
+	const has = (kind: keyof typeof placed) => blocks.some(block => block.kind === kind)
+	const joinsInstructions = (block: ProfileBlock) => (block.kind === 'message' && block.role === 'system') || block.kind === 'userCharacter' || block.kind === 'participants'
+	const leading = blocks.findIndex(block => !joinsInstructions(block))
+	const head = blocks.slice(0, leading === -1 ? blocks.length : leading)
+	const profileSystem = head.flatMap(block => block.kind === 'message' && block.text.trim() ? [block.text] : [])
+	const headTexts = head.flatMap(block => block.kind === 'message' ? (block.text.trim() ? [block.text] : []) : block.kind === 'userCharacter' || block.kind === 'participants' ? placed[block.kind] ?? [] : [])
+	const userText = has('userCharacter') ? null : placed.userCharacter
+	const groupText = has('participants') ? null : placed.participants
+	const inInstructions = (kind: keyof typeof placed) => !!placed[kind] && (!has(kind) || head.some(block => block.kind === kind))
+	const instructions = [systemPrompt ?? (profileSystem.length ? null : DEFAULT_INSTRUCTIONS), ...headTexts, userText, webSearch && WEB_SEARCH_INSTRUCTIONS, fileTools && FILE_TOOLS_INSTRUCTIONS, groupText].filter(Boolean).join('\n\n')
+	const instructionsLabel = [systemPrompt ? promptLabel : profileSystem.length ? '' : 'Default instructions', profileSystem.length ? 'structure profile' : '', inInstructions('userCharacter') ? 'your Character' : '', inInstructions('participants') ? 'group chat' : ''].filter(Boolean).join(' + ')
 
 	const sent: UIMessage[] = []
 	const trace: ContextBlock[] = [{ kind: 'instructions', role: 'system', label: instructionsLabel.charAt(0).toUpperCase() + instructionsLabel.slice(1), size: instructions.length, text: instructions }]
@@ -115,6 +126,13 @@ export function buildContext({ thread, systemPrompt, promptLabel = 'System promp
 			const role = block.role === 'assistant' ? 'assistant' : 'user'
 			sent.push({ id, role, parts: [{ type: 'text', text: block.text }] })
 			trace.push({ kind: 'profile', role, label: `Profile: ${block.role} message`, size: block.text.length, text: block.text, messageId: id })
+		}
+		else if (block.kind === 'userCharacter' || block.kind === 'participants') {
+			const text = placed[block.kind]
+			if (!text) continue
+			const id = `profile-${block.id}`
+			sent.push({ id, role: 'user', parts: [{ type: 'text', text }] })
+			trace.push({ kind: 'profile', role: 'user', label: block.kind === 'userCharacter' ? 'Profile: your Character' : 'Profile: participants', size: text.length, text, messageId: id })
 		}
 		else {
 			const id = `profile-${block.id}`
