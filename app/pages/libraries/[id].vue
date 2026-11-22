@@ -2,7 +2,10 @@
 const route = useRoute()
 const router = useRouter()
 const libraryId = route.params.id as string
-const { data: library, error } = useQuery(libraryQuery(libraryId))
+// Rendered by the server with its data, the library and its files together, as members open it from links.
+// The server reads through the API with the visitor's cookie, so the page holds no more than the API gives them.
+const { data: library, error } = useQuery({ ...libraryQuery(libraryId), enabled: true })
+useQuery({ ...libraryEntriesQuery(libraryId), enabled: true })
 useHead({ title: () => library.value?.name ?? 'Library' })
 
 // The open entry is in the address, so a reload or a shared link opens it again.

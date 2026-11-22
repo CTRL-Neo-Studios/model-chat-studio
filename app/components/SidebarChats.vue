@@ -261,9 +261,10 @@ function onDragEnd() {
 }
 
 // A chat loads while the pointer is over its row or the row has focus, so opening it is instant.
+const prefetch = usePrefetch()
 function prefetchChat(event: Event) {
 	const item = dragItemOf(event.target)
-	if (item?.kind === 'chat') queryCache.refresh(queryCache.ensure(chatQuery(item.id))).catch(() => {})
+	if (item?.kind === 'chat') prefetch(chatQuery(item.id))
 }
 </script>
 

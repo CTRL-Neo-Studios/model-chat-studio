@@ -1,6 +1,5 @@
 <script setup lang="ts">
 const { loggedIn } = useUserSession()
-const queryCache = useQueryCache()
 const siteName = useRuntimeConfig().public.siteName as string || 'Chat'
 
 const sidebarOpen = ref(false)
@@ -10,19 +9,20 @@ const searchOpen = ref(false)
 const { data: chatList } = useQuery(() => ({ ...chatsQuery, enabled: import.meta.client && loggedIn.value }))
 const chats = computed(() => loggedIn.value ? (chatList.value ?? []).map(toUIChat) : [])
 
-/** Loads data the member is about to need, unless it is cached and fresh. */
-function prefetch(options: Parameters<typeof queryCache.ensure>[0]) {
-	queryCache.refresh(queryCache.ensure(options)).catch(() => {})
-}
+const prefetch = usePrefetch()
 
 watch(loggedIn, () => {
 	sidebarOpen.value = false
 })
-// The model picker and the profiles appear on most pages; load them once signed in.
+// The model picker and the profiles appear on most pages; load them once signed in. What the menus lead to loads
+// once the first page is up and the browser idle, so a click there shows its data without a skeleton.
 if (import.meta.client) {
 	watch(loggedIn, (value) => {
-		if (value) [modelsQuery, modelProfilesQuery].forEach(prefetch)
+		if (value) prefetch(modelsQuery, modelProfilesQuery)
 	}, { immediate: true })
+	onNuxtReady(() => watch(loggedIn, (value) => {
+		if (value) prefetch(librariesQuery, charactersQuery, structureProfilesQuery, sharedChatsQuery, meQuery, usageQuery)
+	}, { immediate: true }))
 }
 
 // Search covers every chat, in folders or not.

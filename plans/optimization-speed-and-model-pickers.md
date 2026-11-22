@@ -1,6 +1,6 @@
 # Optimization plan: page speed and the admin model pickers
 
-Status: O1 to O5 done; O6 planned (section 7). It sits between milestone 2 (waiting for its live smoke run) and milestone 3, and changes no feature. Deviations: changes are optimistic local or cache updates with rollback rather than `useMutation`, which would add nothing over them.
+Status: O1 to O6 done (O6 in section 7). It sits between milestone 2 (waiting for its live smoke run) and milestone 3, and changes no feature. Deviations: changes are optimistic local or cache updates with rollback rather than `useMutation`, which would add nothing over them.
 
 O5 (after milestone 6.1): the server no longer waits for data. Every query is lazy on the server (`enabled: () => import.meta.client` in `colada.options.ts`, Pinia Colada's "lazy queries"; a query with its own `enabled` adds `import.meta.client &&`), so a reload or a link gets the page with its skeletons and the browser fetches the data. Measured on `bun run dev` with the database 280 ms away: first byte 2 to 3.5 s before, 20 to 40 ms after; data in 0.8 to 1.8 s, skeletons meanwhile; no hydration warnings. The three places that still waited now show at once: `/admin/settings` (the form fills in when its settings arrive), the home page (the models menu is a placeholder until the profiles arrive) and "New chat here" (sending waits for the folder's defaults, typing does not). The server render no longer contains the data (view source shows skeletons).
 
@@ -139,7 +139,9 @@ A throwaway Nitro plugin, as used for the numbers above: it wraps the local data
 
 ## 7. Phase O6: which pages arrive with their data, and a shorter wait on all of them
 
-Status: planned. One phase.
+Status: built. Measured on `bun run dev` with the real database: simple reads 0.43 to 0.59 s (from 1.0 to 1.2 s); a chat's page arrives complete in 0.48 to 0.64 s to first byte, a library's in 0.7 to 1.0 s (its two reads are the slower kind, about 0.75 s each, run together); no skeleton and no hydration warning on either; view source holds the messages and files. A guest gets a public chat whole; a private chat, to a guest or another member, says "not found" with none of it in the source; the same for another member's library. After a fresh load of `/`, every menu page opens with no skeleton; so do the admin tabs once the user menu has been opened; a library opens with no skeleton after its card is hovered (from elsewhere it shows skeletons once). Rendered pages carry `private, no-store`, API routes and assets keep theirs. After `bun run typecheck` with dev running, dev answered from Postgres.
+
+As built: `server/plugins/preparedStatements.ts` prepares only queries with parameters (those without already take one trip, and migrations stay unprepared), transactions included; `server/plugins/privatePages.ts`; `usePrefetch()` is shared by the layout, the sidebar, the user menu, the admin tabs and the library cards. Admin lists load when the user menu opens (one step before the Admin entry) and, for an admin, the other tabs' lists once an admin page is up.
 
 ### Findings
 

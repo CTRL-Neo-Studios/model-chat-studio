@@ -10,6 +10,9 @@ const overlay = useOverlay()
 const queryCache = useQueryCache()
 const { data, isPending } = useQuery(librariesQuery)
 const { pinnedFirst } = usePins()
+// A library and its files load while the pointer is over its card or the card has focus, so opening it is instant.
+const prefetch = usePrefetch()
+const prefetchLibrary = (id: string) => prefetch(libraryQuery(id), libraryEntriesQuery(id))
 const libraries = computed(() => data.value ?? [])
 const shown = computed(() => pinnedFirst('library', libraries.value))
 type Library = (typeof libraries.value)[number]
@@ -86,7 +89,13 @@ const actions = (library: Library): DropdownMenuItem[][] => library.role === 'ow
 					:actions="[{ label: 'New library', icon: 'i-lucide-plus', onClick: create }]"
 				/>
 				<ul v-else class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-					<li v-for="library in shown" :key="library.id" class="relative flex flex-col gap-2 rounded-md border border-default p-4 hover:bg-elevated/50 has-focus-visible:ring-2 has-focus-visible:ring-primary">
+					<li
+						v-for="library in shown"
+						:key="library.id"
+						class="relative flex flex-col gap-2 rounded-md border border-default p-4 hover:bg-elevated/50 has-focus-visible:ring-2 has-focus-visible:ring-primary"
+						@pointerenter="prefetchLibrary(library.id)"
+						@focusin="prefetchLibrary(library.id)"
+					>
 						<div class="flex items-center gap-2">
 							<UIcon name="i-lucide-library-big" class="size-5 text-muted shrink-0" />
 							<!-- The link covers the card; the buttons sit above it. -->

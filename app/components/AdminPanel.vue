@@ -16,6 +16,11 @@ const links = computed(() => [
 			]
 		: []),
 ])
+
+// The other tabs' lists load once an admin page is up, so switching tabs shows them at once. The model catalogs
+// are large and load when their page opens.
+const prefetch = usePrefetch()
+onMounted(() => prefetch(usersQuery, ...(user.value?.role === 'admin' ? [invitesQuery, adminSettingsQuery] : [])))
 </script>
 
 <template>

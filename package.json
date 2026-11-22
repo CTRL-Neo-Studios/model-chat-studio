@@ -8,7 +8,7 @@
     "preview": "nuxt preview --dotenv .env.prod",
     "postinstall": "nuxt prepare",
     "lint": "eslint .",
-    "typecheck": "nuxt typecheck",
+    "typecheck": "nuxt typecheck --dotenv .env.dev",
     "test": "bun test",
     "db:generate": "nuxt db generate",
     "db:migrate:dev": "nuxt db migrate --dotenv .env.dev",
