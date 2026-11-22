@@ -38,7 +38,8 @@ bun run test
 
 ```bash
 bun run db:generate  # create a migration from server/db/schema.ts
-bun run db:migrate   # apply pending migrations, reads .env.dev
+bun run db:migrate:dev   # apply pending migrations to the dev database, reads .env.dev
+bun run db:migrate:prod  # apply pending migrations to the production database, reads .env.prod
 ```
 
 ## Production

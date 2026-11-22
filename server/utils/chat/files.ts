@@ -3,7 +3,8 @@ import { blob } from 'hub:blob'
 import { schema } from 'hub:db'
 import { and, eq, inArray } from 'drizzle-orm'
 import type { UIMessage } from 'ai'
-import { FILE_UPLOAD, FILE_URL_PATTERN } from '#shared/utils/file'
+import { createError, type RequestEvent } from 'nuxt/server'
+import { FILE_UPLOAD, FILE_UPLOAD_TYPES, FILE_URL_PATTERN } from '#shared/utils/file'
 import type { Db } from '#server/utils/core/settings'
 import { type ActiveInference, useInference } from '#server/utils/inference'
 import type { CatalogModel } from '#server/utils/inference/types'
@@ -11,6 +12,23 @@ import type { CatalogModel } from '#server/utils/inference/types'
 /** Provider-side copies are tied to the account of the key that made them; only a hash of it is stored. */
 function hashApiKey(apiKey: string) {
 	return createHash('sha256').update(apiKey).digest('hex')
+}
+
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+
+// Browsers often send no type, or a spreadsheet type for CSV, for these.
+const typesByExtension: Record<string, string> = { csv: 'text/csv', md: 'text/markdown', txt: 'text/plain' }
+
+/** Reads an upload form; its `file` field must be a type a model can take, at most 8 MB. */
+export async function readUpload(event: RequestEvent) {
+	const form = await event.req.formData()
+	const upload = form.get('file')
+	if (!(upload instanceof File)) throw createError({ status: 400, statusText: 'Send the file in the `file` field' })
+	const extension = /\.([a-z0-9]{1,8})$/i.exec(upload.name)?.[1]?.toLowerCase() ?? ''
+	const mediaType = typesByExtension[extension] ?? upload.type
+	if (!FILE_UPLOAD_TYPES.includes(mediaType)) throw createError({ status: 400, statusText: 'Images, PDFs and text files (CSV, Markdown, plain text) only' })
+	if (upload.size > MAX_UPLOAD_BYTES) throw createError({ status: 413, statusText: 'Files can be at most 8 MB' })
+	return { form, upload, mediaType, extension }
 }
 
 /**

@@ -76,6 +76,22 @@ describe('OpenRouter', () => {
 		expect(openrouterPlatform.usage({ model: 'a/b', steps }).costUsd).toBeNull()
 	})
 
+	test('a call on a provider key stored at OpenRouter (BYOK) also counts that provider\'s charge', async () => {
+		const chunks = openrouterChunks(0.0001)
+		const byok = (upstream: number | null, isByok: boolean) => chunks.map(chunk => typeof chunk === 'object' && 'usage' in chunk && chunk.usage
+			? { ...chunk, usage: { ...chunk.usage, is_byok: isByok, cost_details: { upstream_inference_cost: upstream } } }
+			: chunk)
+		const cost = async (body: unknown[]) => {
+			globalThis.fetch = (async () => sseResponse(body)) as typeof fetch
+			const { steps } = await run(turn({ model: 'a/b' }))
+			return openrouterPlatform.usage({ model: 'a/b', steps }).costUsd
+		}
+		expect(await cost(byok(0.0042, true))).toBeCloseTo(0.0043, 10)
+		expect(await cost(byok(null, true))).toBeCloseTo(0.0001, 10)
+		// Without BYOK the upstream charge is already part of `cost`.
+		expect(await cost(byok(0.0042, false))).toBeCloseTo(0.0001, 10)
+	})
+
 	test('normalizes catalog entries', () => {
 		const base = {
 			id: 'moonshotai/kimi-k2.6', name: 'Kimi', context_length: 262144,

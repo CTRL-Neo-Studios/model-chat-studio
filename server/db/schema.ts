@@ -10,9 +10,10 @@ import {
 	primaryKey,
 	text,
 	timestamp,
+	unique,
 	uuid,
 } from "drizzle-orm/pg-core";
-import {relations} from "drizzle-orm";
+import {relations, sql} from "drizzle-orm";
 import type {UIMessage} from "ai";
 import {type ChatSettings, type ContextBlock, LANE_COLORS, type MessageMetadata, type ModelParams} from "../../shared/utils/chat";
 import type {UserPreferences} from "../../shared/utils/preferences";
@@ -224,6 +225,40 @@ export const file = pgTable("file", {
 	...createdUpdatedAtColumns
 }, (t) => [
 	index().on(t.chatId),
+]);
+
+/** A project: a file space with its own chats. People and roles come with sharing (phase 4.6). */
+export const project = pgTable("project", {
+	id: uuid().primaryKey().defaultRandom(),
+	ownerId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	name: text().notNull(),
+	description: text(),
+
+	...createdUpdatedAtColumns
+}, (t) => [
+	index().on(t.ownerId),
+]);
+
+/** One node of a project's file space: a folder, an uploaded file or a Markdown note. */
+export const projectEntry = pgTable("projectEntry", {
+	id: uuid().primaryKey().defaultRandom(),
+	projectId: uuid().notNull().references(() => project.id, { onDelete: "cascade" }),
+	/** `null` is the top level. Deleting a folder deletes everything in it. */
+	parentId: uuid().references((): AnyPgColumn => projectEntry.id, { onDelete: "cascade" }),
+	kind: text({ enum: ["folder", "file", "note"] }).notNull(),
+	name: text().notNull(),
+	tags: text().array().notNull().default(sql`'{}'::text[]`),
+	/** The upload, for a file. Its blob is deleted with the entry. */
+	fileId: uuid().references(() => file.id, { onDelete: "cascade" }),
+	/** Markdown, for a note. */
+	content: text(),
+	createdBy: uuid().references(() => user.id, { onDelete: "set null" }),
+
+	...createdUpdatedAtColumns
+}, (t) => [
+	// Names are unique within a folder, the top level included.
+	unique().on(t.projectId, t.parentId, t.name).nullsNotDistinct(),
+	index().on(t.fileId),
 ]);
 
 /** A file uploaded to a platform (DeepSeek PDFs), cached per account key. */

@@ -1,5 +1,6 @@
 import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import type { ToolSet } from 'ai'
+import { z } from 'zod'
 import type { CatalogEndpoint, CatalogModel, InferencePlatform, Pricing } from './types'
 import { sumTokens } from './usage'
 
@@ -97,7 +98,24 @@ function reasoningOption(level: string | undefined) {
 
 interface OpenRouterMetadata {
 	provider?: string
-	usage?: { cost?: number }
+}
+
+// OpenRouter's usage object, as it arrives in `usage.raw` and in the transcription response.
+const usageCostSchema = z.object({
+	cost: z.number(),
+	is_byok: z.boolean().optional(),
+	cost_details: z.object({ upstream_inference_cost: z.number().nullish() }).nullish(),
+})
+
+/**
+ * What a call cost. `cost` is what OpenRouter charged; when the call ran on a provider key stored in the
+ * OpenRouter account (BYOK), that provider's own charge comes on top, in `upstream_inference_cost`.
+ * `null` when no cost was reported.
+ */
+function openrouterCost(raw: unknown): number | null {
+	const usage = usageCostSchema.safeParse(raw).data
+	if (!usage) return null
+	return usage.cost + (usage.is_byok ? usage.cost_details?.upstream_inference_cost ?? 0 : 0)
 }
 
 export const openrouterPlatform: InferencePlatform = {
@@ -172,10 +190,9 @@ export const openrouterPlatform: InferencePlatform = {
 		let costUsd: number | null = 0
 		let provider: string | undefined
 		for (const step of steps) {
-			const metadata = step.providerMetadata?.openrouter as OpenRouterMetadata | undefined
-			const cost = metadata?.usage?.cost
-			costUsd = costUsd === null || typeof cost !== 'number' ? null : costUsd + cost
-			provider = metadata?.provider ?? provider
+			const cost = openrouterCost(step.usage.raw)
+			costUsd = costUsd === null || cost === null ? null : costUsd + cost
+			provider = (step.providerMetadata?.openrouter as OpenRouterMetadata | undefined)?.provider ?? provider
 		}
 		return { provider, costUsd, ...sumTokens(steps) }
 	},
@@ -188,7 +205,7 @@ export const openrouterPlatform: InferencePlatform = {
 			body: JSON.stringify({ model, input_audio: { data: Buffer.from(wav).toString('base64'), format: 'wav' } }),
 		})
 		if (!response.ok) throw new Error(`OpenRouter transcription answered ${response.status}: ${await response.text()}`)
-		const { text, usage } = await response.json() as { text: string, usage?: { cost?: number } }
-		return { text, costUsd: typeof usage?.cost === 'number' ? usage.cost : null }
+		const { text, usage } = await response.json() as { text: string, usage?: unknown }
+		return { text, costUsd: openrouterCost(usage) }
 	},
 }

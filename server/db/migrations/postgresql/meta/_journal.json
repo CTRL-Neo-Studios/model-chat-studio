@@ -57,6 +57,13 @@
       "when": 1795303804998,
       "tag": "0007_turn_trace",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795310017157,
+      "tag": "0008_projects",
+      "breakpoints": true
     }
   ]
 }

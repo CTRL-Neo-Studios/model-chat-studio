@@ -1,6 +1,6 @@
 # Milestones 2–4: model profiles, organisation, projects
 
-Status: milestones 2 and 3 done. Milestone 4: 4.P spikes done (all live runs passed; spike A found DeepSeek refuses app tools next to web search with thinking off, fixed in the turn route); 4.1 next. Milestone 1 (`plans/milestone-1-chat-foundation.md`) is the base; its conventions (section 2 there) apply unchanged.
+Status: milestones 2 and 3 done. Milestone 4: 4.P spikes done (all live runs passed; spike A found DeepSeek refuses app tools next to web search with thinking off, fixed in the turn route). 4.1 in two steps: the server (schema, routes, file serving) is built; the pages are next. Milestone 1 (`plans/milestone-1-chat-foundation.md`) is the base; its conventions (section 2 there) apply unchanged.
 
 Goal, in build order:
 
@@ -248,7 +248,7 @@ A profile is not tied to a project, so `files` blocks store paths, resolved in w
 |---|---|
 | `GET /projects`, `POST /projects`, `GET /projects/:id`, `PATCH …`, `DELETE …` | own and shared projects |
 | `PUT /projects/:id/members/:userId`, `DELETE …` | owner: set a role, remove. A member can remove themselves |
-| `GET /projects/:id/entries`, `POST …`, `PATCH /projects/:id/entries/:entryId`, `DELETE …` | the tree; create a folder or a note; rename, move, tag, edit a note |
+| `GET /projects/:id/entries`, `POST …`, `GET /projects/:id/entries/:entryId`, `PATCH …`, `DELETE …` | the tree as a flat list (no note text); create a folder or a note; one entry with a note's text; rename, move, tag, edit a note; delete (a folder with everything in it). A name taken in the folder is a 409 |
 | `PUT /projects/:id/files` | upload into a folder: same types and 8 MB limit as chat uploads |
 | `POST /projects/:id/entries/from-file` | "Add to project": copies a chat upload into the file space (a copy, so each side can be deleted on its own) |
 | `GET /projects/:id/chats` | the caller's chats in the project, plus the project-visible ones |
