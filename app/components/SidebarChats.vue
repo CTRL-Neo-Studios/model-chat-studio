@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { DropdownMenuItem, TreeItem } from '@nuxt/ui'
-import { LazyModalConfirm, LazyModalMoveTo, LazyModalRename } from '#components'
+import { LazyModalConfirm, LazyModalFolderDefaults, LazyModalMoveTo, LazyModalRename } from '#components'
+import { nearestDefaults } from '#shared/utils/folderDefaults'
 import type { UIChat } from '~/composables/useChats'
 
 /**
@@ -26,6 +27,7 @@ type Folder = (typeof folders.value)[number]
 const renameModal = overlay.create(LazyModalRename)
 const moveModal = overlay.create(LazyModalMoveTo)
 const confirmModal = overlay.create(LazyModalConfirm)
+const defaultsModal = overlay.create(LazyModalFolderDefaults)
 
 // Open folders, kept across visits; a cookie so the server renders them open too.
 const expanded = useCookie<string[]>('sidebar-folders', { default: () => [], sameSite: 'lax' })
@@ -163,8 +165,27 @@ async function deleteFolder(folder: Folder) {
 	}
 }
 
+// "Defaults…": what new chats started in the folder begin with.
+async function editDefaults(folder: Folder) {
+	const above = folder.parentId ? folders.value.find(entry => entry.id === folder.parentId) : undefined
+	const inheritedDefaults = above ? nearestDefaults(folders.value, above.id) : null
+	const from = inheritedDefaults && folders.value.find(entry => entry.defaults === inheritedDefaults)
+	const defaults = await defaultsModal.open({
+		name: folder.name,
+		defaults: folder.defaults,
+		inherited: inheritedDefaults && from ? { from: from.name, defaults: inheritedDefaults } : null,
+	}).result
+	if (defaults === undefined) return
+	const before = folderList.value
+	queryCache.setQueryData(foldersQuery.key, list => list?.map(entry => entry.id === folder.id ? { ...entry, defaults } : entry) ?? [])
+	if (!await act(`/api/v1/folders/${folder.id}`, { method: 'PATCH', body: { defaults }, success: 'Defaults saved' }) && before) queryCache.setQueryData(foldersQuery.key, before)
+}
+
 function folderActions(folder: Folder): DropdownMenuItem[][] {
 	return [[
+		{ label: 'New chat here', icon: 'i-lucide-circle-plus', onSelect: () => navigateTo({ path: '/', query: { folder: folder.id } }) },
+		{ label: 'Defaults…', icon: 'i-lucide-library-big', onSelect: () => editDefaults(folder) },
+	], [
 		pinItem('chatFolder', folder.id),
 		{ label: 'New folder', icon: 'i-lucide-folder-plus', onSelect: () => createFolder(folder.id) },
 		{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => renameFolder(folder) },

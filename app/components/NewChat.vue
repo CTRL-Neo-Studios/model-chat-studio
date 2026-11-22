@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ChatSettings } from '#shared/utils/chat'
+import { nearestDefaults } from '#shared/utils/folderDefaults'
 import type { PromptCommand } from '~/components/chat/Prompt.vue'
 
 /** The new-chat screen: pick models, write the first message. `temporary` starts a chat that is not kept. */
@@ -60,9 +61,19 @@ const greeting = computed(() => {
 const { uploads, promptFiles, uploading, parts: fileParts } = usePromptUploads(chatId)
 
 // The libraries the chat will read and its structure profile, chosen before the first message; "@" names their files.
-const libraryIds = ref<string[]>([])
-const structureProfileId = ref<string | null>(null)
-const { data: libraryList } = useQuery(librariesQuery)
+// `?folder=` starts the chat in that folder, with the folder's defaults (or the nearest above) filled in, removable.
+const folderParam = useRoute().query.folder
+const { data: libraryList, refresh: refreshLibraries } = useQuery(librariesQuery)
+const { data: folderList, refresh: refreshFolders } = useQuery(foldersQuery)
+const { data: profileList, refresh: refreshStructureProfiles } = useQuery(structureProfilesQuery)
+if (!props.temporary && typeof folderParam === 'string') {
+	await Promise.all([!libraryList.value && refreshLibraries(), !folderList.value && refreshFolders(), !profileList.value && refreshStructureProfiles()])
+}
+const folder = props.temporary ? undefined : folderList.value?.find(entry => entry.id === folderParam)
+const defaults = folder ? nearestDefaults(folderList.value ?? [], folder.id) : null
+// Libraries left and profiles deleted since the defaults were set are skipped.
+const libraryIds = ref((defaults?.libraryIds ?? []).filter(id => libraryList.value?.some(library => library.id === id)))
+const structureProfileId = ref(profileList.value?.find(profile => profile.id === defaults?.structureProfileId)?.id ?? null)
 const { items: mentions, partsFor } = useLibraryMentions(() => libraryIds.value.flatMap(id => (libraryList.value ?? []).find(library => library.id === id) ?? []))
 const references = ref<string[]>([])
 
@@ -84,8 +95,10 @@ async function createChat(prompt: string) {
 				settings: settings.value,
 				models: lanes.value.map(({ id: _, position: __, platform: ___, profileId, ...fields }) => ({ ...fields, profileId: profileId ?? undefined })),
 				temporary: props.temporary || undefined,
+				// Sent as chosen, so a default removed here stays removed.
 				libraryIds: libraryIds.value,
-				structureProfileId: structureProfileId.value ?? undefined,
+				structureProfileId: structureProfileId.value,
+				folderId: folder?.id,
 			},
 		})
 	}
@@ -136,6 +149,9 @@ const quickChats = [
 					</h1>
 					<p v-if="temporary" class="text-muted -mt-2">
 						Not in your chats, and deleted when you leave or refresh this page. You can keep it once it has started.
+					</p>
+					<p v-else-if="folder" class="text-muted -mt-2">
+						A new chat in “{{ folder.name }}”, starting from its defaults.
 					</p>
 
 					<UAlert

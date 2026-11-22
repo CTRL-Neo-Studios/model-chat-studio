@@ -125,6 +125,11 @@ const commandHandlers = computed(() => Object.fromEntries(props.commands.map(com
 		return instance.chain()
 	},
 }])))
+
+// The "/" and "@" menus hang off the page, not the editor: the editor scrolls, which cut them to a sliver. They open
+// above the cursor, where the prompt leaves room, and below it when there is none.
+const menuParent = () => document.body
+const menuOptions = { strategy: 'fixed', placement: 'top-start', offset: 8, flip: true, shift: { padding: 8 } } as const
 </script>
 
 <template>
@@ -152,8 +157,8 @@ const commandHandlers = computed(() => Object.fromEntries(props.commands.map(com
 				class="w-full min-h-12 max-h-60 overflow-y-auto"
 				:ui="{ base: ['p-1.5! text-base', dictation !== 'idle' && '[&_.is-editor-empty]:before:italic'] }"
 			>
-				<UEditorSuggestionMenu v-if="commandItems.length" :editor="instance" :items="commandItems" />
-				<UEditorMentionMenu v-if="mentions.length" :editor="instance" :items="mentions" :limit="20" />
+				<UEditorSuggestionMenu v-if="commandItems.length" :editor="instance" :items="commandItems" :append-to="menuParent" :options="menuOptions" />
+				<UEditorMentionMenu v-if="mentions.length" :editor="instance" :items="mentions" :limit="20" :append-to="menuParent" :options="menuOptions" />
 			</UEditor>
 		</template>
 

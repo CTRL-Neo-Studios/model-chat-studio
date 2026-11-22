@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
 import * as schema from '../server/db/schema'
 import { assertFolderParent, deleteFolder, listFolders } from '../server/utils/chat/folders'
+import { nearestDefaults } from '../shared/utils/folderDefaults'
 import { createTestDb } from './db'
 
 test('a folder cannot move into itself or a folder inside it, nor into another member\'s folder', () => {
@@ -34,7 +35,26 @@ test('deleting a folder moves its chats and folders up to its parent; another me
 	const [moved] = await db.select({ folderId: schema.chat.folderId }).from(schema.chat).where(eq(schema.chat.id, chat!.id))
 	expect(moved!.folderId).toBe(work!.id)
 	expect(await listFolders(db, a!.id)).toEqual([
-		{ id: drafts!.id, parentId: work!.id, name: 'Drafts' },
-		{ id: work!.id, parentId: null, name: 'Work' },
+		{ id: drafts!.id, parentId: work!.id, name: 'Drafts', defaults: null },
+		{ id: work!.id, parentId: null, name: 'Work', defaults: null },
 	])
+})
+
+test('a new chat takes the defaults of its folder, else of the nearest folder up that has some', () => {
+	const work = { libraryIds: ['L1'], structureProfileId: 'P1' }
+	const ideas = { libraryIds: [], structureProfileId: null }
+	// work (defaults) > ideas (its own, empty) > drafts; work > plans (none); home (none)
+	const folders = [
+		{ id: 'work', parentId: null, defaults: work },
+		{ id: 'ideas', parentId: 'work', defaults: ideas },
+		{ id: 'drafts', parentId: 'ideas', defaults: null },
+		{ id: 'plans', parentId: 'work', defaults: null },
+		{ id: 'home', parentId: null, defaults: null },
+	]
+	expect(nearestDefaults(folders, 'plans')).toBe(work)
+	expect(nearestDefaults(folders, 'drafts')).toBe(ideas)
+	expect(nearestDefaults(folders, 'home')).toBeNull()
+	expect(nearestDefaults(folders, null)).toBeNull()
+	expect(nearestDefaults(folders, 'gone')).toBeNull()
+	expect(nearestDefaults([{ id: 'a', parentId: 'b', defaults: null }, { id: 'b', parentId: 'a', defaults: null }], 'a')).toBeNull()
 })

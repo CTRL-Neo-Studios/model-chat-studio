@@ -19,6 +19,7 @@ import type {UIMessage} from "ai";
 import {type ChatSettings, type ContextBlock, LANE_COLORS, type MessageMetadata, type ModelParams} from "../../shared/utils/chat";
 import type {UserPreferences} from "../../shared/utils/preferences";
 import type {ProfileBlock} from "../../shared/utils/structureProfile";
+import type {FolderDefaults} from "../../shared/utils/folderDefaults";
 
 const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' })
 
@@ -111,6 +112,8 @@ export const chatFolder = pgTable("chatFolder", {
 	/** `null` is the top level. Deleting a folder moves its content up first; `set null` is a backstop. */
 	parentId: uuid().references((): AnyPgColumn => chatFolder.id, { onDelete: "set null" }),
 	name: text().notNull(),
+	/** What a new chat started in it (or in a folder inside it without its own) begins with; `null`: none. */
+	defaults: jsonb().$type<FolderDefaults>(),
 
 	...createdUpdatedAtColumns
 }, (t) => [

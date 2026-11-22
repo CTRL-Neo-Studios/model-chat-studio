@@ -9,9 +9,12 @@ export const folderNameSchema = z.string().trim().min(1).max(100)
 
 interface FolderNode { id: string, parentId: string | null }
 
+/** A folder as routes return it. */
+export const folderColumns = { id: tables.chatFolder.id, parentId: tables.chatFolder.parentId, name: tables.chatFolder.name, defaults: tables.chatFolder.defaults }
+
 /** All of a member's folders, by name. A member has few, and moves are checked against the whole tree. */
 export async function listFolders(db: Db, userId: string) {
-	return await db.select({ id: tables.chatFolder.id, parentId: tables.chatFolder.parentId, name: tables.chatFolder.name })
+	return await db.select(folderColumns)
 		.from(tables.chatFolder)
 		.where(eq(tables.chatFolder.userId, userId))
 		.orderBy(asc(sql`lower(${tables.chatFolder.name})`))
