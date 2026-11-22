@@ -1,6 +1,6 @@
 # Milestones 2–4: model profiles, organisation, projects
 
-Status: milestone 2 done (live smoke run passed on both platforms). Milestone 3 built: spikes (D's live run pending), folders, temporary chat, context builder with memory slider and turn trace, prompt editor with commands and `/compact`, conversation overview. Milestone 4 next. Milestone 1 (`plans/milestone-1-chat-foundation.md`) is the base; its conventions (section 2 there) apply unchanged.
+Status: milestones 2 and 3 done. Milestone 4: 4.P spikes done offline (live runs of A and E pending, with milestone 3's D); 4.1 next. Milestone 1 (`plans/milestone-1-chat-foundation.md`) is the base; its conventions (section 2 there) apply unchanged.
 
 Goal, in build order:
 
@@ -295,11 +295,21 @@ Milestone 3:
 
 Milestone 4:
 
-- App tools work on DeepSeek while its web tools are on.
-- System-role messages after the first message are accepted on both platforms. If not, such blocks are sent as user messages.
-- A mention round-trips as a `data-reference` part through `Chat`, the transport and `userMessageSchema`.
-- Fuse.js with word-split queries gives usable results on English and Chinese text. If not, fuzzy matching is limited to names and tags.
-- An image or PDF in the added auto-fetch message works on both platforms (DeepSeek by `file_id`).
+Scripts in `scripts/spikes/m4/` of the prep checkout. They import the main checkout's platform code by relative path, because the prep checkout's is older.
+
+- **Spike A, offline part done, live run pending** (`app-tools-with-web.ts`). Offline: a function tool (`read_file`) goes on the wire next to the web tools on both platforms: DeepSeek `[read_file, deepseek_web_search, deepseek_read_url]` with thinking off and on; OpenRouter `[openrouter:web_search, read_file]`. Live: the model must call `read_file`, take its result and answer with the code word in it, on DeepSeek (thinking off and on) and two OpenRouter models.
+- **System-role messages after the first message: answered by milestone 3's spike D.** AI SDK v7 refuses them before anything reaches a platform. Context profile `message` blocks with role `system` are sent as user messages; system blocks at the very start are joined into the instructions.
+- **Spike C, confirmed offline** (`reference-part.ts`). A `data-reference` part (`entryId`, `name`, `kind`) goes through the app's transport body unchanged, passes `userMessageSchema` extended with a reference part (a bad entry id is refused) and survives JSON storage. Left in, `convertToModelMessages` drops it silently. Its `convertDataPart` option expands one part where it stands, but returns one part only, so a folder (many files) cannot expand there. To build: expand references in the resolve step next to `resolveAttachments` (parts to parts, a folder to several), before `convertToModelMessages`.
+- **Spike D, confirmed offline** (`fuzzy-search.ts`, 8 entries, 9 queries in English and Chinese). Usable with these settings, 9 of 9 as expected: words from `Intl.Segmenter` (Chinese has no spaces), dropping English stop words, Latin words under 3 letters and single Chinese characters; one Fuse query per word with `threshold: 0.2`, `ignoreLocation` and `ignoreFieldNorm`, keys name ×2, tags ×3, text ×1; an entry's rank is the sum of its word hits. Typos match ("deploymnt"); unrelated questions ("What is the weather like today?", "今天天气怎么样？") match nothing. At 0.3 the weather question already matched `sourdough.md`. Fuse's combined score must not be filtered again: with weighted keys an exact match in the text alone scores about 0.3. Ceiling: a small sample; a weak second hit (`部署指南.md` for "步骤", steps) ranks below the right one and is cut by `maxEntries`.
+- **Spike E, offline part done, live run pending** (`autofetch-files.ts`). Offline: the added message goes out as `user(text + image_url + file)`, at the end and before the question, on both platforms; the DeepSeek PDF as a `file_id` reference. Live: both secret words must come back in both positions.
+
+Live run for A, E and milestone 3's D, in the prep checkout:
+
+```
+OPENROUTER_API_KEY=… DEEPSEEK_API_KEY=… bun scripts/spikes/m4/app-tools-with-web.ts --live
+OPENROUTER_API_KEY=… DEEPSEEK_API_KEY=… bun scripts/spikes/m4/autofetch-files.ts --live
+OPENROUTER_API_KEY=… DEEPSEEK_API_KEY=… bun scripts/spikes/m3/thread-starts-with-answer.ts --live
+```
 
 ## 7. Ceilings and things left out
 
