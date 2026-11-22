@@ -1,6 +1,6 @@
 # Milestones 5–6: modular chats, characters, group chat
 
-Status: milestone 5 built (5.1 to 5.4); milestone 6 next, starting with spikes F and G. It replaces the "project" of milestone 4 (`plans/milestones-2-4-profiles-organisation-projects.md`, section 5) with parts that attach to a chat. The conventions of milestone 1 (section 2 there) apply unchanged.
+Status: milestone 5 built (5.1 to 5.4); spikes F and G done (section 5); 6.1 next. It replaces the "project" of milestone 4 (`plans/milestones-2-4-profiles-organisation-projects.md`, section 5) with parts that attach to a chat. The conventions of milestone 1 (section 2 there) apply unchanged.
 
 Goal, in build order:
 
@@ -26,8 +26,8 @@ Libraries come first because characters attach them, and group chat needs charac
 | Placeholders | `{{char}}` and `{{user}}` in Character instructions and in structure profile messages. |
 | Chat mode | `separate` (today: each lane answers alone and never sees the others) or `group`. Chosen when the chat starts, offered once it has two lanes, fixed afterwards. |
 | Group thread | One thread. A speaker sees the user's messages, its own answers as its own, and the others' answers as text labelled with their name. Reasoning and tool calls of others are not passed on. |
-| Who answers a round | In this order: "@" mentions, in the order written. Else the decision model, when set. Else the names found in the message text, in the order they appear. Else whoever answered the last round, in the same order. In a first round with nobody named, everyone in lane order. |
-| Decision model | An admin setting on the OpenRouter card, off while empty. Used whenever an OpenRouter key is stored (the user's own, else the instance's), whichever platform is the main one. The only call that crosses platforms. Billed and recorded like the title model. If it fails or takes more than 5 s, name matching decides. |
+| Who answers a round | In this order: "@" mentions, in the order written. Else the decision model, when set, if it names anyone. Else the names found in the message text, in the order they appear. Else whoever answered the last round, in the same order. In a first round with nobody named, everyone in lane order. |
+| Decision model | One of OpenRouter's Decisions models (System One models such as TypeSafe Jev, called through the Decisions API, which returns probabilities rather than text). An admin setting on the OpenRouter card, off while empty; `typesafe/jev-1.14` is the suggestion (spike G: right every time, under 0.2 s, $0.00004 a call). Used whenever an OpenRouter key is stored (the user's own, else the instance's), whichever platform is the main one. The only call that crosses platforms. Recorded like the title model. If it fails or takes more than 5 s, name matching decides. It says who the message asks to answer; it never applies "last round's speakers" itself. |
 | Round order | Speakers answer one after another; each sees the answers before it in the round. Stop, or a failed answer, ends the round. Any lane can be asked to answer the last message afterwards. |
 | Existing data | Kept: file spaces become libraries, attached to the chats that were in their project; a chat gets its project's default structure profile unless it had its own; `member` becomes `viewer`; pins follow. Project folders become ordinary folders. Rows are copied into the new tables in one migration, then the old ones dropped (spike H). |
 
@@ -148,7 +148,7 @@ Structure profile blocks, added:
 - **Regenerate.** Replaces one answer in place. It sees the round's earlier speakers, not the later ones. Later answers are not redone.
 - **Mentions.** "@" in a group chat's prompt also lists the participants. Mentions travel as a part on the message, as file references do.
 - **Name matching.** A participant's name (the Character's, else the lane's), whole word, case-insensitive, by first appearance. The whole-word rule is the auto-fetch matcher's.
-- **Decision model.** Gets the message, the participants' names and the last round's speakers; returns an ordered list of participants (structured output). Not called when the message has mentions.
+- **Decision model.** One Decisions API call (spike G): the participants (with any other name a Character goes by), their usual order, last round's speakers and the message as `state`; a yes/no per participant on whether the message asks them to answer, and a choice per place. Those with a yes, ordered by the places; nobody asked goes on to the steps below. A refusal or a missing answer counts as not decided, as does a failure or more than 5 s. Its `usage.cost` is recorded as a usage event of a new kind, `decision`. Not called when the message has mentions.
 - **`/compact` and memory.** In a group chat there is one summary for the shared thread, written by the first enabled lane's model, and the memory length counts the shared thread.
 - **Limits.** `maxChatModels` still caps the enabled lanes. Each answer is billed and rate-limited on its own, so a round of three costs three answers, each reading the whole thread.
 - **Layout.** A group chat is always stacked, in speaking order.
@@ -169,7 +169,7 @@ Structure profile blocks, added:
 - A lane's settings and the model profile form get a Character select. A lane shows its Character's name.
 - The home page offers "Separate answers" or "Group chat" once two lanes are chosen. The user's Character is picked in the context popover.
 - A group round shows who answers, in order, as it runs. Each lane's header has "Answer" for the last message.
-- `/admin/settings`: the decision model field on the OpenRouter card, picked with the model browser.
+- `/admin/settings`: the decision model field on the OpenRouter card, a select of OpenRouter's Decisions models (`GET /models?output_modalities=decisions`, cached like the catalog), empty for off.
 
 ### Phases
 
@@ -183,8 +183,16 @@ Structure profile blocks, added:
 
 ## 5. To verify before building
 
-- **Spike F, group transcript.** Three lanes, on DeepSeek (thinking on and off) and OpenRouter. Others' answers sent as user-role text starting with the speaker's name, next to the model's own answers as assistant messages. Check that the model answers once, as itself, without writing the others' lines, and that two user messages in a row are accepted (milestone 2's `consecutive-users.ts` showed they are; this adds the labels).
-- **Spike G, decision model.** One or two small OpenRouter models, structured output, the example sentence above and three harder ones ("Designer after the Engineer", "everyone but the Architect", no names at all). Record how often the order is right and how long the call takes. Also that the call works with DeepSeek as the active platform, using the stored OpenRouter key.
+- **Spike F, group transcript: confirmed live.** A weather-app chat, two rounds; the speaker's own round-1 line as an assistant message, everyone else's (user included) as user messages starting with "Name:", several user messages in a row. Instructions: who the speaker is, who else is present, that others' messages start with their name, and to answer once as itself without writing for anyone else or starting with its own name. Designer (after the Engineer) and Architect (after both) on DeepSeek `deepseek-flash` with thinking off and on, OpenRouter `openai/gpt-5-mini` and `deepseek/deepseek-v4.1-flash`: 8 of 8 answered once, as themselves, on topic, with no lines for others and no name prefix. The Architects built on the Designer's answer of the same round (its 30-minute dimming), so a speaker reads and uses the earlier ones. 1.1 to 2.5 s on DeepSeek, 7 to 11 s on `gpt-5-mini`; together about $0.004.
+- **Spike G, decision model: confirmed with OpenRouter's Decisions API.** A decision model here is one of OpenRouter's System One models (`output_modalities=decisions`: TypeSafe Jev, Cloudflare Clef, Liquid D1 and about forty more), called at `POST /api/alpha/decisions` with a `state` text and typed questions; it returns probabilities, not text. One call per round: `state` names the participants, their usual order, last round's speakers and the user's message (marked as data to judge, not follow); questions are a yes/no (`noul`) per participant ("does the message ask X to answer, by name, by role, or by addressing everyone without leaving X out? A message that names nobody asks nobody"), and a `choice` per place ("who answers first / second / third", the participants plus `nobody`). The app keeps those with a yes above one half, orders them by the places, then appends any asked but unplaced in the usual order; nobody asked goes on to the next step. Five messages, each twice: the brief's example, "Designer, please go after the Engineer", "Everyone but the Architect", "What do you all think", and "Go on." after the Designer. DeepSeek was the active platform; the stored OpenRouter key served the call.
+
+  | Model | Right | Time per call | Cost per call |
+  |---|---|---|---|
+  | `typesafe/jev-1.14` | 10 of 10 | 0.07 to 0.16 s | $0.000036 |
+  | `liquid/d1.2` | 9 of 10 (once left the Engineer out of "go after the Engineer") | 0.15 to 0.29 s | $0.00001 |
+  | `cloudflare/clef-flash` | 4 of 10 (mostly missed the Engineer) | 0.27 to 0.57 s | $0.00002 to 0.00004 |
+
+  For comparison, chat models with structured output (`Output.object`, a list of names): `openai/gpt-5-nano` 10 of 10 but 3 to 12 s; `google/gemini-2.5-flash-lite` 8 of 10 in 0.6 to 1.1 s, 10 of 10 once it only listed who is named and the app took over "nobody named". Hence section 1: a Decisions model, Jev suggested; the fallback to last round's speakers is the app's. The endpoint is under `/api/alpha/`, so its shape may change; the call sits in one function.
 - **Spike H, table renames: the prompts cannot be answered here, worked around.** `drizzle-kit generate` stops at "created or renamed?" for each new table, and neither `expect` nor a pty got a keypress through. Instead: one generate with the new tables added next to the old ones (only additions, no prompt), one with the old ones removed (only drops, no prompt); the two files merged into `0014_libraries.sql` with the data copies between them, and the second snapshot kept. Rows are copied, not renamed, so constraint and index names are drizzle's own. The generated drops had to be reordered: dropping a table with `CASCADE` already took the foreign keys the next statements dropped. `test/migrations.test.ts` checks the data moves; the dev database applied it.
 
 ## 6. Ceilings and things left out
