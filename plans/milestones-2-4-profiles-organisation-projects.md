@@ -1,6 +1,6 @@
 # Milestones 2–4: model profiles, organisation, projects
 
-Status: milestones 2 and 3 done. Milestone 4: 4.P spikes done (all live runs passed; spike A found DeepSeek refuses app tools next to web search with thinking off, fixed in the turn route). 4.1 in two steps: the server (schema, routes, file serving) is built; the pages are next. Milestone 1 (`plans/milestone-1-chat-foundation.md`) is the base; its conventions (section 2 there) apply unchanged.
+Status: milestones 2 and 3 done. Milestone 4: 4.P spikes done (all live runs passed; spike A found DeepSeek refuses app tools next to web search with thinking off, fixed in the turn route); 4.1 done (the project description is set through the API only; the page has no field for it yet); 4.2 next. Milestone 1 (`plans/milestone-1-chat-foundation.md`) is the base; its conventions (section 2 there) apply unchanged.
 
 Goal, in build order:
 
@@ -36,6 +36,8 @@ Profiles come first because they change the turn pipeline, and everything after 
 | Project sharing | Roles per listed member: `viewer` (reads), `member` (also starts chats), `editor` (also edits the file space). |
 | Project chats | Private to their author by default. The author can mark a chat "visible to the project". A project chat can also be shared on its own like any chat, and then carries a "part of project X" badge. |
 | Chat uploads in a project | Chat-only by default, with "Add to project" later. |
+| Pins | Per member (`pin` table: kind, target id): chats, chat folders, model profiles (instance ones too) and projects. A pinned item comes first among its siblings; loose chats get a "Pinned" group above the dates. Project chats and their folders are chats and chat folders, so 4.2 gets pins for them as they are. A pin left by a deletion is ignored. At most 200 per member. |
+| List pages | Model profiles and projects are card grids. Admin pages stay tables. |
 
 ## 2. What changes underneath
 

@@ -1,20 +1,22 @@
 <script setup lang="ts">
-/** The keyboard twin of dragging in the sidebar: pick the folder to move a chat or folder into. */
-const props = defineProps<{
+/** The keyboard twin of dragging: pick the folder to move something into. */
+const props = withDefaults(defineProps<{
 	/** What moves, for the title. */
 	name: string
 	/** Folders it may move into, with their path as the label. */
 	folders: { id: string, label: string }[]
 	/** Where it is now; `null` is no folder. */
 	current: string | null
-}>()
+	/** The choice for no folder. */
+	rootLabel?: string
+}>(), { rootLabel: 'No folder' })
 
 /** The chosen folder, `null` for no folder, nothing when cancelled. */
 const emit = defineEmits<{ close: [folderId?: string | null] }>()
 
 const ROOT = 'root'
 const choice = ref(props.current ?? ROOT)
-const items = computed(() => [{ label: 'No folder', value: ROOT }, ...props.folders.map(folder => ({ label: folder.label, value: folder.id }))])
+const items = computed(() => [{ label: props.rootLabel, value: ROOT }, ...props.folders.map(folder => ({ label: folder.label, value: folder.id }))])
 </script>
 
 <template>

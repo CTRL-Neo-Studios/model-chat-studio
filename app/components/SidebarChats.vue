@@ -17,6 +17,7 @@ const overlay = useOverlay()
 const queryCache = useQueryCache()
 const act = useApiAction()
 const { renameChat, deleteChat } = useChatActions()
+const { isPinned, pinnedFirst, pinItem } = usePins()
 
 const { data: folderList } = useQuery(foldersQuery)
 const folders = computed(() => folderList.value ?? [])
@@ -36,10 +37,12 @@ type Kind = 'folder' | 'chat'
 interface Row extends TreeItem { id: string, kind: Kind }
 
 const byName = (a: Folder, b: Folder) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+// Pinned folders come first among their sibling folders, pinned chats first among the chats beside them.
+const foldersIn = (parentId: string | null) => pinnedFirst('chatFolder', folders.value.filter(folder => folder.parentId === parentId).sort(byName))
 function rows(parentId: string): Row[] {
 	return [
-		...folders.value.filter(folder => folder.parentId === parentId).sort(byName).map(folderRow),
-		...props.chats.filter(chat => chat.folderId === parentId).map(chat => ({
+		...foldersIn(parentId).map(folderRow),
+		...pinnedFirst('chat', props.chats.filter(chat => chat.folderId === parentId)).map(chat => ({
 			id: chat.id,
 			kind: 'chat' as const,
 			label: chat.label,
@@ -60,15 +63,20 @@ function folderRow(folder: Folder): Row {
 		onSelect: (event: Event) => event.preventDefault(),
 	}
 }
-const tree = computed(() => folders.value.filter(folder => !folder.parentId).sort(byName).map(folderRow))
+const tree = computed(() => foldersIn(null).map(folderRow))
 const selected = computed(() => {
 	const find = (list: Row[]): Row | undefined => list.reduce<Row | undefined>((hit, row) => hit ?? (row.id === route.params.id ? row : find((row.children ?? []) as Row[])), undefined)
 	return find(tree.value)
 })
 
-// Chats in no folder, by date as before. Until the folders load, a chat in a folder is not shown at all.
-const { groups } = useChats(computed(() => props.chats.filter(chat => !chat.folderId)))
-const looseItems = computed(() => groups.value.flatMap(group => [
+// Chats in no folder: the pinned ones, then the rest by date. Until the folders load, a chat in a folder is not shown at all.
+const loose = computed(() => props.chats.filter(chat => !chat.folderId))
+const pinnedLoose = computed(() => loose.value.filter(chat => isPinned('chat', chat.id)))
+const { groups } = useChats(computed(() => loose.value.filter(chat => !isPinned('chat', chat.id))))
+const looseItems = computed(() => [
+	...(pinnedLoose.value.length ? [{ label: 'Pinned', items: pinnedLoose.value }] : []),
+	...groups.value,
+].flatMap(group => [
 	{ label: group.label, type: 'label' as const },
 	...group.items.map(item => ({ ...item, slot: 'chat' as const, icon: undefined, class: item.label === 'Untitled' ? 'text-muted' : '' })),
 ]))
@@ -157,6 +165,7 @@ async function deleteFolder(folder: Folder) {
 
 function folderActions(folder: Folder): DropdownMenuItem[][] {
 	return [[
+		pinItem('chatFolder', folder.id),
 		{ label: 'New folder', icon: 'i-lucide-folder-plus', onSelect: () => createFolder(folder.id) },
 		{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => renameFolder(folder) },
 		{ label: 'Move to…', icon: 'i-lucide-folder-input', onSelect: () => moveTo('folder', folder.id, folder.name) },
@@ -167,6 +176,7 @@ function folderActions(folder: Folder): DropdownMenuItem[][] {
 
 function chatActions(chat: { id: string, label: string }): DropdownMenuItem[][] {
 	return [[
+		pinItem('chat', chat.id),
 		{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => renameChat(chat.id, chat.label === 'Untitled' ? '' : chat.label) },
 		{ label: 'Move to…', icon: 'i-lucide-folder-input', onSelect: () => moveTo('chat', chat.id, chat.label) },
 	], [
@@ -268,6 +278,7 @@ function prefetchChat(event: Event) {
 				>{{ item.label }}</span>
 			</template>
 			<template #item-trailing="{ item, ui }">
+				<UIcon v-if="isPinned(item.kind === 'folder' ? 'chatFolder' : 'chat', item.id)" name="i-lucide-pin" class="size-3 shrink-0 text-dimmed" aria-label="Pinned" />
 				<UIcon v-if="item.children?.length" name="i-lucide-chevron-down" :class="ui.linkTrailingIcon()" />
 				<UDropdownMenu :items="item.kind === 'folder' ? folderActions(folderOf(item.id)!) : chatActions(item as { id: string, label: string })" :content="{ align: 'end' }">
 					<UButton

@@ -96,6 +96,10 @@ defineShortcuts({
 						to: '/temporary',
 						icon: 'i-lucide-ghost',
 					}, {
+						label: 'Projects',
+						to: '/projects',
+						icon: 'i-lucide-folder-kanban',
+					}, {
 						label: 'Search',
 						icon: 'i-lucide-search',
 						kbds: ['meta', 'k'],

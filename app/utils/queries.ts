@@ -18,6 +18,11 @@ export const foldersQuery = defineQueryOptions({
 	query: () => useRequestFetch()('/api/v1/folders'),
 })
 
+export const pinsQuery = defineQueryOptions({
+	key: ['pins'],
+	query: () => useRequestFetch()('/api/v1/pins'),
+})
+
 export const chatQuery = defineQueryOptions((id: string) => ({
 	key: ['chats', id],
 	query: () => useRequestFetch()(`/api/v1/chats/${id}`),
@@ -50,6 +55,28 @@ export const modelProfilesQuery = defineQueryOptions({
 	key: ['model-profiles'],
 	query: () => useRequestFetch()('/api/v1/model-profiles'),
 })
+
+export const projectsQuery = defineQueryOptions({
+	key: ['projects'],
+	query: () => useRequestFetch()('/api/v1/projects'),
+})
+
+export const projectQuery = defineQueryOptions((id: string) => ({
+	key: ['projects', id],
+	query: () => useRequestFetch()(`/api/v1/projects/${id}`),
+}))
+
+/** The file space as a flat list, without note text. */
+export const projectEntriesQuery = defineQueryOptions((id: string) => ({
+	key: ['projects', id, 'entries'],
+	query: () => useRequestFetch()(`/api/v1/projects/${id}/entries`),
+}))
+
+/** One entry with a note's text. */
+export const projectEntryQuery = defineQueryOptions(({ projectId, entryId }: { projectId: string, entryId: string }) => ({
+	key: ['projects', projectId, 'entries', entryId],
+	query: () => useRequestFetch()(`/api/v1/projects/${projectId}/entries/${entryId}`),
+}))
 
 /** The server caches the platform's catalog for an hour. */
 export const modelsQuery = defineQueryOptions({

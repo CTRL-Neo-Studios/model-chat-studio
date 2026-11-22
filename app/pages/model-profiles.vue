@@ -12,6 +12,7 @@ const overlay = useOverlay()
 const { user } = useUserSession()
 const { platform, models } = useModels()
 const queryCache = useQueryCache()
+const { pinnedFirst } = usePins()
 const { data, isPending, refetch: refresh } = useQuery(modelProfilesQuery)
 const profiles = computed(() => data.value ?? [])
 type Profile = (typeof profiles.value)[number]
@@ -22,7 +23,7 @@ const tabs = [
 	{ label: 'Mine', value: 'mine', icon: 'i-lucide-user' },
 	{ label: 'Instance', value: 'instance', icon: 'i-lucide-building' },
 ]
-const shown = computed(() => profiles.value.filter(profile => (profile.ownerId === null) === (tab.value === 'instance')))
+const shown = computed(() => pinnedFirst('modelProfile', profiles.value.filter(profile => (profile.ownerId === null) === (tab.value === 'instance'))))
 const canEdit = computed(() => tab.value === 'mine' || isAdmin.value)
 
 const browser = overlay.create(LazyModelBrowser)
@@ -100,14 +101,14 @@ function actions(profile: Profile): DropdownMenuItem[][] {
 		</template>
 
 		<template #body>
-			<div class="w-full max-w-2xl mx-auto flex flex-col gap-4">
+			<div class="w-full max-w-5xl mx-auto flex flex-col gap-4">
 				<p class="text-sm text-muted">
 					A profile is a model with its settings and system prompt. Start a chat from one; changes made in a chat stay in that chat.
 				</p>
 				<UTabs v-model="tab" :items="tabs" :content="false" class="w-full" />
 
-				<div v-if="isPending" class="flex flex-col gap-2" aria-busy="true" aria-label="Loading profiles">
-					<USkeleton v-for="n in 3" :key="n" class="h-14 w-full" />
+				<div v-if="isPending" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" aria-label="Loading profiles">
+					<USkeleton v-for="n in 3" :key="n" class="h-24 w-full" />
 				</div>
 				<UEmpty
 					v-else-if="!shown.length"
@@ -115,19 +116,23 @@ function actions(profile: Profile): DropdownMenuItem[][] {
 					:title="tab === 'mine' ? 'No profiles yet' : 'No instance profiles'"
 					:description="tab === 'mine' ? 'Add a model to make your first profile.' : isAdmin ? 'Publish a profile for every member.' : 'An admin can publish profiles for everyone.'"
 				/>
-				<ul v-else class="flex flex-col divide-y divide-default rounded-md border border-default">
-					<li v-for="profile in shown" :key="profile.id" class="flex items-center gap-3 px-4 py-3">
-						<span :class="['size-2.5 rounded-full shrink-0', profile.color ? LANE_COLOR_CLASSES[profile.color as keyof typeof LANE_COLOR_CLASSES] : 'bg-(--ui-border-accented)']" />
-						<div class="flex flex-col min-w-0 flex-1">
-							<span class="font-medium text-highlighted truncate">{{ profile.name }}</span>
-							<span class="text-sm text-muted truncate">
-								{{ modelName(profile) }}<template v-if="profile.systemPrompt"> · custom system prompt</template>
-							</span>
+				<ul v-else class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+					<li v-for="profile in shown" :key="profile.id" class="flex flex-col gap-3 rounded-md border border-default p-4">
+						<div class="flex items-center gap-2">
+							<span :class="['size-2.5 rounded-full shrink-0', profile.color ? LANE_COLOR_CLASSES[profile.color as keyof typeof LANE_COLOR_CLASSES] : 'bg-(--ui-border-accented)']" />
+							<span class="font-medium text-highlighted truncate flex-1">{{ profile.name }}</span>
+							<PinButton kind="modelProfile" :target-id="profile.id" />
+							<UDropdownMenu :items="actions(profile)" :content="{ align: 'end' }">
+								<UButton icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="sm" aria-label="Profile actions" />
+							</UDropdownMenu>
 						</div>
-						<UBadge v-if="platform && profile.platform !== platform.id" label="Other platform" color="warning" variant="subtle" size="sm" />
-						<UDropdownMenu :items="actions(profile)" :content="{ align: 'end' }">
-							<UButton icon="i-lucide-ellipsis" color="neutral" variant="ghost" aria-label="Profile actions" />
-						</UDropdownMenu>
+						<p class="text-sm text-muted truncate">
+							{{ modelName(profile) }}
+						</p>
+						<div class="flex flex-wrap gap-1.5 mt-auto">
+							<UBadge v-if="profile.systemPrompt" label="Custom system prompt" color="neutral" variant="subtle" size="sm" />
+							<UBadge v-if="platform && profile.platform !== platform.id" label="Other platform" color="warning" variant="subtle" size="sm" />
+						</div>
 					</li>
 				</ul>
 			</div>

@@ -296,6 +296,21 @@ export const usageEvent = pgTable("usageEvent", {
 	index().on(t.userId, t.createdAt),
 ]);
 
+export const pinKinds = ["chat", "chatFolder", "modelProfile", "project"] as const
+
+/**
+ * What a member pinned to the top of a list. Per member, since instance profiles (and later shared projects)
+ * are pinned by each person on their own. No foreign key to the pinned row: a pin left by a deletion is ignored.
+ */
+export const pin = pgTable("pin", {
+	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	kind: text({ enum: pinKinds }).notNull(),
+	targetId: uuid().notNull(),
+	createdAt,
+}, (t) => [
+	primaryKey({ columns: [t.userId, t.kind, t.targetId] }),
+]);
+
 // Relations
 
 export const userRelations = relations(user, ({ many }) => ({
