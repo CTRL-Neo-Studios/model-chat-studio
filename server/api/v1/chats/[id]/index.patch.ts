@@ -1,6 +1,6 @@
 import { createError, defineEventHandler, readValidatedBody } from 'nuxt/server'
 import { db, schema } from 'hub:db'
-import { and, asc, eq, inArray, isNull, ne } from 'drizzle-orm'
+import { and, asc, eq, inArray, ne } from 'drizzle-orm'
 import { z } from 'zod'
 import { chatSettingsSchema } from '#shared/utils/chat'
 import type { Db } from '#server/utils/core/settings'
@@ -8,7 +8,7 @@ import { requireChat } from '#server/utils/chat/access'
 import { fallbackTitle, listChatShares } from '#server/utils/chat/turns'
 import { profileAbilities } from '#shared/abilities/profileAbilities'
 import { authorize } from '#server/utils/core/authorize'
-import { findContextProfile } from '#server/utils/project/contextProfiles'
+import { findStructureProfile } from '#server/utils/chat/structureProfiles'
 
 const bodySchema = z.object({
 	title: z.string().trim().min(1).max(200),
@@ -20,13 +20,11 @@ const bodySchema = z.object({
 	folderId: z.uuid().nullable(),
 	/** "Keep this chat": a temporary chat becomes a normal one, named from its first message. */
 	temporary: z.literal(false),
-	/** Project chats: a context profile of the owner's (or an instance one) instead of the project's; `null`: the project's. */
-	contextProfileId: z.uuid().nullable(),
-	/** Project chats: everyone in the project may read it. */
-	projectVisible: z.boolean(),
+	/** A structure profile of the owner's (or an instance one); `null`: none. */
+	structureProfileId: z.uuid().nullable(),
 }).partial().strict()
 
-/** Owner only: title, link access, people, folder, keeping a temporary chat, project settings, and the settings shared by every lane. */
+/** Owner only: title, link access, people, folder, keeping a temporary chat, structure profile, and the settings shared by every lane. */
 export default defineEventHandler(async (event) => {
 	const chat = await requireChat(event, 'manageChat')
 	const { sharedWith, ...fields } = await readValidatedBody(event, bodySchema)
@@ -35,16 +33,14 @@ export default defineEventHandler(async (event) => {
 		throw createError({ status: 400, statusText: 'A temporary chat cannot be shared. Keep it first.' })
 	}
 	if (fields.folderId) {
-		// One of the owner's folders, in the chat's own tree: personal, or its project's.
+		// One of the owner's folders.
 		const [folder] = await db.select({ id: schema.chatFolder.id }).from(schema.chatFolder).where(and(
 			eq(schema.chatFolder.id, fields.folderId),
 			eq(schema.chatFolder.userId, chat.userId),
-			chat.projectId ? eq(schema.chatFolder.projectId, chat.projectId) : isNull(schema.chatFolder.projectId),
 		))
 		if (!folder) throw createError({ status: 404, statusText: 'Folder not found' })
 	}
-	if ((fields.contextProfileId !== undefined || fields.projectVisible !== undefined) && !chat.projectId) throw createError({ status: 400, statusText: 'Only project chats have this' })
-	if (fields.contextProfileId) await authorize(event, profileAbilities().readProfile, await findContextProfile(db, fields.contextProfileId))
+	if (fields.structureProfileId) await authorize(event, profileAbilities().readProfile, await findStructureProfile(db, fields.structureProfileId))
 	if (chat.temporary && fields.temporary === false && !chat.title && !fields.title) {
 		const [first] = await db.select({ parts: schema.message.parts }).from(schema.message)
 			.where(and(eq(schema.message.chatId, chat.id), eq(schema.message.role, 'user')))

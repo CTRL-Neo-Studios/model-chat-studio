@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import * as schema from '../server/db/schema'
-import { searchableText, searchEntryTexts } from '../server/utils/project/search'
+import { searchableText, searchEntryTexts } from '../server/utils/library/search'
 import { createTestDb } from './db'
 
 // Spike D's sample (plan section 6), now through Postgres full-text search.
@@ -18,13 +18,13 @@ const notes = [
 test('spike D\'s English and Chinese questions find their notes through the index; unrelated ones find nothing', async () => {
 	const db = await createTestDb()
 	const [owner] = await db.insert(schema.user).values({ githubId: 1, username: 'a' }).returning()
-	const [project, other] = await db.insert(schema.project).values([{ ownerId: owner!.id, name: 'P' }, { ownerId: owner!.id, name: 'Q' }]).returning()
-	const rows = await db.insert(schema.projectEntry).values(notes.map(note => ({
-		projectId: project!.id, kind: 'note' as const, name: note.name, content: note.text, searchText: searchableText(note.name, note.text),
-	}))).returning({ id: schema.projectEntry.id, name: schema.projectEntry.name })
-	await db.insert(schema.projectEntry).values({ projectId: other!.id, kind: 'note', name: 'budget.md', content: 'budget', searchText: searchableText('budget.md', 'budget') })
+	const [library, other] = await db.insert(schema.library).values([{ ownerId: owner!.id, name: 'P' }, { ownerId: owner!.id, name: 'Q' }]).returning()
+	const rows = await db.insert(schema.libraryEntry).values(notes.map(note => ({
+		libraryId: library!.id, kind: 'note' as const, name: note.name, content: note.text, searchText: searchableText(note.name, note.text),
+	}))).returning({ id: schema.libraryEntry.id, name: schema.libraryEntry.name })
+	await db.insert(schema.libraryEntry).values({ libraryId: other!.id, kind: 'note', name: 'budget.md', content: 'budget', searchText: searchableText('budget.md', 'budget') })
 	const nameOf = Object.fromEntries(rows.map(row => [row.id, row.name]))
-	const top = async (question: string) => (await searchEntryTexts(db, project!.id, question)).map(row => nameOf[row.id])
+	const top = async (question: string) => (await searchEntryTexts(db, library!.id, question)).map(row => nameOf[row.id])
 
 	expect((await top('How much did we budget for marketing in Q3?'))[0]).toBe('budget-2027.md')
 	expect((await top('What are the deployment steps for kubernetes?'))[0]).toBe('k8s-deploy.md')
@@ -38,5 +38,5 @@ test('spike D\'s English and Chinese questions find their notes through the inde
 	// Stemming: "deploying" finds "deployment"'s note too.
 	expect(await top('deploying')).toContain('k8s-deploy.md')
 	// The excerpt shows the matching words.
-	expect((await searchEntryTexts(db, project!.id, 'sourdough'))[0]!.excerpt).toContain('<b>Sourdough</b>')
+	expect((await searchEntryTexts(db, library!.id, 'sourdough'))[0]!.excerpt).toContain('<b>Sourdough</b>')
 })

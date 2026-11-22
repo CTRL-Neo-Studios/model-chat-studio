@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { type Candidate, rankEntries, scannedTexts, tagMatches } from '../server/utils/project/matcher'
+import { type Candidate, rankEntries, scannedTexts, tagMatches } from '../server/utils/library/matcher'
 
 const settings = { maxEntries: 5, maxChars: 60_000, fuzzy: false, folders: [] as string[] }
 const entry = (id: string, tags: string[], fields: Partial<Candidate> = {}): Candidate => ({ id, parentId: null, kind: 'note', name: `${id}.md`, tags, chars: 100, ...fields })

@@ -24,9 +24,9 @@ const items = computed<DropdownMenuItem[][]>(() => ([[{
 	icon: 'i-lucide-bot',
 	to: '/model-profiles',
 }, {
-	label: 'Context profiles',
+	label: 'Structure profiles',
 	icon: 'i-lucide-layers',
-	to: '/context-profiles',
+	to: '/structure-profiles',
 }, {
 	label: 'Settings',
 	icon: 'i-lucide-user-cog',

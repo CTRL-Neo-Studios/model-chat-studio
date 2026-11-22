@@ -31,7 +31,7 @@ const answeringModels = computed(() => enabledLanes.value.flatMap(lane => laneMo
 // The models and settings of the last chat started, kept as profile or model ids (prompts would not fit a cookie).
 const lastLanes = useCookie<{ profileId?: string, modelId?: string | null }[]>('chat-lanes', { default: () => [], sameSite: 'lax' })
 const lastSettings = useCookie<ChatSettings>('chat-settings', { default: () => ({}), sameSite: 'lax' })
-// Auto-fetch's folders belong to one project, so a new chat starts auto-fetch from the defaults.
+// Auto-fetch's folders belong to one chat's libraries, so a new chat starts auto-fetch from the defaults.
 const { autoFetch: _, ...lastShared } = lastSettings.value
 settings.value = { ...lastShared }
 
@@ -59,15 +59,6 @@ const greeting = computed(() => {
 // Files upload to the new chat's id before the chat exists; creating it links them to the first message.
 const { uploads, promptFiles, uploading, parts: fileParts } = usePromptUploads(chatId)
 
-// `?project=` starts the chat in that project, where "@" names its files, notes and folders.
-const projectParam = useRoute().query.project
-const projectId = !props.temporary && typeof projectParam === 'string' ? projectParam : undefined
-const { data: project } = useQuery(() => ({ ...projectQuery(projectId ?? ''), enabled: !!projectId }))
-const { items: mentions, partsFor } = useProjectMentions(projectId)
-const references = ref<string[]>([])
-/** A context profile of its own for the new chat; `null` uses the project's. */
-const contextProfileId = ref<string | null>(null)
-
 async function createChat(prompt: string) {
 	if ((!prompt.trim() && !fileParts.value.length) || uploading.value || loading.value) return
 	if (!enabledLanes.value.length) {
@@ -82,12 +73,10 @@ async function createChat(prompt: string) {
 			headers: { [headerName]: csrf },
 			body: {
 				id: chatId,
-				message: { id: crypto.randomUUID(), role: 'user', parts: [...(prompt.trim() ? [{ type: 'text', text: prompt }] : []), ...fileParts.value, ...partsFor(references.value)] },
+				message: { id: crypto.randomUUID(), role: 'user', parts: [...(prompt.trim() ? [{ type: 'text', text: prompt }] : []), ...fileParts.value] },
 				settings: settings.value,
 				models: lanes.value.map(({ id: _, position: __, platform: ___, profileId, ...fields }) => ({ ...fields, profileId: profileId ?? undefined })),
 				temporary: props.temporary || undefined,
-				projectId: projectId || undefined,
-				contextProfileId: projectId ? contextProfileId.value ?? undefined : undefined,
 			},
 		})
 	}
@@ -134,13 +123,10 @@ const quickChats = [
 			<div class="flex flex-1">
 				<UContainer class="flex-1 flex flex-col justify-center gap-4 sm:gap-6 py-8">
 					<h1 class="text-3xl sm:text-4xl text-highlighted font-bold">
-						{{ temporary ? 'Temporary chat' : project ? project.name : greeting }}
+						{{ temporary ? 'Temporary chat' : greeting }}
 					</h1>
 					<p v-if="temporary" class="text-muted -mt-2">
 						Not in your chats, and deleted when you leave or refresh this page. You can keep it once it has started.
-					</p>
-					<p v-else-if="project" class="text-muted -mt-2">
-						A new chat in this project. Type “@” to name its files, notes and folders.
 					</p>
 
 					<UAlert
@@ -156,23 +142,17 @@ const quickChats = [
 					<ChatPrompt
 						v-model="input"
 						v-model:files="promptFiles"
-						v-model:references="references"
 						:web-search="settings.webSearch"
 						:models="answeringModels"
 						:uploads="uploads"
 						:uploading="uploading"
 						:disabled="loading || unavailable"
-						:commands="temporary || projectId ? [] : [tempCommand]"
-						:mentions="mentions"
+						:commands="temporary ? [] : [tempCommand]"
 						class="[view-transition-name:chat-prompt]"
 						@update:web-search="chatLanes.setSettings({ webSearch: $event })"
 						@submit="createChat(input)"
 						@command="startTemporary"
-					>
-						<template v-if="projectId" #tools>
-							<ChatProjectSettings v-model:context-profile-id="contextProfileId" :project-id="projectId" :settings="settings" @change="chatLanes.setSettings($event)" />
-						</template>
-					</ChatPrompt>
+					/>
 
 					<div class="flex flex-wrap gap-2">
 						<UButton

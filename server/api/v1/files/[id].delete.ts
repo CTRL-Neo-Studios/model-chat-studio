@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
 	const id = getRouterParam(event, 'id', { decode: true })
 	if (!z.uuid().safeParse(id).success) throw createError({ status: 404, statusText: 'File not found' })
 	const [file] = await db.select({ id: schema.file.id }).from(schema.file)
-		// Chat attachments only: a project's files are deleted through its entries, by those who may edit them.
+		// Chat attachments only: a library's files are deleted through its entries, by those who may edit them.
 		.where(and(eq(schema.file.id, id!), eq(schema.file.ownerId, user.id), isNull(schema.file.messageId), isNotNull(schema.file.chatId)))
 	if (!file) throw createError({ status: 404, statusText: 'File not found' })
 

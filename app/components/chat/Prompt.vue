@@ -26,7 +26,7 @@ const props = withDefaults(defineProps<{
 	memoryMax?: number
 	/** "/" commands; none hides the menu. */
 	commands?: PromptCommand[]
-	/** A project's files, notes and folders for "@"; none hides the menu. */
+	/** A library's files, notes and folders for "@"; none hides the menu. */
 	mentions?: EditorMentionMenuItem[]
 }>(), {
 	status: 'ready',
@@ -49,7 +49,7 @@ const files = defineModel<File[]>('files', { default: () => [] })
 const webSearch = defineModel<boolean | undefined>('webSearch')
 /** How many messages each lane is sent; `null` is all. */
 const memoryLength = defineModel<number | null | undefined>('memoryLength')
-/** The ids of the project entries named with "@". */
+/** The ids of the library entries named with "@". */
 const references = defineModel<string[]>('references', { default: () => [] })
 
 // The slider's rightmost step means "all", so the chat can grow past it. It shows its value while dragged and is

@@ -18,7 +18,7 @@ import {relations, sql} from "drizzle-orm";
 import type {UIMessage} from "ai";
 import {type ChatSettings, type ContextBlock, LANE_COLORS, type MessageMetadata, type ModelParams} from "../../shared/utils/chat";
 import type {UserPreferences} from "../../shared/utils/preferences";
-import type {ProfileBlock} from "../../shared/utils/contextProfile";
+import type {ProfileBlock} from "../../shared/utils/structureProfile";
 
 const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' })
 
@@ -111,8 +111,6 @@ export const chatFolder = pgTable("chatFolder", {
 	/** `null` is the top level. Deleting a folder moves its content up first; `set null` is a backstop. */
 	parentId: uuid().references((): AnyPgColumn => chatFolder.id, { onDelete: "set null" }),
 	name: text().notNull(),
-	/** A project's own folder tree; `null` is the member's personal folders. */
-	projectId: uuid().references((): AnyPgColumn => project.id, { onDelete: "cascade" }),
 
 	...createdUpdatedAtColumns
 }, (t) => [
@@ -131,12 +129,8 @@ export const chat = pgTable("chat", {
 	folderId: uuid().references(() => chatFolder.id, { onDelete: "set null" }),
 	/** Hidden from the chat list and deleted when its page is left; swept after 24 h. "Keep this chat" clears it. */
 	temporary: boolean().notNull().default(false),
-	/** The project the chat belongs to; `null` is a personal chat. Deleting the project keeps the chat as a personal one. */
-	projectId: uuid().references((): AnyPgColumn => project.id, { onDelete: "set null" }),
-	/** A project chat's own context profile; `null` uses the project's. */
-	contextProfileId: uuid().references((): AnyPgColumn => contextProfile.id, { onDelete: "set null" }),
-	/** A project chat that everyone in the project may read. It stays its author's to write in. */
-	projectVisible: boolean().notNull().default(false),
+	/** The chat's structure profile: blocks sent around its thread. `null` sends the thread as it is. */
+	structureProfileId: uuid().references((): AnyPgColumn => structureProfile.id, { onDelete: "set null" }),
 
 	...createdUpdatedAtColumns
 }, (t) => [
@@ -239,35 +233,43 @@ export const file = pgTable("file", {
 	index().on(t.chatId),
 ]);
 
-/** A project: a file space with its own chats, shared with people in `projectMember`. */
-export const project = pgTable("project", {
+/** A context library: files and notes a chat can read, shared with people in `libraryMember`. */
+export const library = pgTable("library", {
 	id: uuid().primaryKey().defaultRandom(),
 	ownerId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
 	name: text().notNull(),
 	description: text(),
-	/** The context profile the project's chats use unless a chat picks its own. */
-	contextProfileId: uuid().references((): AnyPgColumn => contextProfile.id, { onDelete: "set null" }),
 
 	...createdUpdatedAtColumns
 }, (t) => [
 	index().on(t.ownerId),
 ]);
 
-export const projectRoles = ["viewer", "member", "editor"] as const
+export const libraryRoles = ["viewer", "editor"] as const
 
-/** Someone a project is shared with, and what they may do: read (`viewer`), also start chats (`member`), also edit the file space (`editor`). */
-export const projectMember = pgTable("projectMember", {
-	projectId: uuid().notNull().references(() => project.id, { onDelete: "cascade" }),
+/** Someone a library is shared with: reads it and attaches it (`viewer`), also changes its files (`editor`). */
+export const libraryMember = pgTable("libraryMember", {
+	libraryId: uuid().notNull().references(() => library.id, { onDelete: "cascade" }),
 	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
-	role: text({ enum: projectRoles }).notNull(),
+	role: text({ enum: libraryRoles }).notNull(),
 	createdAt,
 }, (t) => [
-	primaryKey({ columns: [t.projectId, t.userId] }),
+	primaryKey({ columns: [t.libraryId, t.userId] }),
 	index().on(t.userId),
 ]);
 
-/** Blocks of conversation data sent around a project chat's thread. `ownerId` `null` is an instance profile, published by an admin. */
-export const contextProfile = pgTable("contextProfile", {
+/** A library attached to a chat: every lane of the chat reads it. Attach order is `createdAt`. */
+export const chatLibrary = pgTable("chatLibrary", {
+	chatId: uuid().notNull().references(() => chat.id, { onDelete: "cascade" }),
+	libraryId: uuid().notNull().references(() => library.id, { onDelete: "cascade" }),
+	createdAt,
+}, (t) => [
+	primaryKey({ columns: [t.chatId, t.libraryId] }),
+	index().on(t.libraryId),
+]);
+
+/** Blocks of conversation data sent around a chat's thread. `ownerId` `null` is an instance profile, published by an admin. */
+export const structureProfile = pgTable("structureProfile", {
 	id: uuid().primaryKey().defaultRandom(),
 	ownerId: uuid().references(() => user.id, { onDelete: "cascade" }),
 	name: text().notNull(),
@@ -278,12 +280,12 @@ export const contextProfile = pgTable("contextProfile", {
 	index().on(t.ownerId),
 ]);
 
-/** One node of a project's file space: a folder, an uploaded file or a Markdown note. */
-export const projectEntry = pgTable("projectEntry", {
+/** One node of a library: a folder, an uploaded file or a Markdown note. */
+export const libraryEntry = pgTable("libraryEntry", {
 	id: uuid().primaryKey().defaultRandom(),
-	projectId: uuid().notNull().references(() => project.id, { onDelete: "cascade" }),
+	libraryId: uuid().notNull().references(() => library.id, { onDelete: "cascade" }),
 	/** `null` is the top level. Deleting a folder deletes everything in it. */
-	parentId: uuid().references((): AnyPgColumn => projectEntry.id, { onDelete: "cascade" }),
+	parentId: uuid().references((): AnyPgColumn => libraryEntry.id, { onDelete: "cascade" }),
 	kind: text({ enum: ["folder", "file", "note"] }).notNull(),
 	name: text().notNull(),
 	tags: text().array().notNull().default(sql`'{}'::text[]`),
@@ -303,7 +305,7 @@ export const projectEntry = pgTable("projectEntry", {
 	...createdUpdatedAtColumns
 }, (t) => [
 	// Names are unique within a folder, the top level included.
-	unique().on(t.projectId, t.parentId, t.name).nullsNotDistinct(),
+	unique().on(t.libraryId, t.parentId, t.name).nullsNotDistinct(),
 	index().on(t.fileId),
 	index().using('gin', t.searchVector),
 ]);
@@ -343,10 +345,10 @@ export const usageEvent = pgTable("usageEvent", {
 	index().on(t.userId, t.createdAt),
 ]);
 
-export const pinKinds = ["chat", "chatFolder", "modelProfile", "project", "contextProfile"] as const
+export const pinKinds = ["chat", "chatFolder", "modelProfile", "library", "structureProfile"] as const
 
 /**
- * What a member pinned to the top of a list. Per member, since instance profiles (and later shared projects)
+ * What a member pinned to the top of a list. Per member, since instance profiles and shared libraries
  * are pinned by each person on their own. No foreign key to the pinned row: a pin left by a deletion is ignored.
  */
 export const pin = pgTable("pin", {

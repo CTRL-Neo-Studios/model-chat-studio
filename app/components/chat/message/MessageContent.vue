@@ -13,8 +13,8 @@ const props = defineProps<{
 
 const metadata = computed(() => props.message.metadata as MessageMetadata | null | undefined)
 
-const FILE_TOOL_LABELS: Record<string, string> = { list_files: 'Listed the project\'s files', search_files: 'Searched the project for', read_file: 'Read' }
-/** "Read docs/plan.md", "Searched the project for “budget”", from a file tool's input as far as it has arrived. */
+const FILE_TOOL_LABELS: Record<string, string> = { list_files: 'Listed the library\'s files', search_files: 'Searched the library for', read_file: 'Read' }
+/** "Read docs/plan.md", "Searched the library for “budget”", from a file tool's input as far as it has arrived. */
 function fileToolLine(name: string, input: unknown) {
 	const value = (key: string) => typeof input === 'object' && input !== null && key in input ? String(Reflect.get(input, key)) : ''
 	if (name === 'read_file') return `${FILE_TOOL_LABELS.read_file} ${value('path')}`
@@ -62,7 +62,7 @@ const emit = defineEmits<{
 				:invocation="{ ...(part as ChartUIToolInvocation) }"
 			/>
 
-			<!-- The project file tools: one quiet line per call. -->
+			<!-- The library file tools: one quiet line per call. -->
 			<p
 				v-else-if="isToolUIPart(part) && FILE_TOOL_LABELS[getToolName(part)]"
 				class="flex items-center gap-1.5 text-xs text-muted min-w-0"

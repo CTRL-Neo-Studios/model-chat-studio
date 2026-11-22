@@ -7,7 +7,7 @@ import { pinParamsSchema } from '#server/utils/core/pins'
 const MAX_PINS = 200
 
 /**
- * Pins a chat, chat folder, model profile or project to the top of the member's lists. A pin only orders the
+ * Pins a chat, chat folder, model profile, library or structure profile to the top of the member's lists. A pin only orders the
  * member's own lists, so the target is not looked up: pinning something one cannot see shows nothing.
  */
 export default defineEventHandler(async (event) => {

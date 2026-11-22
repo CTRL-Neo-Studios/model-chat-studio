@@ -8,16 +8,12 @@ interface Person {
 
 const props = defineProps<{
 	chatId: string
-	/** A project chat's project: offers making the chat visible to everyone in it. */
-	projectName?: string
 }>()
 
 /** Link access: `public` lets anyone with the link read the chat. */
 const visibility = defineModel<'public' | 'private'>('visibility', { required: true })
 /** The people the chat is shared with, read-only. */
 const sharedWith = defineModel<Person[]>('sharedWith', { required: true })
-/** A project chat that everyone in the project may read. */
-const projectVisible = defineModel<boolean>('projectVisible', { default: false })
 
 const toast = useToast()
 const { csrf, headerName } = useCsrf()
@@ -50,10 +46,6 @@ function setPeople(people: Person[]) {
 function setLinkAccess(on: boolean) {
 	const value = on ? 'public' : 'private'
 	return update(visibility, value, { visibility: value })
-}
-
-function setProjectVisible(on: boolean) {
-	return update(projectVisible, on, { projectVisible: on })
 }
 
 // People search: at least two characters, the server returns up to ten matches.
@@ -96,7 +88,7 @@ function add(item: { person: Person } | undefined) {
 <template>
 	<UModal title="Share chat" description="People you add can read this chat. Only you can send messages in it." close>
 		<UTooltip text="Share chat">
-			<UChip :show="visibility === 'public' || sharedWith.length > 0 || projectVisible" size="sm" inset>
+			<UChip :show="visibility === 'public' || sharedWith.length > 0" size="sm" inset>
 				<UButton color="neutral" variant="ghost" icon="i-lucide-share" aria-label="Share chat" />
 			</UChip>
 		</UTooltip>
@@ -152,17 +144,6 @@ function add(item: { person: Person } | undefined) {
 				</div>
 
 				<USeparator />
-
-				<USwitch
-					v-if="projectName"
-					:model-value="projectVisible"
-					:disabled="saving"
-					label="Visible to the project"
-					:description="`Everyone in “${projectName}” can read this chat. Only you can send messages in it.`"
-					@update:model-value="setProjectVisible($event)"
-				/>
-
-				<USeparator v-if="projectName" />
 
 				<USwitch
 					:model-value="visibility === 'public'"

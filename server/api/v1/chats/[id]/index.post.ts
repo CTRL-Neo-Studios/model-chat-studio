@@ -14,11 +14,11 @@ import { listChatModels } from '#server/utils/chat/lanes'
 import { resolveAttachments } from '#server/utils/chat/files'
 import { getCatalog, getEndpoints, getPriceOverride, useInference } from '#server/utils/inference'
 import { buildContext } from '#server/utils/chat/context'
-import { expandReferences } from '#server/utils/project/references'
-import { autoFetch } from '#server/utils/project/autoFetch'
-import { fileTools } from '#server/utils/project/fileTools'
-import { chatContextProfile } from '#server/utils/project/contextProfiles'
-import { pathResolver } from '#server/utils/project/projects'
+import { expandReferences } from '#server/utils/library/references'
+import { autoFetch } from '#server/utils/library/autoFetch'
+import { fileTools } from '#server/utils/library/fileTools'
+import { chatLibraries, pathResolver } from '#server/utils/library/libraries'
+import { findStructureProfile } from '#server/utils/chat/structureProfiles'
 import type { FinishedStep, Pricing } from '#server/utils/inference/types'
 
 const TITLE_INSTRUCTIONS = `Write a title for a chat that starts with the user's message below.
@@ -119,22 +119,24 @@ export default defineEventHandler(async (event) => {
 		...params, apiKey, model: model.id, providers, reasoningLevel, webSearch,
 		userId: user.id, firstTurn, safetyCheck,
 	})
-	// The file tools: in project chats, unless turned off, for models that take tools, where the platform allows app tools.
-	const withFileTools = !!chat.projectId && chat.settings.fileTools !== false && model.supportedParameters.includes('tools') && prepared.appTools !== false
-	// A project chat's context profile (its own, or the project's) wraps the thread in its blocks.
-	const profile = await chatContextProfile(db, chat)
-	const resolvePath = chat.projectId && profile?.blocks.some(block => block.kind === 'files') ? await pathResolver(db, chat.projectId) : undefined
+	// ponytail: the first attached library only; 5.2 reads every attached one.
+	const libraryId = (await chatLibraries(db, chatId))[0]?.id ?? null
+	// The file tools: with a library, unless turned off, for models that take tools, where the platform allows app tools.
+	const withFileTools = !!libraryId && chat.settings.fileTools !== false && model.supportedParameters.includes('tools') && prepared.appTools !== false
+	// The chat's structure profile wraps the thread in its blocks.
+	const profile = await findStructureProfile(db, chat.structureProfileId)
+	const resolvePath = libraryId && profile?.blocks.some(block => block.kind === 'files') ? await pathResolver(db, libraryId) : undefined
 	const built = buildContext({
 		thread: history, systemPrompt: lane.systemPrompt, webSearch, memoryLength: chat.settings.memoryLength ?? null,
 		fileTools: withFileTools, profile: profile?.blocks, resolvePath,
 	})
-	// "@" references (and the profile's files) become the project's files and notes, read now, where they stand.
-	const referenced = { ...built, ...await expandReferences(db, chat.projectId, built.messages, built.blocks) }
-	// Auto-fetch adds the project's matching files and notes as one message, not stored: where the profile puts it,
+	// "@" references (and the profile's files) become the library's files and notes, read now, where they stand.
+	const referenced = { ...built, ...await expandReferences(db, libraryId, built.messages, built.blocks) }
+	// Auto-fetch adds the library's matching files and notes as one message, not stored: where the profile puts it,
 	// else after the conversation. Its `system` scan covers the profile's system blocks too.
-	const fetched = chat.projectId
+	const fetched = libraryId
 		? await autoFetch(db, {
-				projectId: chat.projectId,
+				libraryId,
 				settings: chat.settings.autoFetch,
 				thread: history,
 				systemPrompt: [lane.systemPrompt, ...(profile?.blocks ?? []).flatMap(block => block.kind === 'message' && block.role === 'system' ? [block.text] : [])].filter(Boolean).join('\n\n') || null,
@@ -151,9 +153,9 @@ export default defineEventHandler(async (event) => {
 		: referenced
 	const tools: ToolSet = prepared.appTools === false
 		? prepared.tools
-		: { ...prepared.tools, chart: chartTool, ...(withFileTools && chat.projectId && fileTools(db, chat.projectId)) }
+		: { ...prepared.tools, chart: chartTool, ...(withFileTools && libraryId && fileTools(db, libraryId)) }
 	const price = await getPriceOverride(db, platform.id, model.id)
-	const modelHistory = await resolveAttachments({ db, inference, model, userId: user.id, chatId, projectId: chat.projectId }, context.messages).catch((error) => {
+	const modelHistory = await resolveAttachments({ db, inference, model, userId: user.id, chatId, libraryId }, context.messages).catch((error) => {
 		console.error('[chat] attachment failed', error)
 		throw createError({ status: 502, statusText: `${platform.id} did not accept an attachment. Try again, or remove it.` })
 	})

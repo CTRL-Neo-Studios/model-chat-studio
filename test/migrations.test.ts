@@ -35,3 +35,36 @@ test('0002 gives every chat one lane with its model, settings and system prompt;
 	const messages = await db.select({ id: schema.message.id, chatModelId: schema.message.chatModelId }).from(schema.message).orderBy(asc(schema.message.id))
 	expect(messages).toEqual([{ id: 'a1', chatModelId: lanes[0]!.id }, { id: 'u1', chatModelId: null }])
 })
+
+test('0014 turns projects into libraries attached to their chats, keeps their files, people and profiles', async () => {
+	const u = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
+	const db = await createTestDb({
+		tag: '0014_libraries',
+		seed: client => client.exec(`
+			INSERT INTO "user" ("id", "githubId", "username") VALUES ('${u(1)}', 1, 'owner'), ('${u(2)}', 2, 'member'), ('${u(3)}', 3, 'editor');
+			INSERT INTO "contextProfile" ("id", "ownerId", "name", "blocks") VALUES ('${u(10)}', '${u(1)}', 'Default', '[{"id":"h","kind":"history"}]'), ('${u(11)}', '${u(1)}', 'Own', '[{"id":"h","kind":"history"}]');
+			INSERT INTO "project" ("id", "ownerId", "name", "contextProfileId") VALUES ('${u(20)}', '${u(1)}', 'P', '${u(10)}');
+			INSERT INTO "projectMember" ("projectId", "userId", "role") VALUES ('${u(20)}', '${u(2)}', 'member'), ('${u(20)}', '${u(3)}', 'editor');
+			INSERT INTO "projectEntry" ("id", "projectId", "parentId", "kind", "name", "content") VALUES ('${u(30)}', '${u(20)}', NULL, 'folder', 'docs', NULL), ('${u(31)}', '${u(20)}', '${u(30)}', 'note', 'plan.md', 'PLAN');
+			INSERT INTO "chatFolder" ("id", "userId", "name", "projectId") VALUES ('${u(40)}', '${u(1)}', 'In the project', '${u(20)}');
+			INSERT INTO "chat" ("id", "userId", "projectId", "contextProfileId", "folderId") VALUES
+				('${u(50)}', '${u(1)}', '${u(20)}', NULL, '${u(40)}'),
+				('${u(51)}', '${u(1)}', '${u(20)}', '${u(11)}', NULL),
+				('${u(52)}', '${u(1)}', NULL, NULL, NULL);
+			INSERT INTO "pin" ("userId", "kind", "targetId") VALUES ('${u(1)}', 'project', '${u(20)}'), ('${u(1)}', 'contextProfile', '${u(10)}');
+		`),
+	})
+
+	expect(await db.select({ id: schema.library.id, name: schema.library.name }).from(schema.library)).toEqual([{ id: u(20), name: 'P' }])
+	// A member could start chats; with no such role left, they read.
+	expect(await db.select({ userId: schema.libraryMember.userId, role: schema.libraryMember.role }).from(schema.libraryMember).orderBy(asc(schema.libraryMember.userId)))
+		.toEqual([{ userId: u(2), role: 'viewer' }, { userId: u(3), role: 'editor' }])
+	expect(await db.select({ id: schema.libraryEntry.id, parentId: schema.libraryEntry.parentId, content: schema.libraryEntry.content }).from(schema.libraryEntry).orderBy(asc(schema.libraryEntry.id)))
+		.toEqual([{ id: u(30), parentId: null, content: null }, { id: u(31), parentId: u(30), content: 'PLAN' }])
+	expect(await db.select({ chatId: schema.chatLibrary.chatId, libraryId: schema.chatLibrary.libraryId }).from(schema.chatLibrary).orderBy(asc(schema.chatLibrary.chatId)))
+		.toEqual([{ chatId: u(50), libraryId: u(20) }, { chatId: u(51), libraryId: u(20) }])
+	// The project's default profile, unless the chat had its own; the project folder stays an ordinary one.
+	expect(await db.select({ id: schema.chat.id, structureProfileId: schema.chat.structureProfileId, folderId: schema.chat.folderId }).from(schema.chat).orderBy(asc(schema.chat.id)))
+		.toEqual([{ id: u(50), structureProfileId: u(10), folderId: u(40) }, { id: u(51), structureProfileId: u(11), folderId: null }, { id: u(52), structureProfileId: null, folderId: null }])
+	expect((await db.select({ kind: schema.pin.kind }).from(schema.pin)).map(pin => pin.kind).sort()).toEqual(['library', 'structureProfile'])
+})

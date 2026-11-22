@@ -1,5 +1,7 @@
 # Milestones 2–4: model profiles, organisation, projects
 
+> Superseded in part by `plans/milestones-5-6-modular-chats.md`: projects became context libraries and context profiles became structure profiles in 5.1.
+
 Status: milestones 2 to 4 built. Open: 4.4's live run on both platforms (file tools next to web search) needs the user's keys. Milestone 4: 4.P spikes done; 4.1 done (the project description is set through the API only); 4.2 done ("Add to project" sits in the conversation overview's Files tab); 4.3 done; 4.4 checked with a scripted model; 4.5 done; 4.6 done (checked with three accounts against the access table). Milestone 1 (`plans/milestone-1-chat-foundation.md`) is the base; its conventions (section 2 there) apply unchanged.
 
 Goal, in build order:

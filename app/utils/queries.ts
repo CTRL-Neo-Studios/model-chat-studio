@@ -56,43 +56,37 @@ export const modelProfilesQuery = defineQueryOptions({
 	query: () => useRequestFetch()('/api/v1/model-profiles'),
 })
 
-export const contextProfilesQuery = defineQueryOptions({
-	key: ['context-profiles'],
-	query: () => useRequestFetch()('/api/v1/context-profiles'),
+export const structureProfilesQuery = defineQueryOptions({
+	key: ['structure-profiles'],
+	query: () => useRequestFetch()('/api/v1/structure-profiles'),
 })
 
-export const projectsQuery = defineQueryOptions({
-	key: ['projects'],
-	query: () => useRequestFetch()('/api/v1/projects'),
+export const librariesQuery = defineQueryOptions({
+	key: ['libraries'],
+	query: () => useRequestFetch()('/api/v1/libraries'),
 })
 
-export const projectQuery = defineQueryOptions((id: string) => ({
-	key: ['projects', id],
-	query: () => useRequestFetch()(`/api/v1/projects/${id}`),
+export const libraryQuery = defineQueryOptions((id: string) => ({
+	key: ['libraries', id],
+	query: () => useRequestFetch()(`/api/v1/libraries/${id}`),
 }))
 
-/** The file space as a flat list, without note text. */
-export const projectEntriesQuery = defineQueryOptions((id: string) => ({
-	key: ['projects', id, 'entries'],
-	query: () => useRequestFetch()(`/api/v1/projects/${id}/entries`),
+/** The library's files as a flat list, without note text. */
+export const libraryEntriesQuery = defineQueryOptions((id: string) => ({
+	key: ['libraries', id, 'entries'],
+	query: () => useRequestFetch()(`/api/v1/libraries/${id}/entries`),
 }))
 
 /** One entry with a note's text. */
-export const projectEntryQuery = defineQueryOptions(({ projectId, entryId }: { projectId: string, entryId: string }) => ({
-	key: ['projects', projectId, 'entries', entryId],
-	query: () => useRequestFetch()(`/api/v1/projects/${projectId}/entries/${entryId}`),
+export const libraryEntryQuery = defineQueryOptions(({ libraryId, entryId }: { libraryId: string, entryId: string }) => ({
+	key: ['libraries', libraryId, 'entries', entryId],
+	query: () => useRequestFetch()(`/api/v1/libraries/${libraryId}/entries/${entryId}`),
 }))
 
-/** The project's owner and people, with their roles. */
-export const projectMembersQuery = defineQueryOptions((id: string) => ({
-	key: ['projects', id, 'members'],
-	query: () => useRequestFetch()(`/api/v1/projects/${id}/members`),
-}))
-
-/** Other people's chats in the project that they made visible to it. */
-export const projectChatsQuery = defineQueryOptions((id: string) => ({
-	key: ['projects', id, 'chats'],
-	query: () => useRequestFetch()(`/api/v1/projects/${id}/chats`),
+/** The library's owner and people, with their roles. */
+export const libraryMembersQuery = defineQueryOptions((id: string) => ({
+	key: ['libraries', id, 'members'],
+	query: () => useRequestFetch()(`/api/v1/libraries/${id}/members`),
 }))
 
 /** The server caches the platform's catalog for an hour. */

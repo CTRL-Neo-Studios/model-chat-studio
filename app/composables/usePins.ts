@@ -1,4 +1,4 @@
-export type PinKind = 'chat' | 'chatFolder' | 'modelProfile' | 'project' | 'contextProfile'
+export type PinKind = 'chat' | 'chatFolder' | 'modelProfile' | 'library' | 'structureProfile'
 
 /**
  * The member's pins: what lists show first. Pinning shows at once and is undone if the server refuses.

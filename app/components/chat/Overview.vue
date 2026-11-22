@@ -10,8 +10,8 @@ import type { ChatMessage } from '~/composables/useLaneAnswers'
 const props = defineProps<{
 	chatId: string
 	messages: ChatMessage[]
-	/** A project chat's project: its files can be added to the project. */
-	projectId?: string | null
+	/** The chat's library, when the reader may change its files: the chat's files can be added to it. */
+	libraryId?: string | null
 }>()
 
 const open = defineModel<boolean>('open', { default: false })
@@ -21,14 +21,14 @@ const { models } = useModels()
 const act = useApiAction()
 const queryCache = useQueryCache()
 
-/** "Add to project": a copy of the upload goes to the top of the project's files. */
+/** "Add to library": a copy of the upload goes to the top of the library. */
 const adding = ref<string | null>(null)
-async function addToProject(fileId: string) {
-	if (!props.projectId) return
+async function addToLibrary(fileId: string) {
+	if (!props.libraryId) return
 	adding.value = fileId
-	const added = await act(`/api/v1/projects/${props.projectId}/files/from-chat`, { method: 'POST', body: { fileId }, success: 'Added to the project' })
+	const added = await act(`/api/v1/libraries/${props.libraryId}/files/from-chat`, { method: 'POST', body: { fileId }, success: 'Added to the library' })
 	adding.value = null
-	if (added) queryCache.invalidateQueries({ key: projectEntriesQuery(props.projectId).key })
+	if (added) queryCache.invalidateQueries({ key: libraryEntriesQuery(props.libraryId).key })
 }
 
 const tab = ref<'trajectory' | 'files' | 'context'>('trajectory')
@@ -64,7 +64,7 @@ const rowsOf = (turn: Turn): Row[] => [
 		role: block.role,
 		label: block.kind === 'reference' ? `@${block.label}` : block.label,
 		detail: block.kind === 'omitted' || (block.kind === 'reference' && !block.size) ? undefined : `~${number(estimate(block.size))} tokens`,
-		text: block.text ?? (block.kind === 'reference' ? 'From the project, read when this answer was made.' : textOf(byId.value[block.messageId ?? ''])),
+		text: block.text ?? (block.kind === 'reference' ? 'From the library, read when this answer was made.' : textOf(byId.value[block.messageId ?? ''])),
 	})),
 	...turn.tools.map((tool, index) => ({
 		key: `${turn.answer.id}:tool:${index}`,
@@ -122,8 +122,8 @@ function split(turn: Turn) {
 		{ label: 'Summary', size: size(block => block.kind === 'summary'), class: 'bg-warning' },
 		{ label: 'Earlier messages', size: size((block, index) => block.kind === 'message' && index < last), class: 'bg-info' },
 		{ label: 'New message', size: size((block, index) => block.kind === 'message' && index === last), class: 'bg-primary' },
-		{ label: 'Project notes ("@" and auto-fetch)', size: size(block => block.kind === 'reference' || block.kind === 'autoFetch'), class: 'bg-success' },
-		{ label: 'Context profile blocks', size: size(block => block.kind === 'profile'), class: 'bg-secondary' },
+		{ label: 'Library files ("@" and auto-fetch)', size: size(block => block.kind === 'reference' || block.kind === 'autoFetch'), class: 'bg-success' },
+		{ label: 'Structure profile blocks', size: size(block => block.kind === 'profile'), class: 'bg-secondary' },
 	].filter(part => part.size > 0)
 }
 </script>
@@ -180,14 +180,14 @@ function split(turn: Turn) {
 						</div>
 						<span class="text-xs text-muted shrink-0">{{ file.mediaType }} · {{ fileSize(file.size) }}</span>
 						<UButton
-							v-if="projectId"
+							v-if="libraryId"
 							icon="i-lucide-folder-input"
-							label="Add to project"
+							label="Add to library"
 							color="neutral"
 							variant="subtle"
 							size="xs"
 							:loading="adding === file.id"
-							@click="addToProject(file.id)"
+							@click="addToLibrary(file.id)"
 						/>
 					</li>
 				</ul>

@@ -20,10 +20,9 @@ export default defineEventHandler(async (event) => {
 	const folders = await listFolders(db, user.id)
 	const folder = folders.find(entry => entry.id === id)
 	if (!folder) throw createError({ status: 404, statusText: 'Folder not found' })
-	// A move stays in the folder's own tree: personal, or its project's.
-	if (fields.parentId !== undefined) assertFolderParent(folders.filter(entry => entry.projectId === folder.projectId), fields.parentId, id)
+	if (fields.parentId !== undefined) assertFolderParent(folders, fields.parentId, id)
 
 	const [updated] = await db.update(schema.chatFolder).set(fields).where(eq(schema.chatFolder.id, id!))
-		.returning({ id: schema.chatFolder.id, parentId: schema.chatFolder.parentId, name: schema.chatFolder.name, projectId: schema.chatFolder.projectId })
+		.returning({ id: schema.chatFolder.id, parentId: schema.chatFolder.parentId, name: schema.chatFolder.name })
 	return updated!
 })

@@ -27,18 +27,20 @@ const sharedWith = ref(data.value?.sharedWith ?? [])
 // Renaming writes the cache (`useChatActions`), so the title is read from it.
 const title = computed(() => data.value?.title ?? null)
 const temporary = computed(() => data.value?.temporary ?? false)
-// A project chat: its badge links to the project, and "@" in the prompt names the project's files, notes and folders.
-const projectId = computed(() => data.value?.projectId ?? null)
-const project = computed(() => data.value?.project ?? null)
-const projectVisible = ref(data.value?.projectVisible ?? false)
-const { items: mentions, partsFor } = useProjectMentions(() => isOwner.value ? projectId.value : null)
+// The chat's libraries; "@" in the prompt names the files, notes and folders of the one it reads.
+const libraries = computed(() => data.value?.libraries ?? [])
+// ponytail: the first attached library only, as the turn route reads; 5.2 reads every attached one.
+const libraryId = computed(() => libraries.value[0]?.role ? libraries.value[0].id : null)
+// "Add to library" copies into the library, which only its owner and editors change.
+const canAddFiles = computed(() => libraries.value[0]?.role === 'owner' || libraries.value[0]?.role === 'editor')
+const { items: mentions, partsFor } = useLibraryMentions(() => isOwner.value ? libraryId.value : null)
 const references = ref<string[]>([])
-/** The chat's own context profile, or `null` for the project's; shown at once, undone if the server refuses. */
-async function setContextProfile(contextProfileId: string | null) {
+/** The chat's structure profile, or `null` for none; shown at once, undone if the server refuses. */
+async function setStructureProfile(structureProfileId: string | null) {
 	const chat = queryCache.getQueryData(chatQuery(chatId).key)
 	if (!chat) return
-	queryCache.setQueryData(chatQuery(chatId).key, { ...chat, contextProfileId })
-	if (!await act(`/api/v1/chats/${chatId}`, { method: 'PATCH', body: { contextProfileId } })) queryCache.setQueryData(chatQuery(chatId).key, chat)
+	queryCache.setQueryData(chatQuery(chatId).key, { ...chat, structureProfileId })
+	if (!await act(`/api/v1/chats/${chatId}`, { method: 'PATCH', body: { structureProfileId } })) queryCache.setQueryData(chatQuery(chatId).key, chat)
 }
 
 const overviewOpen = ref(false)
@@ -143,8 +145,7 @@ async function runCommand(kind: PromptCommand['kind']) {
 		// The new chat starts from these models: profiles by id, other models by model id, as the home page keeps them.
 		lastLanes.value = enabledLanes.value.map(lane => lane.profileId ? { profileId: lane.profileId } : { modelId: lane.modelId })
 		lastSettings.value = { ...settings.value, memoryLength: undefined }
-		// A project chat's new chat is in the same project.
-		return navigateTo({ path: '/', query: projectId.value ? { project: projectId.value } : undefined })
+		return navigateTo('/')
 	}
 	if (kind !== 'compact' || compacting.value || answers.busy.value) return
 	compacting.value = true
@@ -290,19 +291,20 @@ onMounted(() => {
 					<ChatModelsMenu v-if="isOwner" :chat-lanes="chatLanes" />
 				</template>
 
-				<!-- "Part of project X": a link for people in the project; a label for someone reading by link or share. -->
+				<!-- The chat's libraries: links for people who may open them; labels for someone reading by link or share. -->
 				<UButton
-					v-if="project"
-					:to="project.inProject ? `/projects/${project.id}` : undefined"
-					:label="project.name"
-					icon="i-lucide-folder-kanban"
+					v-for="library in libraries"
+					:key="library.id"
+					:to="library.role ? `/libraries/${library.id}` : undefined"
+					:label="library.name"
+					icon="i-lucide-library-big"
 					color="neutral"
 					variant="subtle"
 					size="xs"
 					class="max-w-48"
-					:class="!project.inProject && 'pointer-events-none'"
+					:class="!library.role && 'pointer-events-none'"
 					:ui="{ label: 'truncate' }"
-					:aria-label="`Part of the project ${project.name}`"
+					:aria-label="`Library ${library.name}`"
 				/>
 				<UTooltip v-if="isOwner" text="Conversation overview">
 					<UButton icon="i-lucide-list-tree" color="neutral" variant="ghost" aria-label="Conversation overview" @click="overviewOpen = true" />
@@ -315,9 +317,7 @@ onMounted(() => {
 					v-else-if="isOwner"
 					v-model:visibility="visibility"
 					v-model:shared-with="sharedWith"
-					v-model:project-visible="projectVisible"
 					:chat-id="chatId"
-					:project-name="project?.name"
 				/>
 			</Navbar>
 		</template>
@@ -432,8 +432,8 @@ onMounted(() => {
 								@stop="answers.stop()"
 								@command="runCommand"
 							>
-								<template v-if="projectId" #tools>
-									<ChatProjectSettings :project-id="projectId" :settings="settings" :context-profile-id="data?.contextProfileId ?? null" @change="chatLanes.setSettings($event)" @update:context-profile-id="setContextProfile" />
+								<template v-if="libraryId" #tools>
+									<ChatContextSettings :library-id="libraryId" :settings="settings" :structure-profile-id="data?.structureProfileId ?? null" @change="chatLanes.setSettings($event)" @update:structure-profile-id="setStructureProfile" />
 								</template>
 							</ChatPrompt>
 						</template>
@@ -442,5 +442,5 @@ onMounted(() => {
 			</div>
 		</template>
 	</UDashboardPanel>
-	<ChatOverview v-if="isOwner" v-model:open="overviewOpen" :chat-id="chatId" :messages="messages" :project-id="projectId" />
+	<ChatOverview v-if="isOwner" v-model:open="overviewOpen" :chat-id="chatId" :messages="messages" :library-id="canAddFiles ? libraryId : null" />
 </template>

@@ -4,22 +4,23 @@ import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { requireChat } from '#server/utils/chat/access'
 import { listChatMessages, listChatShares } from '#server/utils/chat/turns'
 import { listChatModels } from '#server/utils/chat/lanes'
+import { chatLibraries } from '#server/utils/library/libraries'
 
 /**
- * A chat with its lanes and messages, for the owner, the people it is shared with, anyone when link access is on, and
- * the project's people when it is visible to the project. A project chat names its project for the badge; `inProject`
- * says whether the reader may open it, since someone reading by link or share alone may not.
+ * A chat with its lanes and messages, for the owner, the people it is shared with, and anyone when link access is on.
+ * It names its libraries, each with the reader's `role` in it: `null` for someone who may not open it.
  */
 export default defineEventHandler(async (event) => {
-	const { userId, sharedWith: _, project, ...view } = await requireChat(event, 'readChat')
+	const { userId, sharedWith: _, ...view } = await requireChat(event, 'readChat')
 	const reader = (await useServerAuth().getUser(event))?.id
 	const isOwner = reader === userId
-	const [sharedWith, models, messages] = await Promise.all([
+	const [sharedWith, models, messages, libraries] = await Promise.all([
 		// Only the owner sees who else has access.
 		isOwner ? listChatShares(db, view.id) : [],
 		listChatModels(db, view.id),
 		listChatMessages(db, view.id),
+		chatLibraries(db, view.id),
 	])
-	const inProject = !!project && !!reader && (project.ownerId === reader || !!project.members[reader])
-	return { ...view, isOwner, sharedWith, models, messages, project: project && { id: project.id, name: project.name, inProject } }
+	const roleOf = (library: (typeof libraries)[number]) => !reader ? null : library.ownerId === reader ? 'owner' as const : library.members[reader] ?? null
+	return { ...view, isOwner, sharedWith, models, messages, libraries: libraries.map(library => ({ id: library.id, name: library.name, role: roleOf(library) })) }
 })

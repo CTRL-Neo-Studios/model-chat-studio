@@ -62,8 +62,8 @@ interface AttachmentContext {
 	model: CatalogModel
 	userId: string
 	chatId: string
-	/** The chat's project, whose files "@" references bring in. */
-	projectId: string | null
+	/** The chat's library, whose files "@" references bring in. */
+	libraryId: string | null
 }
 
 /** The platform's id for an uploaded PDF, uploading it the first time (DeepSeek bills parsing per upload). */
@@ -98,13 +98,13 @@ const textTypes: readonly string[] = FILE_UPLOAD.textTypes
 export async function resolveAttachments(context: AttachmentContext, messages: UIMessage[]): Promise<UIMessage[]> {
 	const ids = messages.flatMap(message => message.parts.flatMap(part => part.type === 'file' ? [FILE_URL_PATTERN.exec(part.url)?.[1] ?? ''] : []))
 	if (!ids.length) return messages
-	// The chat's own uploads, and the files of its project (named with "@").
+	// The chat's own uploads, and the files of its library (named with "@").
 	const rows = await context.db.select().from(schema.file).where(and(
 		inArray(schema.file.id, ids.filter(Boolean)),
 		or(
 			eq(schema.file.chatId, context.chatId),
-			context.projectId
-				? inArray(schema.file.id, context.db.select({ id: schema.projectEntry.fileId }).from(schema.projectEntry).where(eq(schema.projectEntry.projectId, context.projectId)))
+			context.libraryId
+				? inArray(schema.file.id, context.db.select({ id: schema.libraryEntry.fileId }).from(schema.libraryEntry).where(eq(schema.libraryEntry.libraryId, context.libraryId)))
 				: undefined,
 		),
 	))
@@ -114,7 +114,7 @@ export async function resolveAttachments(context: AttachmentContext, messages: U
 	async function resolve(part: UIMessage['parts'][number]): Promise<UIMessage['parts'][number]> {
 		if (part.type !== 'file') return part
 		const row = byId[FILE_URL_PATTERN.exec(part.url)?.[1] ?? '']
-		// A reference names the file by its path in the project.
+		// A reference names the file by its path in the library.
 		const name = part.filename ?? row?.fileName ?? 'file'
 		const note = (reason: string) => ({ type: 'text' as const, text: `[Attachment "${name}" left out: ${reason}]` })
 		if (!row) return note('it was deleted.')

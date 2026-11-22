@@ -31,7 +31,7 @@ export const chatSettingsSchema = z.object({
 	answerLayout: z.enum(['columns', 'stack']).optional(),
 	/** How many messages of each lane's thread are sent (after its latest summary); `null` or absent: all. */
 	memoryLength: z.number().int().min(1).max(10_000).nullable().optional(),
-	/** Project chats: files and notes fetched by their tags (and, with `fuzzy`, by their text). Unset fields use `AUTO_FETCH_DEFAULTS`. */
+	/** Chats with a library: files and notes fetched by their tags (and, with `fuzzy`, by their text). Unset fields use `AUTO_FETCH_DEFAULTS`. */
 	autoFetch: z.object({
 		enabled: z.boolean(),
 		/** Most entries fetched for one answer. */
@@ -42,12 +42,12 @@ export const chatSettingsSchema = z.object({
 		scan: z.array(z.enum(['user', 'assistant', 'system'])).max(3),
 		/** Also search the scanned words in names, tags and text (Fuse.js). */
 		fuzzy: z.boolean(),
-		/** Only entries inside these folders; empty: the whole file space. */
+		/** Only entries inside these folders; empty: the whole library. */
 		folders: z.array(z.uuid()).max(50),
 		/** Most characters of text fetched for one answer. */
 		maxChars: z.number().int().min(1000).max(500_000),
 	}).partial().optional(),
-	/** Project chats: the model may list, search and read the project's notes and text files. Absent: on. */
+	/** Chats with a library: the model may list, search and read its notes and text files. Absent: on. */
 	fileTools: z.boolean().optional(),
 })
 
@@ -111,7 +111,7 @@ export interface MessageMetadata {
 	attempt?: number
 	/** A `/compact` summary (role `system`) of a lane's thread up to it. */
 	kind?: 'summary'
-	/** Project files and notes auto-fetched for this answer, by path. */
+	/** Library files and notes auto-fetched for this answer, by path. */
 	fetched?: { entryId: string, name: string }[]
 }
 
@@ -121,8 +121,8 @@ export interface MessageMetadata {
  */
 export interface ContextBlock {
 	/**
-	 * `reference`: a project file or note, named with "@" in the message before it or fetched by `autoFetch`, the
-	 * added message of auto-fetched files (or where a context profile puts them). `profile`: a context profile's
+	 * `reference`: a library file or note, named with "@" in the message before it or fetched by `autoFetch`, the
+	 * added message of auto-fetched files (or where a structure profile puts them). `profile`: a structure profile's
 	 * message or files block.
 	 */
 	kind: 'instructions' | 'omitted' | 'summary' | 'message' | 'reference' | 'autoFetch' | 'profile'
@@ -133,7 +133,7 @@ export interface ContextBlock {
 	/** Instructions and summaries. */
 	text?: string
 	messageId?: string
-	/** `reference`: the project entry. */
+	/** `reference`: the library entry. */
 	entryId?: string
 	/** `omitted`: how many earlier messages the memory setting left out. */
 	count?: number

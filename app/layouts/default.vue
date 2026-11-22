@@ -8,9 +8,7 @@ const searchOpen = ref(false)
 
 // Guests only ever see a chat shared by link, so they have no list.
 const { data: chatList } = useQuery(() => ({ ...chatsQuery, enabled: loggedIn.value }))
-const allChats = computed(() => loggedIn.value ? (chatList.value ?? []).map(toUIChat) : [])
-// Project chats live on their project's page.
-const chats = computed(() => loggedIn.value ? (chatList.value ?? []).filter(chat => !chat.projectId).map(toUIChat) : [])
+const chats = computed(() => loggedIn.value ? (chatList.value ?? []).map(toUIChat) : [])
 
 /** Loads data the member is about to need, unless it is cached and fresh. */
 function prefetch(options: Parameters<typeof queryCache.ensure>[0]) {
@@ -27,8 +25,8 @@ if (import.meta.client) {
 	}, { immediate: true })
 }
 
-// Search covers every chat, in folders, projects or not.
-const { groups } = useChats(allChats)
+// Search covers every chat, in folders or not.
+const { groups } = useChats(chats)
 
 // A temporary chat starts with the sidebar collapsed; leaving it restores the sidebar as it was. The state before
 // is kept in a cookie, since the sidebar saves its own state and a reload of the temporary chat would otherwise
@@ -89,9 +87,9 @@ defineShortcuts({
 						to: '/temporary',
 						icon: 'i-lucide-ghost',
 					}, {
-						label: 'Projects',
-						to: '/projects',
-						icon: 'i-lucide-folder-kanban',
+						label: 'Libraries',
+						to: '/libraries',
+						icon: 'i-lucide-library-big',
 					}, {
 						label: 'Search',
 						icon: 'i-lucide-search',

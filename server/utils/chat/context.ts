@@ -1,7 +1,7 @@
 import type { UIMessage } from 'ai'
 // Relative, not `#shared`, so this module also loads in `bun test`.
 import type { ContextBlock } from '../../../shared/utils/chat'
-import type { ProfileBlock } from '../../../shared/utils/contextProfile'
+import type { ProfileBlock } from '../../../shared/utils/structureProfile'
 import { DEFAULT_INSTRUCTIONS } from '../../../shared/utils/instructions'
 
 // Added only while web search is on. Without it, DeepSeek sometimes answered that it had no web
@@ -10,8 +10,8 @@ const WEB_SEARCH_INSTRUCTIONS = `Web search is on in this chat: you can search t
 - Search for recent events and for facts you are not sure of; otherwise answer from what you know.
 - Cite the pages you used.`
 
-// Added only in project chats with the file tools: without it a model does not know there are files to look at.
-const FILE_TOOLS_INSTRUCTIONS = `This chat belongs to a project with its own notes and files.
+// Added only in chats with a library and the file tools: without it a model does not know there are files to look at.
+const FILE_TOOLS_INSTRUCTIONS = `This chat has a library of notes and files.
 - When the user's question may be answered by them, look: list_files shows what there is, search_files finds words in them, read_file reads one.
 - Say which files you used.`
 
@@ -23,11 +23,11 @@ interface ContextInput {
 	webSearch: boolean
 	/** Messages to send after the latest summary; `null` sends them all. */
 	memoryLength: number | null
-	/** A project chat whose model may use the file tools. */
+	/** A chat with a library whose model may use the file tools. */
 	fileTools?: boolean
-	/** A project chat's context profile: blocks sent around the thread. */
+	/** The chat's structure profile: blocks sent around the thread. */
 	profile?: ProfileBlock[]
-	/** A context profile's `files` paths, resolved in the chat's project. */
+	/** A structure profile's `files` paths, resolved in the chat's library. */
 	resolvePath?: (path: string) => { entryId: string, kind: 'folder' | 'file' | 'note' } | undefined
 }
 
@@ -36,7 +36,7 @@ const textOf = (message: Pick<UIMessage, 'parts'>) => message.parts.map(part => 
 /** An answer with nothing but reasoning carries nothing forward, so it does not count toward the memory length. */
 const counts = (message: UIMessage) => message.role !== 'assistant' || message.parts.some(part => part.type === 'text' || part.type === 'file')
 
-const PROFILE_FILES_TEXT = 'Files from the project, as the context profile includes them:'
+const PROFILE_FILES_TEXT = 'Files from the library, as the structure profile includes them:'
 
 /**
  * What one lane's answer is given: the instructions, then its thread from the latest summary on, cut to the memory
@@ -45,10 +45,10 @@ const PROFILE_FILES_TEXT = 'Files from the project, as the context profile inclu
  * - A summary (role `system`) is sent as a user message: the AI SDK takes system messages only as instructions.
  * - The cut never starts on an answer: an answer whose question was left out is left out too, so the thread
  *   always opens with a user message. This keeps at most one message fewer than asked.
- * - With a context profile, its blocks are sent in order around the thread (its `history` block). Its `system`
+ * - With a structure profile, its blocks are sent in order around the thread (its `history` block). Its `system`
  *   messages at the very start join the instructions, after the lane's own prompt (they replace the default
- *   instructions when the lane has none); later ones go as user messages. Its `files` blocks name project entries
- *   as references, which `expandReferences` reads; a path the project does not have is left out and named in the
+ *   instructions when the lane has none); later ones go as user messages. Its `files` blocks name library entries
+ *   as references, which `expandReferences` reads; a path the library does not have is left out and named in the
  *   trace. Its `autoFetch` block marks where auto-fetched files go: `autoFetchAt`, and a trace block that says so.
  */
 export function buildContext({ thread, systemPrompt, webSearch, memoryLength, fileTools = false, profile, resolvePath }: ContextInput) {
@@ -88,7 +88,7 @@ export function buildContext({ thread, systemPrompt, webSearch, memoryLength, fi
 	const leading = blocks.findIndex(block => block.kind !== 'message' || block.role !== 'system')
 	const profileSystem = blocks.slice(0, leading === -1 ? blocks.length : leading).flatMap(block => block.kind === 'message' && block.text.trim() ? [block.text] : [])
 	const instructions = [systemPrompt ?? (profileSystem.length ? null : DEFAULT_INSTRUCTIONS), ...profileSystem, webSearch && WEB_SEARCH_INSTRUCTIONS, fileTools && FILE_TOOLS_INSTRUCTIONS].filter(Boolean).join('\n\n')
-	const instructionsLabel = [systemPrompt ? 'System prompt' : profileSystem.length ? '' : 'Default instructions', profileSystem.length ? 'context profile' : ''].filter(Boolean).join(' + ')
+	const instructionsLabel = [systemPrompt ? 'System prompt' : profileSystem.length ? '' : 'Default instructions', profileSystem.length ? 'structure profile' : ''].filter(Boolean).join(' + ')
 
 	const sent: UIMessage[] = []
 	const trace: ContextBlock[] = [{ kind: 'instructions', role: 'system', label: instructionsLabel.charAt(0).toUpperCase() + instructionsLabel.slice(1), size: instructions.length, text: instructions }]
@@ -118,9 +118,9 @@ export function buildContext({ thread, systemPrompt, webSearch, memoryLength, fi
 			trace.push({
 				kind: 'profile',
 				role: 'user',
-				label: `Profile: files${missing.length ? ` (not in this project: ${missing.join(', ')})` : ''}`,
+				label: `Profile: files${missing.length ? ` (not in the library: ${missing.join(', ')})` : ''}`,
 				size: references.length ? PROFILE_FILES_TEXT.length : 0,
-				text: references.length ? PROFILE_FILES_TEXT : 'None of the paths are in this project.',
+				text: references.length ? PROFILE_FILES_TEXT : 'None of the paths are in the library.',
 				...(references.length && { messageId: id }),
 			})
 		}
