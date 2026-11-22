@@ -97,6 +97,10 @@ defineShortcuts({
 						onSelect: () => {
 							searchOpen = true
 						},
+					}, {
+						label: 'Shared with me',
+						to: '/shared',
+						icon: 'i-lucide-users',
 					}]"
 					:collapsed="collapsed"
 					orientation="vertical"

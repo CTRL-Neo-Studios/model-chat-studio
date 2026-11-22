@@ -13,6 +13,12 @@ export const chatsQuery = defineQueryOptions({
 	query: () => useRequestFetch()('/api/v1/chats'),
 })
 
+/** Other people's chats shared with the member by name. Under `/me`: beside `/chats/:id` its path made every chat route's type a union. */
+export const sharedChatsQuery = defineQueryOptions({
+	key: ['shared-chats'],
+	query: () => useRequestFetch()('/api/v1/me/shared-chats'),
+})
+
 export const foldersQuery = defineQueryOptions({
 	key: ['folders'],
 	query: () => useRequestFetch()('/api/v1/folders'),

@@ -1,6 +1,6 @@
 # Milestones 5–6: modular chats, characters, group chat
 
-Status: 5.1 to 5.3 built; 5.4 next. It replaces the "project" of milestone 4 (`plans/milestones-2-4-profiles-organisation-projects.md`, section 5) with parts that attach to a chat. The conventions of milestone 1 (section 2 there) apply unchanged.
+Status: milestone 5 built (5.1 to 5.4); milestone 6 next, starting with spikes F and G. It replaces the "project" of milestone 4 (`plans/milestones-2-4-profiles-organisation-projects.md`, section 5) with parts that attach to a chat. The conventions of milestone 1 (section 2 there) apply unchanged.
 
 Goal, in build order:
 
@@ -109,13 +109,15 @@ The client already streams one request per answer into one list. In group mode i
 | 5.1 | Rename to libraries and structure profiles; `chatLibrary`; the two-role access table; library pages; projects removed. A chat reads its files through its attachments | the chats that were in a project still get "@", auto-fetch and the file tools from the same files (fixture platform); both roles checked against the table with two accounts; no `project` left in routes, pages or schema |
 | 5.2 | Several libraries on any chat; the context popover everywhere; structure profile on any chat; paths across libraries | the fixture receives a referenced note from each of two libraries, an auto-fetched file from the second, and a structure profile's `Library/path`; tests for path lookup with two libraries holding the same name |
 | 5.3 | Folder defaults | a chat started in a subfolder carries its parent's libraries and profile; changing the defaults leaves that chat alone |
-| 5.4 | "Shared with me": `GET /chats/shared`, the `/shared` page and its sidebar entry | with two accounts, a chat shared by person appears in the other's list and opens read-only; unsharing removes it; a public chat the user only opened by link does not appear |
+| 5.4 | "Shared with me": `GET /me/shared-chats`, the `/shared` page and its sidebar entry | with two accounts, a chat shared by person appears in the other's list and opens read-only; unsharing removes it; a public chat the user only opened by link does not appear |
 
 Built (5.1): the turn, `/compact`, "@" and the context popover read the chat's first attached library only (marked `ponytail:`); 5.2 reads them all. There is no attach route or picker yet, so only migrated chats have a library until 5.2. `PATCH /chats/:id` already takes `structureProfileId` on any chat. The profile editor's "add from this project" path picker went with the project page; paths are typed. A library's chips in the chat header replace the project badge. Deleting a library takes no `ownChats` choice: chats stay, without it.
 
 Built (5.2): paths and lookup live in `shared/utils/librarySpace.ts` (`spaceEntries`, `spaceResolver`), used by the server's readers and by the client's "@" menu and folder picker alike. `Library/path` is tried before the attach-order lookup, so a path the file tools hand out always finds its library. Attach order is `chatLibrary.createdAt`; `POST /chats` spaces its rows a millisecond apart. Detaching a library leaves its "@" references in old messages, which are then left out with a note. The popover's button reads "Context" without libraries, else "N libraries". The auto-fetch folder scope, when set, covers only the chosen folders, so libraries without a chosen folder are not fetched from.
 
 Built (5.3): `chatFolder.defaults` (jsonb, `null`: none), migration `0015_folder_defaults`; `nearestDefaults` in `shared/utils/folderDefaults.ts` takes a folder's own defaults, else the nearest set above, as a whole (a folder's own replaces its parent's entirely). A folder's menu has "New chat here" (`/?folder=`) and "Defaults…". The home page fills the libraries and profile in and sends them as chosen, so a default removed there stays removed; `POST /chats` with `folderId` fills only what a request leaves out, skipping libraries and profiles the member can no longer use. Saving the dialog with nothing chosen removes the folder's own defaults, so a folder above applies again; there is no way to block a parent's defaults for one subfolder. Also fixed: the "@" and "/" menus were cut to a sliver by the editor's scroll box; they now hang off the page and open above the cursor.
+
+Built (5.4): the route is `GET /me/shared-chats`, not `/chats/shared`: next to `/chats/:id` that path turned the typed response of every chat route into a union. It lists chats shared by name, not temporary ones, most recently active first, with the owner. The sidebar entry sits under Search. Someone who unshares makes the chat disappear from the list and return 404 at once; a chat only opened through a public link never appears.
 
 ## 4. Milestone 6: characters and group chat
 
