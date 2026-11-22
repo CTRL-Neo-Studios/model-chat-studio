@@ -194,6 +194,7 @@ const commandHandlers = computed(() => Object.fromEntries(props.commands.map(com
 						</div>
 					</template>
 				</UPopover>
+				<slot name="tools" />
 			</div>
 
 			<div class="flex items-center gap-1 min-w-0">

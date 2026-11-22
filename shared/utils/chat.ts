@@ -31,9 +31,28 @@ export const chatSettingsSchema = z.object({
 	answerLayout: z.enum(['columns', 'stack']).optional(),
 	/** How many messages of each lane's thread are sent (after its latest summary); `null` or absent: all. */
 	memoryLength: z.number().int().min(1).max(10_000).nullable().optional(),
+	/** Project chats: files and notes fetched by their tags (and, with `fuzzy`, by their text). Unset fields use `AUTO_FETCH_DEFAULTS`. */
+	autoFetch: z.object({
+		enabled: z.boolean(),
+		/** Most entries fetched for one answer. */
+		maxEntries: z.number().int().min(1).max(20),
+		/** How many of the latest messages (of the `scan` roles) are searched for tags. */
+		scanMessages: z.number().int().min(1).max(50),
+		/** What is searched: user messages, answers, the lane's system prompt. */
+		scan: z.array(z.enum(['user', 'assistant', 'system'])).max(3),
+		/** Also search the scanned words in names, tags and text (Fuse.js). */
+		fuzzy: z.boolean(),
+		/** Only entries inside these folders; empty: the whole file space. */
+		folders: z.array(z.uuid()).max(50),
+		/** Most characters of text fetched for one answer. */
+		maxChars: z.number().int().min(1000).max(500_000),
+	}).partial().optional(),
 })
 
 export type ChatSettings = z.infer<typeof chatSettingsSchema>
+export type AutoFetchSettings = Required<NonNullable<ChatSettings['autoFetch']>>
+
+export const AUTO_FETCH_DEFAULTS: AutoFetchSettings = { enabled: true, maxEntries: 5, scanMessages: 5, scan: ['user'], fuzzy: false, folders: [], maxChars: 60_000 }
 
 /** The colors a lane can be labelled with: Tailwind palette names. */
 export const LANE_COLORS = ['red', 'orange', 'amber', 'yellow', 'lime', 'green', 'emerald', 'teal', 'cyan', 'sky', 'blue', 'indigo', 'violet', 'purple', 'fuchsia', 'pink', 'rose'] as const
@@ -90,6 +109,8 @@ export interface MessageMetadata {
 	attempt?: number
 	/** A `/compact` summary (role `system`) of a lane's thread up to it. */
 	kind?: 'summary'
+	/** Project files and notes auto-fetched for this answer, by path. */
+	fetched?: { entryId: string, name: string }[]
 }
 
 /**
@@ -97,8 +118,11 @@ export interface MessageMetadata {
  * are copied (they are short); messages and files are referenced by id.
  */
 export interface ContextBlock {
-	/** `reference`: a project file or note named with "@" in the message before it. */
-	kind: 'instructions' | 'omitted' | 'summary' | 'message' | 'reference'
+	/**
+	 * `reference`: a project file or note, named with "@" in the message before it or fetched by `autoFetch`, the
+	 * added message of auto-fetched files.
+	 */
+	kind: 'instructions' | 'omitted' | 'summary' | 'message' | 'reference' | 'autoFetch'
 	role: 'system' | 'user' | 'assistant'
 	label: string
 	/** Characters of text; attachments are not counted. */

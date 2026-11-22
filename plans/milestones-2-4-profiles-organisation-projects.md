@@ -1,6 +1,6 @@
 # Milestones 2–4: model profiles, organisation, projects
 
-Status: milestones 2 and 3 done. Milestone 4: 4.P spikes done (all live runs passed; spike A found DeepSeek refuses app tools next to web search with thinking off, fixed in the turn route); 4.1 done (the project description is set through the API only; the page has no field for it yet); 4.2 done ("Add to project" sits in the conversation overview's Files tab; "@" in a chat is offered to its owner); 4.3 next. Milestone 1 (`plans/milestone-1-chat-foundation.md`) is the base; its conventions (section 2 there) apply unchanged.
+Status: milestones 2 and 3 done. Milestone 4: 4.P spikes done (all live runs passed; spike A found DeepSeek refuses app tools next to web search with thinking off, fixed in the turn route); 4.1 done (the project description is set through the API only; the page has no field for it yet); 4.2 done ("Add to project" sits in the conversation overview's Files tab; "@" in a chat is offered to its owner); 4.3 done; 4.4 next. Milestone 1 (`plans/milestone-1-chat-foundation.md`) is the base; its conventions (section 2 there) apply unchanged.
 
 Goal, in build order:
 
@@ -210,7 +210,7 @@ A summary is a `message` row with role `system`, `metadata.kind: 'summary'` and 
 | `chat` | adds `projectId` FK set null, `projectVisible` boolean, `contextProfileId` FK set null; `settings.autoFetch`, `settings.fileTools` |
 | `chatFolder` | adds `projectId`: a project has its own folder tree |
 
-`settings.autoFetch`: `enabled`, `maxEntries` (default 5), `scanMessages` (default 5), `scan` (any of `user`, `assistant`, `system`; default `user` only; three toggles in a `UToggleGroup`), `fuzzy` (default off), `folders` (entry ids; empty means the whole space), `maxChars` (default 60,000).
+`settings.autoFetch`: `enabled` (default on: with no tags in the project nothing matches, so it costs nothing until files are tagged), `maxEntries` (default 5), `scanMessages` (default 5), `scan` (any of `user`, `assistant`, `system`; default `user` only; three toggles in a `UToggleGroup`), `fuzzy` (default off), `folders` (entry ids; empty means the whole space), `maxChars` (default 60,000; images and PDFs count 0). Unset fields take `AUTO_FETCH_DEFAULTS`. Built: folders are never fetched themselves (a tag on a folder does nothing yet); the system prompt counts as the oldest text for ranking; fuzzy-only matches rank after tag matches; an entry the message already names with "@" is not fetched again; a new chat starts auto-fetch from the defaults, since folder ids belong to one project. The settings sit in a popover in the prompt's footer of project chats, saved when it closes.
 
 Context profile blocks, an ordered array of at most 30:
 

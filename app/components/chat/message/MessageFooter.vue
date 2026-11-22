@@ -36,4 +36,9 @@ const tooltip = computed(() => {
 			{{ parts.join(' · ') }}
 		</p>
 	</UTooltip>
+	<!-- What auto-fetch added from the project for this answer. -->
+	<p v-if="metadata.fetched?.length" class="text-xs text-dimmed mt-1 flex items-center gap-1 min-w-0">
+		<UIcon name="i-lucide-folder-search" class="size-3.5 shrink-0" />
+		<span class="truncate" :title="metadata.fetched.map(entry => entry.name).join('\n')">Fetched: {{ metadata.fetched.map(entry => entry.name).join(', ') }}</span>
+	</p>
 </template>

@@ -31,7 +31,9 @@ const answeringModels = computed(() => enabledLanes.value.flatMap(lane => laneMo
 // The models and settings of the last chat started, kept as profile or model ids (prompts would not fit a cookie).
 const lastLanes = useCookie<{ profileId?: string, modelId?: string | null }[]>('chat-lanes', { default: () => [], sameSite: 'lax' })
 const lastSettings = useCookie<ChatSettings>('chat-settings', { default: () => ({}), sameSite: 'lax' })
-settings.value = { ...lastSettings.value }
+// Auto-fetch's folders belong to one project, so a new chat starts auto-fetch from the defaults.
+const { autoFetch: _, ...lastShared } = lastSettings.value
+settings.value = { ...lastShared }
 
 // "Start a chat" on the profiles page starts from that profile alone. The lanes start from the profiles,
 // so the first visit waits for them; they are usually cached already.
@@ -163,7 +165,11 @@ const quickChats = [
 						@update:web-search="chatLanes.setSettings({ webSearch: $event })"
 						@submit="createChat(input)"
 						@command="startTemporary"
-					/>
+					>
+						<template v-if="projectId" #tools>
+							<ChatAutoFetch :project-id="projectId" :model-value="settings.autoFetch" @update:model-value="chatLanes.setSettings({ autoFetch: $event })" />
+						</template>
+					</ChatPrompt>
 
 					<div class="flex flex-wrap gap-2">
 						<UButton

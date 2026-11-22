@@ -32,6 +32,7 @@
         "date-fns": "^4.4.0",
         "drizzle-kit": "^0.31.11",
         "drizzle-orm": "^0.45.4",
+        "fuse.js": "^7.5.0",
         "motion-v": "^2.13.0",
         "nuxt": "^4.6.4",
         "nuxt-auth-utils": "^0.6.2",

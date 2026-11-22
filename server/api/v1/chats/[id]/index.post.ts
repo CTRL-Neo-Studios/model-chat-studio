@@ -15,6 +15,7 @@ import { resolveAttachments } from '#server/utils/chat/files'
 import { getCatalog, getEndpoints, getPriceOverride, useInference } from '#server/utils/inference'
 import { buildContext } from '#server/utils/chat/context'
 import { expandReferences } from '#server/utils/project/references'
+import { autoFetch } from '#server/utils/project/autoFetch'
 import type { FinishedStep, Pricing } from '#server/utils/inference/types'
 
 const TITLE_INSTRUCTIONS = `Write a title for a chat that starts with the user's message below.
@@ -113,7 +114,20 @@ export default defineEventHandler(async (event) => {
 	const webSearch = !!chat.settings.webSearch && model.webSearch
 	const built = buildContext({ thread: history, systemPrompt: lane.systemPrompt, webSearch, memoryLength: chat.settings.memoryLength ?? null })
 	// "@" references become the project's files and notes, read now, where the message names them.
-	const context = { ...built, ...await expandReferences(db, chat.projectId, built.messages, built.blocks) }
+	const referenced = { ...built, ...await expandReferences(db, chat.projectId, built.messages, built.blocks) }
+	// Auto-fetch adds the project's matching files and notes as one message after the conversation, not stored.
+	const fetched = chat.projectId
+		? await autoFetch(db, {
+				projectId: chat.projectId,
+				settings: chat.settings.autoFetch,
+				thread: history,
+				systemPrompt: lane.systemPrompt,
+				exclude: referenced.blocks.flatMap(block => block.entryId ? [block.entryId] : []),
+			})
+		: undefined
+	const context = fetched
+		? { ...referenced, messages: [...referenced.messages, fetched.message], blocks: [...referenced.blocks, ...fetched.blocks] }
+		: referenced
 	const prepared = platform.prepare({
 		...params, apiKey, model: model.id, providers, reasoningLevel, webSearch,
 		userId: user.id, firstTurn, safetyCheck,
@@ -152,6 +166,7 @@ export default defineEventHandler(async (event) => {
 		return {
 			platform: platform.id, model: model.id, lane: laneLabel, attempt, ...usage, durationMs: Date.now() - startedAt,
 			...(finishReason === 'content-filter' && { refused: true }),
+			...(fetched?.fetched.length && { fetched: fetched.fetched }),
 		}
 	}
 

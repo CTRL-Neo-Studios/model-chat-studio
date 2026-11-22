@@ -122,7 +122,7 @@ function split(turn: Turn) {
 		{ label: 'Summary', size: size(block => block.kind === 'summary'), class: 'bg-warning' },
 		{ label: 'Earlier messages', size: size((block, index) => block.kind === 'message' && index < last), class: 'bg-info' },
 		{ label: 'New message', size: size((block, index) => block.kind === 'message' && index === last), class: 'bg-primary' },
-		{ label: 'Project notes named with “@”', size: size(block => block.kind === 'reference'), class: 'bg-success' },
+		{ label: 'Project notes ("@" and auto-fetch)', size: size(block => block.kind === 'reference' || block.kind === 'autoFetch'), class: 'bg-success' },
 	].filter(part => part.size > 0)
 }
 </script>

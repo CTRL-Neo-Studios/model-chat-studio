@@ -419,7 +419,11 @@ onMounted(() => {
 								@submit="handleSubmit"
 								@stop="answers.stop()"
 								@command="runCommand"
-							/>
+							>
+								<template v-if="projectId" #tools>
+									<ChatAutoFetch :project-id="projectId" :model-value="settings.autoFetch" @update:model-value="chatLanes.setSettings({ autoFetch: $event })" />
+								</template>
+							</ChatPrompt>
 						</template>
 					</UChatMessages>
 				</UContainer>

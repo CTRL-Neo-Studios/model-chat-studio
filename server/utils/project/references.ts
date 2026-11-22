@@ -66,6 +66,6 @@ export async function expandReferences(db: Db, projectId: string | null, message
 
 	return {
 		messages: expanded,
-		blocks: blocks.flatMap(block => block.kind === 'message' && block.messageId && added[block.messageId] ? [block, ...added[block.messageId]!] : [block]),
+		blocks: blocks.flatMap(block => block.messageId && added[block.messageId] ? [block, ...added[block.messageId]!] : [block]),
 	}
 }

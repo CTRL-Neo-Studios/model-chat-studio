@@ -43,6 +43,8 @@ export async function listEntries(db: Db, projectId: string) {
 		fileId: tables.projectEntry.fileId,
 		mediaType: tables.file.mediaType,
 		size: tables.file.size,
+		/** Characters of a note's text. */
+		noteLength: sql<number | null>`char_length(${tables.projectEntry.content})`.mapWith(Number),
 		updatedAt: tables.projectEntry.updatedAt,
 	}).from(tables.projectEntry)
 		.leftJoin(tables.file, eq(tables.file.id, tables.projectEntry.fileId))
