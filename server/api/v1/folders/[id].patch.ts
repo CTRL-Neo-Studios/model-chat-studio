@@ -18,10 +18,12 @@ export default defineEventHandler(async (event) => {
 	const id = getRouterParam(event, 'id', { decode: true })
 	const fields = await readValidatedBody(event, bodySchema)
 	const folders = await listFolders(db, user.id)
-	if (!folders.some(folder => folder.id === id)) throw createError({ status: 404, statusText: 'Folder not found' })
-	if (fields.parentId !== undefined) assertFolderParent(folders, fields.parentId, id)
+	const folder = folders.find(entry => entry.id === id)
+	if (!folder) throw createError({ status: 404, statusText: 'Folder not found' })
+	// A move stays in the folder's own tree: personal, or its project's.
+	if (fields.parentId !== undefined) assertFolderParent(folders.filter(entry => entry.projectId === folder.projectId), fields.parentId, id)
 
-	const [folder] = await db.update(schema.chatFolder).set(fields).where(eq(schema.chatFolder.id, id!))
-		.returning({ id: schema.chatFolder.id, parentId: schema.chatFolder.parentId, name: schema.chatFolder.name })
-	return folder!
+	const [updated] = await db.update(schema.chatFolder).set(fields).where(eq(schema.chatFolder.id, id!))
+		.returning({ id: schema.chatFolder.id, parentId: schema.chatFolder.parentId, name: schema.chatFolder.name, projectId: schema.chatFolder.projectId })
+	return updated!
 })

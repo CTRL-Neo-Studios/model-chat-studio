@@ -1,6 +1,6 @@
 import { createError, defineEventHandler, readValidatedBody } from 'nuxt/server'
 import { db, schema } from 'hub:db'
-import { and, asc, eq, inArray, ne } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, ne } from 'drizzle-orm'
 import { z } from 'zod'
 import { chatSettingsSchema } from '#shared/utils/chat'
 import type { Db } from '#server/utils/core/settings'
@@ -28,8 +28,12 @@ export default defineEventHandler(async (event) => {
 		throw createError({ status: 400, statusText: 'A temporary chat cannot be shared. Keep it first.' })
 	}
 	if (fields.folderId) {
-		const [folder] = await db.select({ id: schema.chatFolder.id }).from(schema.chatFolder)
-			.where(and(eq(schema.chatFolder.id, fields.folderId), eq(schema.chatFolder.userId, chat.userId)))
+		// One of the owner's folders, in the chat's own tree: personal, or its project's.
+		const [folder] = await db.select({ id: schema.chatFolder.id }).from(schema.chatFolder).where(and(
+			eq(schema.chatFolder.id, fields.folderId),
+			eq(schema.chatFolder.userId, chat.userId),
+			chat.projectId ? eq(schema.chatFolder.projectId, chat.projectId) : isNull(schema.chatFolder.projectId),
+		))
 		if (!folder) throw createError({ status: 404, statusText: 'Folder not found' })
 	}
 	if (chat.temporary && fields.temporary === false && !chat.title && !fields.title) {

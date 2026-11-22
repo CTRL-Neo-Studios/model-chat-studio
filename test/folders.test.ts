@@ -34,7 +34,7 @@ test('deleting a folder moves its chats and folders up to its parent; another me
 	const [moved] = await db.select({ folderId: schema.chat.folderId }).from(schema.chat).where(eq(schema.chat.id, chat!.id))
 	expect(moved!.folderId).toBe(work!.id)
 	expect(await listFolders(db, a!.id)).toEqual([
-		{ id: drafts!.id, parentId: work!.id, name: 'Drafts' },
-		{ id: work!.id, parentId: null, name: 'Work' },
+		{ id: drafts!.id, parentId: work!.id, name: 'Drafts', projectId: null },
+		{ id: work!.id, parentId: null, name: 'Work', projectId: null },
 	])
 })

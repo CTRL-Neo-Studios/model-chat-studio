@@ -7,8 +7,8 @@ import { deleteStoredFiles } from '#server/utils/chat/files'
 const SWEEP_AFTER_MS = 24 * 3600_000
 
 /**
- * The member's own chats, newest first, without temporary ones. Their temporary chats older than a day (a tab
- * that closed without deleting its chat) are deleted here, with their files.
+ * The member's own chats, personal and in projects (`projectId`), newest first, without temporary ones. Their
+ * temporary chats older than a day (a tab that closed without deleting its chat) are deleted here, with their files.
  */
 export default defineEventHandler(async (event) => {
 	const user = await useServerAuth().requireUser(event)
@@ -18,6 +18,7 @@ export default defineEventHandler(async (event) => {
 			title: schema.chat.title,
 			visibility: schema.chat.visibility,
 			folderId: schema.chat.folderId,
+			projectId: schema.chat.projectId,
 			createdAt: schema.chat.createdAt,
 			updatedAt: schema.chat.updatedAt,
 		}).from(schema.chat)

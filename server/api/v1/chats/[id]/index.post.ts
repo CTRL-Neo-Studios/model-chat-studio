@@ -14,6 +14,7 @@ import { listChatModels } from '#server/utils/chat/lanes'
 import { resolveAttachments } from '#server/utils/chat/files'
 import { getCatalog, getEndpoints, getPriceOverride, useInference } from '#server/utils/inference'
 import { buildContext } from '#server/utils/chat/context'
+import { expandReferences } from '#server/utils/project/references'
 import type { FinishedStep, Pricing } from '#server/utils/inference/types'
 
 const TITLE_INSTRUCTIONS = `Write a title for a chat that starts with the user's message below.
@@ -110,14 +111,16 @@ export default defineEventHandler(async (event) => {
 		: Promise.resolve(undefined)
 
 	const webSearch = !!chat.settings.webSearch && model.webSearch
-	const context = buildContext({ thread: history, systemPrompt: lane.systemPrompt, webSearch, memoryLength: chat.settings.memoryLength ?? null })
+	const built = buildContext({ thread: history, systemPrompt: lane.systemPrompt, webSearch, memoryLength: chat.settings.memoryLength ?? null })
+	// "@" references become the project's files and notes, read now, where the message names them.
+	const context = { ...built, ...await expandReferences(db, chat.projectId, built.messages, built.blocks) }
 	const prepared = platform.prepare({
 		...params, apiKey, model: model.id, providers, reasoningLevel, webSearch,
 		userId: user.id, firstTurn, safetyCheck,
 	})
 	const tools: ToolSet = prepared.appTools === false ? prepared.tools : { ...prepared.tools, chart: chartTool }
 	const price = await getPriceOverride(db, platform.id, model.id)
-	const modelHistory = await resolveAttachments({ db, inference, model, userId: user.id, chatId }, context.messages).catch((error) => {
+	const modelHistory = await resolveAttachments({ db, inference, model, userId: user.id, chatId, projectId: chat.projectId }, context.messages).catch((error) => {
 		console.error('[chat] attachment failed', error)
 		throw createError({ status: 502, statusText: `${platform.id} did not accept an attachment. Try again, or remove it.` })
 	})

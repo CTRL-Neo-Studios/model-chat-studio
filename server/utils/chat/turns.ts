@@ -18,11 +18,17 @@ const filePartSchema = z.object({
 	url: z.string().regex(FILE_URL_PATTERN),
 	filename: z.string().max(255).optional(),
 })
+/** An "@" pick: a file, note or folder of the chat's project, expanded where it stands on every turn. */
+export const referencePartSchema = z.object({
+	type: z.literal('data-reference'),
+	id: z.string().max(64).optional(),
+	data: z.object({ entryId: z.uuid(), name: z.string().max(2000), kind: z.enum(['folder', 'file', 'note']) }),
+})
 
 export const userMessageSchema = z.object({
 	id: z.string().min(1).max(64),
 	role: z.literal('user'),
-	parts: z.array(z.discriminatedUnion('type', [textPartSchema, filePartSchema])).min(1).max(20),
+	parts: z.array(z.discriminatedUnion('type', [textPartSchema, filePartSchema, referencePartSchema])).min(1).max(40),
 })
 
 type UserMessageParts = z.infer<typeof userMessageSchema>['parts']
@@ -233,7 +239,8 @@ export async function editMessage(db: Db, chatId: string, messageId: string, edi
 		let metadata = message.metadata
 		if (message.role === 'user') {
 			if (message.parts.some(part => part.type === 'file')) throw createError({ status: 400, statusText: 'A message with attachments cannot be edited' })
-			parts = [{ type: 'text', text: edit.text }]
+			// Its "@" references stay; the new text may name them or not.
+			parts = [{ type: 'text', text: edit.text }, ...message.parts.filter(part => part.type === 'data-reference')]
 		}
 		else if (message.role === 'assistant' && !edit.dropAfter) {
 			const first = message.parts.findIndex(part => part.type === 'text')

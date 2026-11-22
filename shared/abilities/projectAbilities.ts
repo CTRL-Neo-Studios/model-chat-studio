@@ -26,6 +26,9 @@ export function projectAbilities() {
 		/** Reading the file space. */
 		readProject: defineAbility(isOwner),
 
+		/** Starting chats in the project, and keeping folders for them. */
+		startChats: defineAbility(isOwner),
+
 		/** Adding, editing, tagging, moving and deleting files, notes and folders. */
 		editFiles: defineAbility(isOwner),
 

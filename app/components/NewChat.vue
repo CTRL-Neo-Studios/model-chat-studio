@@ -57,6 +57,13 @@ const greeting = computed(() => {
 // Files upload to the new chat's id before the chat exists; creating it links them to the first message.
 const { uploads, promptFiles, uploading, parts: fileParts } = usePromptUploads(chatId)
 
+// `?project=` starts the chat in that project, where "@" names its files, notes and folders.
+const projectParam = useRoute().query.project
+const projectId = !props.temporary && typeof projectParam === 'string' ? projectParam : undefined
+const { data: project } = useQuery(() => ({ ...projectQuery(projectId ?? ''), enabled: !!projectId }))
+const { items: mentions, partsFor } = useProjectMentions(projectId)
+const references = ref<string[]>([])
+
 async function createChat(prompt: string) {
 	if ((!prompt.trim() && !fileParts.value.length) || uploading.value || loading.value) return
 	if (!enabledLanes.value.length) {
@@ -71,10 +78,11 @@ async function createChat(prompt: string) {
 			headers: { [headerName]: csrf },
 			body: {
 				id: chatId,
-				message: { id: crypto.randomUUID(), role: 'user', parts: [...(prompt.trim() ? [{ type: 'text', text: prompt }] : []), ...fileParts.value] },
+				message: { id: crypto.randomUUID(), role: 'user', parts: [...(prompt.trim() ? [{ type: 'text', text: prompt }] : []), ...fileParts.value, ...partsFor(references.value)] },
 				settings: settings.value,
 				models: lanes.value.map(({ id: _, position: __, platform: ___, profileId, ...fields }) => ({ ...fields, profileId: profileId ?? undefined })),
 				temporary: props.temporary || undefined,
+				projectId: projectId || undefined,
 			},
 		})
 	}
@@ -121,10 +129,13 @@ const quickChats = [
 			<div class="flex flex-1">
 				<UContainer class="flex-1 flex flex-col justify-center gap-4 sm:gap-6 py-8">
 					<h1 class="text-3xl sm:text-4xl text-highlighted font-bold">
-						{{ temporary ? 'Temporary chat' : greeting }}
+						{{ temporary ? 'Temporary chat' : project ? project.name : greeting }}
 					</h1>
 					<p v-if="temporary" class="text-muted -mt-2">
 						Not in your chats, and deleted when you leave or refresh this page. You can keep it once it has started.
+					</p>
+					<p v-else-if="project" class="text-muted -mt-2">
+						A new chat in this project. Type “@” to name its files, notes and folders.
 					</p>
 
 					<UAlert
@@ -140,12 +151,14 @@ const quickChats = [
 					<ChatPrompt
 						v-model="input"
 						v-model:files="promptFiles"
+						v-model:references="references"
 						:web-search="settings.webSearch"
 						:models="answeringModels"
 						:uploads="uploads"
 						:uploading="uploading"
 						:disabled="loading || unavailable"
-						:commands="temporary ? [] : [tempCommand]"
+						:commands="temporary || projectId ? [] : [tempCommand]"
+						:mentions="mentions"
 						class="[view-transition-name:chat-prompt]"
 						@update:web-search="chatLanes.setSettings({ webSearch: $event })"
 						@submit="createChat(input)"

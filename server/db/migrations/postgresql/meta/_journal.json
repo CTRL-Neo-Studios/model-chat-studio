@@ -71,6 +71,13 @@
       "when": 1795311934033,
       "tag": "0009_pins",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795312598730,
+      "tag": "0010_project_chats",
+      "breakpoints": true
     }
   ]
 }

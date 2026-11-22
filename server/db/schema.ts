@@ -107,6 +107,8 @@ export const chatFolder = pgTable("chatFolder", {
 	/** `null` is the top level. Deleting a folder moves its content up first; `set null` is a backstop. */
 	parentId: uuid().references((): AnyPgColumn => chatFolder.id, { onDelete: "set null" }),
 	name: text().notNull(),
+	/** A project's own folder tree; `null` is the member's personal folders. */
+	projectId: uuid().references((): AnyPgColumn => project.id, { onDelete: "cascade" }),
 
 	...createdUpdatedAtColumns
 }, (t) => [
@@ -125,6 +127,8 @@ export const chat = pgTable("chat", {
 	folderId: uuid().references(() => chatFolder.id, { onDelete: "set null" }),
 	/** Hidden from the chat list and deleted when its page is left; swept after 24 h. "Keep this chat" clears it. */
 	temporary: boolean().notNull().default(false),
+	/** The project the chat belongs to; `null` is a personal chat. Deleting the project keeps the chat as a personal one. */
+	projectId: uuid().references((): AnyPgColumn => project.id, { onDelete: "set null" }),
 
 	...createdUpdatedAtColumns
 }, (t) => [

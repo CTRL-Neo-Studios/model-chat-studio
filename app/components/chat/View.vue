@@ -27,6 +27,11 @@ const sharedWith = ref(data.value?.sharedWith ?? [])
 // Renaming writes the cache (`useChatActions`), so the title is read from it.
 const title = computed(() => data.value?.title ?? null)
 const temporary = computed(() => data.value?.temporary ?? false)
+// A project chat: its badge links to the project, and "@" in the prompt names the project's files, notes and folders.
+const projectId = computed(() => data.value?.projectId ?? null)
+const { data: project } = useQuery(() => ({ ...projectQuery(projectId.value ?? ''), enabled: !!projectId.value && isOwner.value }))
+const { items: mentions, partsFor } = useProjectMentions(() => isOwner.value ? projectId.value : null)
+const references = ref<string[]>([])
 
 const overviewOpen = ref(false)
 
@@ -130,7 +135,8 @@ async function runCommand(kind: PromptCommand['kind']) {
 		// The new chat starts from these models: profiles by id, other models by model id, as the home page keeps them.
 		lastLanes.value = enabledLanes.value.map(lane => lane.profileId ? { profileId: lane.profileId } : { modelId: lane.modelId })
 		lastSettings.value = { ...settings.value, memoryLength: undefined }
-		return navigateTo('/')
+		// A project chat's new chat is in the same project.
+		return navigateTo({ path: '/', query: projectId.value ? { project: projectId.value } : undefined })
 	}
 	if (kind !== 'compact' || compacting.value || answers.busy.value) return
 	compacting.value = true
@@ -175,7 +181,8 @@ function handleSubmit(e: Event) {
 	}
 	input.value = ''
 	clearFiles()
-	const parts = [...(text.trim() ? [{ type: 'text' as const, text }] : []), ...files]
+	const parts = [...(text.trim() ? [{ type: 'text' as const, text }] : []), ...files, ...partsFor(references.value)]
+	references.value = []
 	answers.send({ id: crypto.randomUUID(), role: 'user', parts }, enabledLanes.value.map(lane => lane.id))
 }
 
@@ -275,6 +282,18 @@ onMounted(() => {
 					<ChatModelsMenu v-if="isOwner" :chat-lanes="chatLanes" />
 				</template>
 
+				<UButton
+					v-if="project"
+					:to="`/projects/${project.id}`"
+					:label="project.name"
+					icon="i-lucide-folder-kanban"
+					color="neutral"
+					variant="subtle"
+					size="xs"
+					class="max-w-48"
+					:ui="{ label: 'truncate' }"
+					:aria-label="`Part of the project ${project.name}`"
+				/>
 				<UTooltip v-if="isOwner" text="Conversation overview">
 					<UButton icon="i-lucide-list-tree" color="neutral" variant="ghost" aria-label="Conversation overview" @click="overviewOpen = true" />
 				</UTooltip>
@@ -383,6 +402,8 @@ onMounted(() => {
 							<ChatPrompt
 								v-model="input"
 								v-model:files="promptFiles"
+								v-model:references="references"
+								:mentions="mentions"
 								:web-search="settings.webSearch"
 								:models="answeringModels"
 								:uploads="uploads"
@@ -405,5 +426,5 @@ onMounted(() => {
 			</div>
 		</template>
 	</UDashboardPanel>
-	<ChatOverview v-if="isOwner" v-model:open="overviewOpen" :chat-id="chatId" :messages="messages" />
+	<ChatOverview v-if="isOwner" v-model:open="overviewOpen" :chat-id="chatId" :messages="messages" :project-id="projectId" />
 </template>

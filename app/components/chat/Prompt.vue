@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ChatStatus } from 'ai'
 import { type Editor, Extension } from '@tiptap/core'
-import type { EditorSuggestionMenuItem } from '@nuxt/ui'
+import type { EditorMentionMenuItem, EditorSuggestionMenuItem } from '@nuxt/ui'
 import type { CatalogModelView } from '~/composables/useModels'
 import type { PromptUpload } from '~/composables/usePromptUploads'
 
@@ -26,12 +26,15 @@ const props = withDefaults(defineProps<{
 	memoryMax?: number
 	/** "/" commands; none hides the menu. */
 	commands?: PromptCommand[]
+	/** A project's files, notes and folders for "@"; none hides the menu. */
+	mentions?: EditorMentionMenuItem[]
 }>(), {
 	status: 'ready',
 	error: undefined,
 	uploads: () => [],
 	memoryMax: undefined,
 	commands: () => [],
+	mentions: () => [],
 })
 
 const emit = defineEmits<{
@@ -46,6 +49,8 @@ const files = defineModel<File[]>('files', { default: () => [] })
 const webSearch = defineModel<boolean | undefined>('webSearch')
 /** How many messages each lane is sent; `null` is all. */
 const memoryLength = defineModel<number | null | undefined>('memoryLength')
+/** The ids of the project entries named with "@". */
+const references = defineModel<string[]>('references', { default: () => [] })
 
 // The slider's rightmost step means "all", so the chat can grow past it. It shows its value while dragged and is
 // saved when released, not on every step.
@@ -78,6 +83,14 @@ function appendTranscript(text: string) {
 // typed (spike B). Text set from outside (cleared after sending, dictation, a suggested prompt) goes back in.
 let editor: Editor | undefined
 const textOf = (instance: Editor) => instance.getText({ blockSeparator: '\n' })
+/** The entries named with "@", in order, each once. */
+function referencesOf(instance: Editor) {
+	const ids: string[] = []
+	instance.state.doc.descendants((node) => {
+		if (node.type.name === 'mention' && typeof node.attrs.id === 'string' && !ids.includes(node.attrs.id)) ids.push(node.attrs.id)
+	})
+	return ids
+}
 const docOf = (text: string) => ({ type: 'doc', content: text.split('\n').map(line => ({ type: 'paragraph', content: line ? [{ type: 'text', text: line }] : [] })) })
 watch(input, (value) => {
 	if (editor && value !== textOf(editor)) editor.commands.setContent(docOf(value))
@@ -96,6 +109,7 @@ function promptExtension(submit: () => void) {
 		},
 		onUpdate: ({ editor: updated }) => {
 			input.value = textOf(updated)
+			references.value = referencesOf(updated)
 		},
 	})
 	return extension
@@ -139,6 +153,7 @@ const commandHandlers = computed(() => Object.fromEntries(props.commands.map(com
 				:ui="{ base: ['p-1.5! text-base', dictation !== 'idle' && '[&_.is-editor-empty]:before:italic'] }"
 			>
 				<UEditorSuggestionMenu v-if="commandItems.length" :editor="instance" :items="commandItems" />
+				<UEditorMentionMenu v-if="mentions.length" :editor="instance" :items="mentions" :limit="20" />
 			</UEditor>
 		</template>
 

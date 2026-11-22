@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { blob } from 'hub:blob'
 import { schema } from 'hub:db'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, or } from 'drizzle-orm'
 import type { UIMessage } from 'ai'
 import { createError, type RequestEvent } from 'nuxt/server'
 import { FILE_UPLOAD, FILE_UPLOAD_TYPES, FILE_URL_PATTERN } from '#shared/utils/file'
@@ -62,6 +62,8 @@ interface AttachmentContext {
 	model: CatalogModel
 	userId: string
 	chatId: string
+	/** The chat's project, whose files "@" references bring in. */
+	projectId: string | null
 }
 
 /** The platform's id for an uploaded PDF, uploading it the first time (DeepSeek bills parsing per upload). */
@@ -96,15 +98,24 @@ const textTypes: readonly string[] = FILE_UPLOAD.textTypes
 export async function resolveAttachments(context: AttachmentContext, messages: UIMessage[]): Promise<UIMessage[]> {
 	const ids = messages.flatMap(message => message.parts.flatMap(part => part.type === 'file' ? [FILE_URL_PATTERN.exec(part.url)?.[1] ?? ''] : []))
 	if (!ids.length) return messages
-	const rows = await context.db.select().from(schema.file)
-		.where(and(inArray(schema.file.id, ids.filter(Boolean)), eq(schema.file.chatId, context.chatId)))
+	// The chat's own uploads, and the files of its project (named with "@").
+	const rows = await context.db.select().from(schema.file).where(and(
+		inArray(schema.file.id, ids.filter(Boolean)),
+		or(
+			eq(schema.file.chatId, context.chatId),
+			context.projectId
+				? inArray(schema.file.id, context.db.select({ id: schema.projectEntry.fileId }).from(schema.projectEntry).where(eq(schema.projectEntry.projectId, context.projectId)))
+				: undefined,
+		),
+	))
 	const byId = Object.fromEntries(rows.map(row => [row.id, row]))
 	const accepts = (modality: string) => context.model.inputModalities.includes(modality)
 
 	async function resolve(part: UIMessage['parts'][number]): Promise<UIMessage['parts'][number]> {
 		if (part.type !== 'file') return part
 		const row = byId[FILE_URL_PATTERN.exec(part.url)?.[1] ?? '']
-		const name = row?.fileName ?? part.filename ?? 'file'
+		// A reference names the file by its path in the project.
+		const name = part.filename ?? row?.fileName ?? 'file'
 		const note = (reason: string) => ({ type: 'text' as const, text: `[Attachment "${name}" left out: ${reason}]` })
 		if (!row) return note('it was deleted.')
 

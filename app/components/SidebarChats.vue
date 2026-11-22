@@ -4,13 +4,14 @@ import { LazyModalConfirm, LazyModalMoveTo, LazyModalRename } from '#components'
 import type { UIChat } from '~/composables/useChats'
 
 /**
- * The member's chats in the sidebar: folders as a tree (with the chats inside them), then the chats in no folder,
- * by date. A chat or folder dragged onto a folder moves into it, onto the date list out of any folder; "Move to…"
- * does the same from the keyboard.
+ * The member's chats: folders as a tree (with the chats inside them), then the chats in no folder, by date. A chat
+ * or folder dragged onto a folder moves into it, onto the date list out of any folder; "Move to…" does the same
+ * from the keyboard. In the sidebar these are the personal chats; with `projectId`, a project's chats and folders.
  */
-const props = defineProps<{
+const props = withDefaults(defineProps<{
 	chats: UIChat[]
-}>()
+	projectId?: string | null
+}>(), { projectId: null })
 
 const route = useRoute()
 const overlay = useOverlay()
@@ -20,7 +21,8 @@ const { renameChat, deleteChat } = useChatActions()
 const { isPinned, pinnedFirst, pinItem } = usePins()
 
 const { data: folderList } = useQuery(foldersQuery)
-const folders = computed(() => folderList.value ?? [])
+// The member's folders in this tree: personal ones in the sidebar, a project's on its page.
+const folders = computed(() => (folderList.value ?? []).filter(folder => folder.projectId === props.projectId))
 type Folder = (typeof folders.value)[number]
 
 const renameModal = overlay.create(LazyModalRename)
@@ -120,12 +122,12 @@ const move = (kind: Kind, id: string, folderId: string | null) => kind === 'chat
 async function createFolder(parentId: string | null) {
 	const name = await renameModal.open({
 		heading: 'New folder',
-		description: parentId ? `Inside “${pathOf(parentId)}”.` : 'At the top of your chats.',
+		description: parentId ? `Inside “${pathOf(parentId)}”.` : props.projectId ? 'At the top of this project\'s chats.' : 'At the top of your chats.',
 		placeholder: 'Folder name',
 		maxlength: 100,
 	}).result
 	if (!name) return
-	const folder = await act<Folder>('/api/v1/folders', { method: 'POST', body: { name, parentId } })
+	const folder = await act<Folder>('/api/v1/folders', { method: 'POST', body: { name, parentId, projectId: props.projectId } })
 	if (!folder) return
 	queryCache.setQueryData(foldersQuery.key, list => [...(list ?? []), folder])
 	if (parentId) expand(parentId)

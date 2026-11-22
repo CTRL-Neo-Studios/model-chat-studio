@@ -10,12 +10,26 @@ import type { ChatMessage } from '~/composables/useLaneAnswers'
 const props = defineProps<{
 	chatId: string
 	messages: ChatMessage[]
+	/** A project chat's project: its files can be added to the project. */
+	projectId?: string | null
 }>()
 
 const open = defineModel<boolean>('open', { default: false })
 
 const { data, isPending, error } = useQuery(() => ({ ...chatOverviewQuery(props.chatId), enabled: open.value }))
 const { models } = useModels()
+const act = useApiAction()
+const queryCache = useQueryCache()
+
+/** "Add to project": a copy of the upload goes to the top of the project's files. */
+const adding = ref<string | null>(null)
+async function addToProject(fileId: string) {
+	if (!props.projectId) return
+	adding.value = fileId
+	const added = await act(`/api/v1/projects/${props.projectId}/files/from-chat`, { method: 'POST', body: { fileId }, success: 'Added to the project' })
+	adding.value = null
+	if (added) queryCache.invalidateQueries({ key: projectEntriesQuery(props.projectId).key })
+}
 
 const tab = ref<'trajectory' | 'files' | 'context'>('trajectory')
 const tabs = [
@@ -48,9 +62,9 @@ const rowsOf = (turn: Turn): Row[] => [
 	...turn.blocks.map((block, index) => ({
 		key: `${turn.answer.id}:${index}`,
 		role: block.role,
-		label: block.label,
-		detail: block.kind === 'omitted' ? undefined : `~${number(estimate(block.size))} tokens`,
-		text: block.text ?? textOf(byId.value[block.messageId ?? '']),
+		label: block.kind === 'reference' ? `@${block.label}` : block.label,
+		detail: block.kind === 'omitted' || (block.kind === 'reference' && !block.size) ? undefined : `~${number(estimate(block.size))} tokens`,
+		text: block.text ?? (block.kind === 'reference' ? 'From the project, read when this answer was made.' : textOf(byId.value[block.messageId ?? ''])),
 	})),
 	...turn.tools.map((tool, index) => ({
 		key: `${turn.answer.id}:tool:${index}`,
@@ -98,9 +112,9 @@ const lanes = computed(() => [...new Set(answers.value.map(laneOf))].map((name) 
 	return { name, totals: sumOf(own), next, window }
 }))
 
-/** An answer's input split across its blocks by size: instructions, summary, earlier messages, the new message. */
+/** An answer's input split across its blocks by size: instructions, summary, earlier messages, the new message and its references. */
 function split(turn: Turn) {
-	const last = turn.blocks.length - 1
+	const last = turn.blocks.findLastIndex(block => block.kind === 'message')
 	const size = (test: (block: ContextBlock, index: number) => boolean) =>
 		turn.blocks.reduce((total, block, index) => total + (test(block, index) ? block.size : 0), 0)
 	return [
@@ -108,6 +122,7 @@ function split(turn: Turn) {
 		{ label: 'Summary', size: size(block => block.kind === 'summary'), class: 'bg-warning' },
 		{ label: 'Earlier messages', size: size((block, index) => block.kind === 'message' && index < last), class: 'bg-info' },
 		{ label: 'New message', size: size((block, index) => block.kind === 'message' && index === last), class: 'bg-primary' },
+		{ label: 'Project notes named with “@”', size: size(block => block.kind === 'reference'), class: 'bg-success' },
 	].filter(part => part.size > 0)
 }
 </script>
@@ -163,6 +178,16 @@ function split(turn: Turn) {
 							<span class="text-xs text-muted truncate">{{ fileMessage(file.messageId) }}</span>
 						</div>
 						<span class="text-xs text-muted shrink-0">{{ file.mediaType }} · {{ fileSize(file.size) }}</span>
+						<UButton
+							v-if="projectId"
+							icon="i-lucide-folder-input"
+							label="Add to project"
+							color="neutral"
+							variant="subtle"
+							size="xs"
+							:loading="adding === file.id"
+							@click="addToProject(file.id)"
+						/>
 					</li>
 				</ul>
 			</template>

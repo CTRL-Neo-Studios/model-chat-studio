@@ -97,7 +97,8 @@ export interface MessageMetadata {
  * are copied (they are short); messages and files are referenced by id.
  */
 export interface ContextBlock {
-	kind: 'instructions' | 'omitted' | 'summary' | 'message'
+	/** `reference`: a project file or note named with "@" in the message before it. */
+	kind: 'instructions' | 'omitted' | 'summary' | 'message' | 'reference'
 	role: 'system' | 'user' | 'assistant'
 	label: string
 	/** Characters of text; attachments are not counted. */
@@ -105,6 +106,8 @@ export interface ContextBlock {
 	/** Instructions and summaries. */
 	text?: string
 	messageId?: string
+	/** `reference`: the project entry. */
+	entryId?: string
 	/** `omitted`: how many earlier messages the memory setting left out. */
 	count?: number
 }

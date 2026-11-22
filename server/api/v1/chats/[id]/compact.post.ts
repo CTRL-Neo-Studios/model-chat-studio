@@ -8,6 +8,7 @@ import { assertRateLimit } from '#server/utils/core/rateLimit'
 import { requireChat } from '#server/utils/chat/access'
 import { buildContext } from '#server/utils/chat/context'
 import { resolveAttachments } from '#server/utils/chat/files'
+import { expandReferences } from '#server/utils/project/references'
 import { listChatModels } from '#server/utils/chat/lanes'
 import { assertWithinBudget, listChatMessages, monthlyBudgetStatus } from '#server/utils/chat/turns'
 import { getCatalog, getPriceOverride, useInference } from '#server/utils/inference'
@@ -43,7 +44,8 @@ export default defineEventHandler(async (event) => {
 		const model = chosen ?? catalog.find(model => model.id === config.defaultModel)
 		if (!model) throw new Error('This chat\'s model is not available')
 		const prepared = platform.prepare({ apiKey, model: model.id, userId: user.id, firstTurn: false, safetyCheck: settings.safetyCheck })
-		const history = await resolveAttachments({ db, inference, model, userId: user.id, chatId: chat.id }, context.messages)
+		const { messages } = await expandReferences(db, chat.projectId, context.messages, [])
+		const history = await resolveAttachments({ db, inference, model, userId: user.id, chatId: chat.id, projectId: chat.projectId }, messages)
 		const result = await generateText({
 			model: prepared.model,
 			providerOptions: prepared.providerOptions,
