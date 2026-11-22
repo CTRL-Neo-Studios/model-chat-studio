@@ -135,6 +135,8 @@ export const chat = pgTable("chat", {
 	projectId: uuid().references((): AnyPgColumn => project.id, { onDelete: "set null" }),
 	/** A project chat's own context profile; `null` uses the project's. */
 	contextProfileId: uuid().references((): AnyPgColumn => contextProfile.id, { onDelete: "set null" }),
+	/** A project chat that everyone in the project may read. It stays its author's to write in. */
+	projectVisible: boolean().notNull().default(false),
 
 	...createdUpdatedAtColumns
 }, (t) => [
@@ -237,7 +239,7 @@ export const file = pgTable("file", {
 	index().on(t.chatId),
 ]);
 
-/** A project: a file space with its own chats. People and roles come with sharing (phase 4.6). */
+/** A project: a file space with its own chats, shared with people in `projectMember`. */
 export const project = pgTable("project", {
 	id: uuid().primaryKey().defaultRandom(),
 	ownerId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
@@ -249,6 +251,19 @@ export const project = pgTable("project", {
 	...createdUpdatedAtColumns
 }, (t) => [
 	index().on(t.ownerId),
+]);
+
+export const projectRoles = ["viewer", "member", "editor"] as const
+
+/** Someone a project is shared with, and what they may do: read (`viewer`), also start chats (`member`), also edit the file space (`editor`). */
+export const projectMember = pgTable("projectMember", {
+	projectId: uuid().notNull().references(() => project.id, { onDelete: "cascade" }),
+	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	role: text({ enum: projectRoles }).notNull(),
+	createdAt,
+}, (t) => [
+	primaryKey({ columns: [t.projectId, t.userId] }),
+	index().on(t.userId),
 ]);
 
 /** Blocks of conversation data sent around a project chat's thread. `ownerId` `null` is an instance profile, published by an admin. */

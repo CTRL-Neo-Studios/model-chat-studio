@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DropdownMenuItem } from '@nuxt/ui'
 import { formatDistanceToNow } from 'date-fns'
-import { LazyModalConfirm, LazyModalRename } from '#components'
+import { LazyModalConfirm, LazyModalDeleteProject, LazyModalRename } from '#components'
 
 useHead({ title: 'Projects' })
 
@@ -16,6 +16,8 @@ type Project = (typeof projects.value)[number]
 
 const nameModal = overlay.create(LazyModalRename)
 const confirm = overlay.create(LazyModalConfirm)
+const deleteModal = overlay.create(LazyModalDeleteProject)
+const { user } = useUserSession()
 
 const nameProps = { heading: 'New project', description: 'A project holds files, notes and folders, and the chats about them.', placeholder: 'Project name', maxlength: 100 }
 
@@ -24,7 +26,7 @@ async function create() {
 	if (!name) return
 	const project = await act<Project>('/api/v1/projects', { method: 'POST', body: { name } })
 	if (!project) return
-	queryCache.setQueryData(projectsQuery.key, list => [project, ...(list ?? [])])
+	queryCache.setQueryData(projectsQuery.key, list => [{ ...project, role: 'owner' as const }, ...(list ?? [])])
 	await navigateTo(`/projects/${project.id}`)
 }
 
@@ -38,17 +40,31 @@ async function rename(project: Project) {
 }
 
 async function remove(project: Project) {
-	const confirmed = await confirm.open({ title: 'Delete project', description: `“${project.name}” and every file, note and folder in it are deleted.`, color: 'error' }).result
-	if (!confirmed) return
+	const ownChats = await deleteModal.open({ projectId: project.id, name: project.name }).result
+	if (!ownChats) return
 	const before = projects.value
 	queryCache.setQueryData(projectsQuery.key, before.filter(entry => entry.id !== project.id))
-	if (!await act(`/api/v1/projects/${project.id}`, { method: 'DELETE', success: 'Project deleted' })) queryCache.setQueryData(projectsQuery.key, before)
+	if (!await act(`/api/v1/projects/${project.id}?ownChats=${ownChats}`, { method: 'DELETE', success: 'Project deleted' })) queryCache.setQueryData(projectsQuery.key, before)
+	// The project's chats became ordinary ones, or were deleted.
+	else queryCache.invalidateQueries({ key: chatsQuery.key, exact: true })
 }
 
-const actions = (project: Project): DropdownMenuItem[][] => [
-	[{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => rename(project) }],
-	[{ label: 'Delete', icon: 'i-lucide-trash', color: 'error', onSelect: () => remove(project) }],
-]
+async function leave(project: Project) {
+	const confirmed = await confirm.open({ title: 'Leave project', description: `You leave “${project.name}”. Your chats in it become ordinary chats.`, color: 'error' }).result
+	if (!confirmed || !user.value) return
+	const before = projects.value
+	queryCache.setQueryData(projectsQuery.key, before.filter(entry => entry.id !== project.id))
+	if (!await act(`/api/v1/projects/${project.id}/members/${user.value.id}`, { method: 'DELETE', success: 'You left the project' })) queryCache.setQueryData(projectsQuery.key, before)
+	else queryCache.invalidateQueries({ key: chatsQuery.key, exact: true })
+}
+
+const ROLE_LABELS = { owner: 'Owner', editor: 'Editor', member: 'Member', viewer: 'Viewer' } as const
+const actions = (project: Project): DropdownMenuItem[][] => project.role === 'owner'
+	? [
+			[{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => rename(project) }],
+			[{ label: 'Delete', icon: 'i-lucide-trash', color: 'error', onSelect: () => remove(project) }],
+		]
+	: [[{ label: 'Leave project', icon: 'i-lucide-log-out', color: 'error', onSelect: () => leave(project) }]]
 </script>
 
 <template>
@@ -91,7 +107,10 @@ const actions = (project: Project): DropdownMenuItem[][] => [
 						<p v-if="project.description" class="text-sm text-muted line-clamp-2">
 							{{ project.description }}
 						</p>
-						<span class="text-xs text-dimmed mt-auto">Created {{ formatDistanceToNow(new Date(project.createdAt), { addSuffix: true }) }}</span>
+						<div class="flex items-center gap-2 mt-auto">
+							<span class="text-xs text-dimmed">Created {{ formatDistanceToNow(new Date(project.createdAt), { addSuffix: true }) }}</span>
+							<UBadge v-if="project.role !== 'owner'" :label="`Shared · ${ROLE_LABELS[project.role]}`" color="neutral" variant="subtle" size="sm" class="ms-auto" />
+						</div>
 					</li>
 				</ul>
 			</div>

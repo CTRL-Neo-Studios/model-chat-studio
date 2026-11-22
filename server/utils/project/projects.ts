@@ -5,6 +5,7 @@ import { z } from 'zod'
 import * as tables from '../../db/schema'
 import type { Db } from '../core/settings'
 import { assertFolderParent } from '../chat/folders'
+import type { ProjectRole } from '../../../shared/abilities/projectAbilities'
 
 export const projectNameSchema = z.string().trim().min(1).max(100)
 export const projectDescriptionSchema = z.string().trim().max(2000)
@@ -17,19 +18,38 @@ export const tagsSchema = z.array(z.string().trim().min(1).max(50)).max(20).tran
 
 export const noteContentSchema = z.string().max(200_000)
 
-/** A project, or `undefined`; ids that are not UUIDs find nothing. */
-export async function findProject(db: Db, id: string | undefined) {
-	if (!z.uuid().safeParse(id).success) return undefined
-	const [project] = await db.select().from(tables.project).where(eq(tables.project.id, id!))
-	return project
+/** The people a project is shared with, by id, with their role. */
+export async function projectMembers(db: Db, projectId: string): Promise<Record<string, ProjectRole>> {
+	const rows = await db.select({ userId: tables.projectMember.userId, role: tables.projectMember.role }).from(tables.projectMember)
+		.where(eq(tables.projectMember.projectId, projectId))
+	return Object.fromEntries(rows.map(row => [row.userId, row.role]))
 }
 
-/** The project whose file space holds an upload, or `undefined` for a chat attachment. */
+/** A project with the people it is shared with (`members`), or `undefined`; ids that are not UUIDs find nothing. */
+export async function findProject(db: Db, id: string | null | undefined) {
+	if (!z.uuid().safeParse(id).success) return undefined
+	const [[project], members] = await Promise.all([
+		db.select().from(tables.project).where(eq(tables.project.id, id!)),
+		projectMembers(db, id!),
+	])
+	return project && { ...project, members }
+}
+
+/** The project whose file space holds an upload, with its people, or `undefined` for a chat attachment. */
 export async function findFileProject(db: Db, fileId: string) {
-	const [row] = await db.select({ project: tables.project }).from(tables.projectEntry)
-		.innerJoin(tables.project, eq(tables.project.id, tables.projectEntry.projectId))
-		.where(eq(tables.projectEntry.fileId, fileId))
-	return row?.project
+	const [row] = await db.select({ id: tables.projectEntry.projectId }).from(tables.projectEntry).where(eq(tables.projectEntry.fileId, fileId))
+	return row ? await findProject(db, row.id) : undefined
+}
+
+/**
+ * When someone leaves a project (or is removed, or it is deleted): their chats in it become ordinary chats, out of the
+ * project's folders, and their folders in the project go. `userId` absent: everyone's.
+ */
+export async function detachProjectChats(db: Db, projectId: string, userId?: string) {
+	const own = (column: typeof tables.chat.userId | typeof tables.chatFolder.userId) => userId ? eq(column, userId) : undefined
+	await db.update(tables.chat).set({ projectId: null, projectVisible: false, contextProfileId: null, folderId: null })
+		.where(and(eq(tables.chat.projectId, projectId), own(tables.chat.userId)))
+	await db.delete(tables.chatFolder).where(and(eq(tables.chatFolder.projectId, projectId), own(tables.chatFolder.userId)))
 }
 
 /** A project's file space as a flat list, folders first, then by name. Note text is left out. */

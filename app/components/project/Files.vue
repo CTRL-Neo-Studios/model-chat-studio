@@ -8,7 +8,11 @@ import { fileAcceptPattern, getFileIcon } from '#shared/utils/file'
  * onto a folder (or onto anything inside one) moves into it, onto the space below the tree to the top level;
  * files dragged in from the computer upload there. "Move to…" does the same from the keyboard.
  */
-const props = defineProps<{ projectId: string }>()
+const props = defineProps<{
+	projectId: string
+	/** Viewers and members: the file space is read, not changed. */
+	readonly?: boolean
+}>()
 /** The open entry's id. */
 const selected = defineModel<string | undefined>('selected')
 
@@ -235,22 +239,24 @@ function onDragEnd() {
 	<div class="flex flex-1 min-h-0">
 		<div
 			class="w-72 shrink-0 flex flex-col gap-1 border-e border-default p-2 overflow-y-auto"
-			@dragstart="onDragStart"
-			@dragover="onDragOver"
-			@drop="onDrop"
+			@dragstart="!readonly && onDragStart($event)"
+			@dragover="!readonly && onDragOver($event)"
+			@drop="!readonly && onDrop($event)"
 			@dragend="onDragEnd"
 		>
 			<div class="flex items-center gap-1 ps-2 h-8">
 				<span class="text-xs font-semibold text-highlighted flex-1">Files</span>
-				<UTooltip text="New folder">
-					<UButton icon="i-lucide-folder-plus" color="neutral" variant="ghost" size="xs" aria-label="New folder" @click="create('folder', targetFolder)" />
-				</UTooltip>
-				<UTooltip text="New note">
-					<UButton icon="i-lucide-notebook-pen" color="neutral" variant="ghost" size="xs" aria-label="New note" @click="create('note', targetFolder)" />
-				</UTooltip>
-				<UTooltip text="Upload files">
-					<UButton icon="i-lucide-upload" color="neutral" variant="ghost" size="xs" aria-label="Upload files" :loading="uploading > 0" @click="pickFiles(targetFolder)" />
-				</UTooltip>
+				<template v-if="!readonly">
+					<UTooltip text="New folder">
+						<UButton icon="i-lucide-folder-plus" color="neutral" variant="ghost" size="xs" aria-label="New folder" @click="create('folder', targetFolder)" />
+					</UTooltip>
+					<UTooltip text="New note">
+						<UButton icon="i-lucide-notebook-pen" color="neutral" variant="ghost" size="xs" aria-label="New note" @click="create('note', targetFolder)" />
+					</UTooltip>
+					<UTooltip text="Upload files">
+						<UButton icon="i-lucide-upload" color="neutral" variant="ghost" size="xs" aria-label="Upload files" :loading="uploading > 0" @click="pickFiles(targetFolder)" />
+					</UTooltip>
+				</template>
 				<input ref="picker" type="file" multiple class="hidden" :accept="fileAcceptPattern({ images: true, pdf: true })" @change="onPicked">
 			</div>
 
@@ -269,13 +275,13 @@ function onDragEnd() {
 				<template #item-label="{ item }">
 					<span
 						:data-drag="item.id"
-						draggable="true"
+						:draggable="!readonly"
 						:class="['truncate flex-1 rounded-sm', over === item.id && 'ring-2 ring-primary']"
 					>{{ item.label }}</span>
 				</template>
 				<template #item-trailing="{ item, ui }">
 					<UIcon v-if="item.children?.length" name="i-lucide-chevron-down" :class="ui.linkTrailingIcon()" />
-					<UDropdownMenu :items="actions(entryOf(item.id)!)" :content="{ align: 'end' }">
+					<UDropdownMenu v-if="!readonly" :items="actions(entryOf(item.id)!)" :content="{ align: 'end' }">
 						<UButton
 							icon="i-lucide-ellipsis"
 							color="neutral"
@@ -292,16 +298,20 @@ function onDragEnd() {
 
 			<!-- A click here closes the open entry, so new folders and notes go to the top. -->
 			<div
+				v-if="!readonly"
 				data-drop-root
 				:class="['flex-1 min-h-16 rounded-md flex items-center justify-center p-4 text-xs text-dimmed text-center', over === 'root' && 'ring-2 ring-primary']"
 				@click="selected = undefined"
 			>
 				{{ tree.length ? 'Drop here to move to the top. Click to add at the top.' : 'No files yet. Upload, drop files here, or add a note.' }}
 			</div>
+			<p v-else-if="!tree.length && !isPending" class="p-4 text-xs text-dimmed text-center">
+				No files yet.
+			</p>
 		</div>
 
 		<div class="flex-1 min-w-0 overflow-y-auto">
-			<ProjectEntry v-if="entryOf(selected)" :key="selected" :project-id="projectId" :entry="entryOf(selected)!" />
+			<ProjectEntry v-if="entryOf(selected)" :key="selected" :project-id="projectId" :entry="entryOf(selected)!" :readonly="readonly" />
 			<UEmpty v-else icon="i-lucide-mouse-pointer-click" title="Nothing open" description="Pick a file or a note to see it here." class="h-full" />
 		</div>
 	</div>

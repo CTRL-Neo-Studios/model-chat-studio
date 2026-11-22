@@ -83,6 +83,18 @@ export const projectEntryQuery = defineQueryOptions(({ projectId, entryId }: { p
 	query: () => useRequestFetch()(`/api/v1/projects/${projectId}/entries/${entryId}`),
 }))
 
+/** The project's owner and people, with their roles. */
+export const projectMembersQuery = defineQueryOptions((id: string) => ({
+	key: ['projects', id, 'members'],
+	query: () => useRequestFetch()(`/api/v1/projects/${id}/members`),
+}))
+
+/** Other people's chats in the project that they made visible to it. */
+export const projectChatsQuery = defineQueryOptions((id: string) => ({
+	key: ['projects', id, 'chats'],
+	query: () => useRequestFetch()(`/api/v1/projects/${id}/chats`),
+}))
+
 /** The server caches the platform's catalog for an hour. */
 export const modelsQuery = defineQueryOptions({
 	key: ['models'],

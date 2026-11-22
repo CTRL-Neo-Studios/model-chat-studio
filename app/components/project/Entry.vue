@@ -6,6 +6,8 @@ import { FILE_UPLOAD } from '#shared/utils/file'
 const props = defineProps<{
 	projectId: string
 	entry: { id: string, kind: 'folder' | 'file' | 'note', name: string, tags: string[], fileId: string | null, mediaType: string | null, size: number | null }
+	/** Viewers and members: read, not changed. */
+	readonly?: boolean
 }>()
 
 const act = useApiAction()
@@ -91,7 +93,7 @@ const size = computed(() => {
 			<h2 class="font-semibold text-highlighted truncate">
 				{{ entry.name }}
 			</h2>
-			<span v-if="entry.kind === 'note'" class="text-xs text-muted">{{ unsaved ? 'Saving…' : 'Saved' }}</span>
+			<span v-if="entry.kind === 'note' && !readonly" class="text-xs text-muted">{{ unsaved ? 'Saving…' : 'Saved' }}</span>
 			<span v-else-if="entry.kind === 'file'" class="text-xs text-muted">{{ size }}</span>
 			<UInputTags
 				:model-value="entry.tags"
@@ -105,6 +107,7 @@ const size = computed(() => {
 				variant="subtle"
 				icon="i-lucide-tag"
 				aria-label="Tags"
+				:disabled="readonly"
 				class="ms-auto min-w-56"
 				@update:model-value="saveTags"
 			/>
@@ -116,11 +119,12 @@ const size = computed(() => {
 				v-slot="{ editor }"
 				v-model="text"
 				content-type="markdown"
+				:editable="!readonly"
 				placeholder="Write the note…"
 				:ui="{ base: 'px-6 py-4 min-h-80' }"
 				class="w-full"
 			>
-				<UEditorToolbar :editor="editor" :items="toolbar" class="border-b border-muted px-4 py-1.5 sticky top-0 z-10 bg-default overflow-x-auto" />
+				<UEditorToolbar v-if="!readonly" :editor="editor" :items="toolbar" class="border-b border-muted px-4 py-1.5 sticky top-0 z-10 bg-default overflow-x-auto" />
 			</UEditor>
 			<div v-else class="flex flex-col gap-2 p-6" aria-busy="true" aria-label="Loading the note">
 				<USkeleton v-for="n in 4" :key="n" class="h-5 w-full" />

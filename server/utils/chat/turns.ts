@@ -9,6 +9,7 @@ import * as tables from '../../db/schema'
 import type { MessageMetadata } from '../../../shared/utils/chat'
 import { FILE_URL_PATTERN } from '../../../shared/utils/file'
 import { type Db, getSetting } from '../core/settings'
+import { findProject } from '../project/projects'
 
 const textPartSchema = z.object({ type: z.literal('text'), text: z.string().min(1).max(100_000) })
 /** An attachment uploaded with `PUT /chats/:id/files`; never an arbitrary URL, which the server would fetch. */
@@ -65,7 +66,10 @@ export function fallbackTitle(text: string): string {
 	return clean.length > 60 ? `${clean.slice(0, 59)}…` : clean || 'New chat'
 }
 
-/** A chat with the ids of the people it is shared with. Ids that are not UUIDs find nothing. */
+/**
+ * A chat with the ids of the people it is shared with and, for a project chat, its project with the project's people
+ * (who may read it when it is visible to the project). Ids that are not UUIDs find nothing.
+ */
 export async function findChat(db: Db, id: string | undefined) {
 	if (!z.uuid().safeParse(id).success) return undefined
 	const [[chat], shares] = await Promise.all([
@@ -73,7 +77,8 @@ export async function findChat(db: Db, id: string | undefined) {
 		db.select({ userId: tables.chatShare.userId }).from(tables.chatShare).where(eq(tables.chatShare.chatId, id!)),
 	])
 	if (!chat) return undefined
-	return { ...chat, sharedWith: shares.map(share => share.userId) }
+	const project = chat.projectId ? await findProject(db, chat.projectId) ?? null : null
+	return { ...chat, sharedWith: shares.map(share => share.userId), project }
 }
 
 /** The people a chat is shared with, as the share dialog shows them. */

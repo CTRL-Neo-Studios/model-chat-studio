@@ -22,9 +22,11 @@ const bodySchema = z.object({
 	temporary: z.literal(false),
 	/** Project chats: a context profile of the owner's (or an instance one) instead of the project's; `null`: the project's. */
 	contextProfileId: z.uuid().nullable(),
+	/** Project chats: everyone in the project may read it. */
+	projectVisible: z.boolean(),
 }).partial().strict()
 
-/** Owner only: title, link access, people, folder, keeping a temporary chat, context profile, and the settings shared by every lane. */
+/** Owner only: title, link access, people, folder, keeping a temporary chat, project settings, and the settings shared by every lane. */
 export default defineEventHandler(async (event) => {
 	const chat = await requireChat(event, 'manageChat')
 	const { sharedWith, ...fields } = await readValidatedBody(event, bodySchema)
@@ -41,7 +43,7 @@ export default defineEventHandler(async (event) => {
 		))
 		if (!folder) throw createError({ status: 404, statusText: 'Folder not found' })
 	}
-	if (fields.contextProfileId !== undefined && !chat.projectId) throw createError({ status: 400, statusText: 'Context profiles are used in project chats' })
+	if ((fields.contextProfileId !== undefined || fields.projectVisible !== undefined) && !chat.projectId) throw createError({ status: 400, statusText: 'Only project chats have this' })
 	if (fields.contextProfileId) await authorize(event, profileAbilities().readProfile, await findContextProfile(db, fields.contextProfileId))
 	if (chat.temporary && fields.temporary === false && !chat.title && !fields.title) {
 		const [first] = await db.select({ parts: schema.message.parts }).from(schema.message)

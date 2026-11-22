@@ -55,6 +55,13 @@ async function editDefault() {
 	const saved = await act<typeof profile>(`/api/v1/context-profiles/${profile.id}`, { method: 'PATCH', body: { ...draft }, success: 'Profile saved' })
 	if (saved) queryCache.setQueryData(contextProfilesQuery.key, (profileList.value ?? []).map(entry => entry.id === saved.id ? saved : entry))
 }
+
+// What the visitor may do here (the access table, plan section 5); the server checks every change again.
+const isProjectOwner = computed(() => project.value?.role === 'owner')
+const canStartChats = computed(() => project.value?.role !== 'viewer')
+const canEditFiles = computed(() => project.value?.role === 'owner' || project.value?.role === 'editor')
+const { data: sharedChatList } = useQuery(() => projectChatsQuery(projectId))
+const sharedChats = computed(() => sharedChatList.value ?? [])
 </script>
 
 <template>
@@ -66,6 +73,7 @@ async function editDefault() {
 					<UButton icon="i-lucide-arrow-left" color="neutral" variant="ghost" to="/projects" aria-label="All projects" />
 				</template>
 				<template #right>
+					<ProjectPeople v-if="project" :project-id="projectId" :can-manage="isProjectOwner" />
 					<UTabs v-if="project" v-model="tab" :items="tabs" :content="false" size="sm" />
 				</template>
 			</UDashboardNavbar>
@@ -76,8 +84,8 @@ async function editDefault() {
 			<template v-else-if="project">
 				<div v-if="tab === 'chats'" class="w-full max-w-2xl mx-auto flex flex-col gap-4 p-4 sm:p-6">
 					<div class="flex flex-wrap items-end gap-3">
-						<UButton icon="i-lucide-circle-plus" label="New chat in this project" :to="{ path: '/', query: { project: projectId } }" />
-						<UFormField label="Context profile" help="Used by the project's chats unless one picks its own." class="ms-auto min-w-56">
+						<UButton v-if="canStartChats" icon="i-lucide-circle-plus" label="New chat in this project" :to="{ path: '/', query: { project: projectId } }" />
+						<UFormField v-if="isProjectOwner" label="Context profile" help="Used by the project's chats unless one picks its own." class="ms-auto min-w-56">
 							<div class="flex items-center gap-1">
 								<USelect v-model="profileChoice" :items="profileItems" size="sm" class="flex-1" />
 								<UTooltip v-if="defaultProfile && (defaultProfile.ownerId !== null || isAdmin)" text="Edit this profile">
@@ -85,11 +93,32 @@ async function editDefault() {
 								</UTooltip>
 							</div>
 						</UFormField>
+						<p v-else-if="project.contextProfileName" class="ms-auto text-sm text-muted">
+							Context profile: {{ project.contextProfileName }}
+						</p>
 					</div>
-					<UEmpty v-if="!chats.length" icon="i-lucide-messages-square" title="No chats yet" description="Chats started here can name the project's files and notes with “@”." />
-					<SidebarChats :chats="chats" :project-id="projectId" />
+					<template v-if="canStartChats">
+						<UEmpty v-if="!chats.length" icon="i-lucide-messages-square" title="No chats yet" description="Chats started here can name the project's files and notes with “@”." />
+						<SidebarChats :chats="chats" :project-id="projectId" />
+					</template>
+					<!-- Other people's chats that they made visible to the project: read only. -->
+					<section v-if="sharedChats.length" class="flex flex-col gap-1">
+						<h2 class="ps-2.5 text-xs font-semibold text-highlighted">
+							Shared in this project
+						</h2>
+						<NuxtLink
+							v-for="chat in sharedChats"
+							:key="chat.id"
+							:to="`/chat/${chat.id}`"
+							class="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm hover:bg-elevated/50"
+						>
+							<span class="truncate flex-1" :class="!chat.title && 'text-muted'">{{ chat.title || 'Untitled' }}</span>
+							<span class="text-xs text-muted shrink-0">{{ chat.author.name || chat.author.username }}</span>
+						</NuxtLink>
+					</section>
+					<UEmpty v-else-if="!canStartChats" icon="i-lucide-messages-square" title="No shared chats yet" description="Chats appear here when their authors make them visible to the project." />
 				</div>
-				<ProjectFiles v-else v-model:selected="selected" :project-id="projectId" />
+				<ProjectFiles v-else v-model:selected="selected" :project-id="projectId" :readonly="!canEditFiles" />
 			</template>
 			<div v-else class="flex flex-col gap-2 p-4 w-72" aria-busy="true" aria-label="Loading the project">
 				<USkeleton v-for="n in 5" :key="n" class="h-7 w-full" />

@@ -29,7 +29,8 @@ const title = computed(() => data.value?.title ?? null)
 const temporary = computed(() => data.value?.temporary ?? false)
 // A project chat: its badge links to the project, and "@" in the prompt names the project's files, notes and folders.
 const projectId = computed(() => data.value?.projectId ?? null)
-const { data: project } = useQuery(() => ({ ...projectQuery(projectId.value ?? ''), enabled: !!projectId.value && isOwner.value }))
+const project = computed(() => data.value?.project ?? null)
+const projectVisible = ref(data.value?.projectVisible ?? false)
 const { items: mentions, partsFor } = useProjectMentions(() => isOwner.value ? projectId.value : null)
 const references = ref<string[]>([])
 /** The chat's own context profile, or `null` for the project's; shown at once, undone if the server refuses. */
@@ -289,15 +290,17 @@ onMounted(() => {
 					<ChatModelsMenu v-if="isOwner" :chat-lanes="chatLanes" />
 				</template>
 
+				<!-- "Part of project X": a link for people in the project; a label for someone reading by link or share. -->
 				<UButton
 					v-if="project"
-					:to="`/projects/${project.id}`"
+					:to="project.inProject ? `/projects/${project.id}` : undefined"
 					:label="project.name"
 					icon="i-lucide-folder-kanban"
 					color="neutral"
 					variant="subtle"
 					size="xs"
 					class="max-w-48"
+					:class="!project.inProject && 'pointer-events-none'"
 					:ui="{ label: 'truncate' }"
 					:aria-label="`Part of the project ${project.name}`"
 				/>
@@ -312,7 +315,9 @@ onMounted(() => {
 					v-else-if="isOwner"
 					v-model:visibility="visibility"
 					v-model:shared-with="sharedWith"
+					v-model:project-visible="projectVisible"
 					:chat-id="chatId"
+					:project-name="project?.name"
 				/>
 			</Navbar>
 		</template>
