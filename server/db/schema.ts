@@ -139,6 +139,8 @@ export const chat = pgTable("chat", {
 	userCharacterId: uuid().references((): AnyPgColumn => character.id, { onDelete: "set null" }),
 	/** `separate`: each lane answers alone and sees only its own answers. `group`: one shared thread, lanes answer in turn. Set at creation. */
 	mode: text({ enum: ["separate", "group"] }).notNull().default("separate"),
+	/** The tip of the branch shown: its last user message. `null` reads as the newest user message. */
+	leafId: text().references((): AnyPgColumn => message.id, { onDelete: "set null" }),
 
 	...createdUpdatedAtColumns
 }, (t) => [
@@ -203,6 +205,10 @@ export const message = pgTable("message", {
 	/** Insertion order. `createdAt` is not precise enough to order messages. */
 	seq: integer().generatedAlwaysAsIdentity(),
 	chatId: uuid().notNull().references(() => chat.id, { onDelete: "cascade" }),
+	/**
+	 * An answer's user message. A user message's or summary's: the user message before it on its branch (none for the
+	 * first); user messages with the same parent are the branches at that point.
+	 */
 	parentId: text().references((): AnyPgColumn => message.id, { onDelete: "set null" }),
 	role: text({ enum: ["user", "assistant", "system"] }).notNull(),
 	parts: jsonb().$type<UIMessage['parts']>().notNull(),

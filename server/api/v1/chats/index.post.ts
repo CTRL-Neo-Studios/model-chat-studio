@@ -1,5 +1,6 @@
 import { createError, defineEventHandler, readValidatedBody } from 'nuxt/server'
 import { db, schema } from 'hub:db'
+import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { chatSettingsSchema, newLaneSchema } from '#shared/utils/chat'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
@@ -74,12 +75,14 @@ export default defineEventHandler(async (event) => {
 			? await tx.insert(schema.message).values({ id: message.id, chatId: id, role: 'user', parts: message.parts }).onConflictDoNothing().returning()
 			: []
 		if (!chat || !saved) throw createError({ status: 409, statusText: 'This id is already in use' })
+		// The first message is the tip; the chat row comes first, so it is set once the message exists.
+		await tx.update(schema.chat).set({ leafId: saved.id }).where(eq(schema.chat.id, id))
 		await tx.insert(schema.chatModel).values(lanes)
 		// Attach order is `createdAt`; one statement would give every row the same time.
 		const now = Date.now()
 		if (libraryIds.length) await tx.insert(schema.chatLibrary).values(libraryIds.map((libraryId, index) => ({ chatId: id, libraryId, createdAt: new Date(now + index) })))
 		await attachFiles(tx, id, saved.id, message.parts)
 		const { userId: _, ...view } = chat
-		return view
+		return { ...view, leafId: saved.id }
 	})
 })

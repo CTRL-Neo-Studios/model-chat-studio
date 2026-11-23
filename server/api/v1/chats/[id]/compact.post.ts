@@ -11,7 +11,8 @@ import { resolveAttachments } from '#server/utils/chat/files'
 import { expandReferences } from '#server/utils/library/references'
 import { chatLibraries } from '#server/utils/library/libraries'
 import { listChatModels } from '#server/utils/chat/lanes'
-import { assertWithinBudget, listChatMessages, monthlyBudgetStatus } from '#server/utils/chat/turns'
+import { assertWithinBudget, chatTip, listChatMessages, monthlyBudgetStatus } from '#server/utils/chat/turns'
+import { shownThread } from '#server/utils/chat/thread'
 import { getCatalog, getPriceOverride, useInference } from '#server/utils/inference'
 import { groupThread } from '#server/utils/chat/group'
 import { charactersById } from '#server/utils/chat/characters'
@@ -22,10 +23,10 @@ const COMPACT_INSTRUCTIONS = `You write a summary of a conversation for yourself
 - Plain prose or short lists, no preamble, in the conversation's language`
 
 /**
- * `/compact`: each answering lane summarises its own thread with its own model. The summary is stored as a `system`
- * message of that lane; from then on the lane is sent the summary and what follows it. In a group chat the first lane
- * summarises the shared thread once, and every lane reads that summary. Summarised messages stay in the chat,
- * readable, above a divider. Billed as `compact`.
+ * `/compact`: each answering lane summarises its own thread with its own model, on the branch shown. The summary is
+ * stored as a `system` message of that lane after the branch's tip; from then on the lane is sent the summary and what
+ * follows it. In a group chat the first lane summarises the shared thread once, and every lane reads that summary.
+ * Summarised messages stay in the chat, readable, above a divider. Billed as `compact`.
  */
 export default defineEventHandler(async (event) => {
 	const [chat, { values: settings }] = await Promise.all([requireChat(event, 'manageChat'), getInstanceSettings(db)])
@@ -43,10 +44,13 @@ export default defineEventHandler(async (event) => {
 	const group = chat.mode === 'group'
 	const answering = lanes.filter(lane => lane.enabled).slice(0, settings.maxChatModels)
 	const userName = (chat.userCharacterId && (await charactersById(db, [chat.userCharacterId]))[chat.userCharacterId]?.name) || user.name || user.username
+	// The branch shown; a summary belongs to its tip, so a branch that leaves earlier does not get it.
+	const tip = await chatTip(db, chat.id)
 	const results = await Promise.allSettled((group ? answering.slice(0, 1) : answering).map(async (lane) => {
+		const shown = shownThread(await listChatMessages(db, chat.id, group ? undefined : lane.id), tip)
 		const thread = group
-			? groupThread(await listChatMessages(db, chat.id) as UIMessage<MessageMetadata>[], { laneId: lane.id, userName })
-			: await listChatMessages(db, chat.id, lane.id) as UIMessage[]
+			? groupThread(shown as UIMessage<MessageMetadata>[], { laneId: lane.id, userName })
+			: shown as UIMessage[]
 		const context = buildContext({ thread, systemPrompt: lane.systemPrompt, webSearch: false, memoryLength: null })
 		// Nothing new since the lane's last summary.
 		if (!context.blocks.some(block => block.kind === 'message')) return null
@@ -76,7 +80,7 @@ export default defineEventHandler(async (event) => {
 		if (!text) throw new Error('The model returned an empty summary')
 		const metadata: MessageMetadata = { kind: 'summary', platform: platform.id, model: model.id, lane: { name: lane.name ?? model.name, color: lane.color }, ...usage }
 		const [summary] = await db.insert(schema.message)
-			.values({ id: generateId(), chatId: chat.id, role: 'system', parts: [{ type: 'text', text }], chatModelId: lane.id, metadata })
+			.values({ id: generateId(), chatId: chat.id, role: 'system', parts: [{ type: 'text', text }], chatModelId: lane.id, metadata, parentId: tip })
 			.returning({ id: schema.message.id, role: schema.message.role, parts: schema.message.parts, metadata: schema.message.metadata, chatModelId: schema.message.chatModelId, parentId: schema.message.parentId, createdAt: schema.message.createdAt })
 		return summary!
 	}))

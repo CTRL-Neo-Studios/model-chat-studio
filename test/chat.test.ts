@@ -7,6 +7,7 @@ import { authorize } from '../server/utils/core/authorize'
 import { setSetting } from '../server/utils/core/settings'
 import { answerAttempt, applyTurnTrigger, deleteMessage, editMessage, listAnswerVersions, listChatMessages, monthlyBudgetStatus, saveAnswer, showVersion, type TurnRequest } from '../server/utils/chat/turns'
 import { assertLaneLimit, countEnabledLanes } from '../server/utils/chat/lanes'
+import { shownThread } from '../server/utils/chat/thread'
 import { createTestDb, type TestDb } from './db'
 
 let db: TestDb
@@ -46,12 +47,12 @@ test('messages come back in the order they were saved, whatever their ids or tim
 	expect(await ids()).toEqual(['z', 'a', 'm'])
 })
 
-test('a new message is saved and answered; it follows the previous message', async () => {
+test('a new message is saved and answered; it follows the user message before it', async () => {
 	expect(await applyTurnTrigger(db, chatId, say('u1'))).toBe('u1')
 	await answer('a1', 'u1')
 	expect(await applyTurnTrigger(db, chatId, say('u2'))).toBe('u2')
 	const [saved] = await db.select().from(schema.message).where(eq(schema.message.id, 'u2'))
-	expect(saved?.parentId).toBe('a1')
+	expect(saved?.parentId).toBe('u1')
 	expect(await ids()).toEqual(['u1', 'a1', 'u2'])
 })
 
@@ -251,6 +252,68 @@ test('deleting removes an answer alone, or a user message with its answers', asy
 	expect(await ids()).toEqual(['u2', 'a2'])
 	const [other] = await db.insert(schema.chat).values({ userId }).returning()
 	await expect(deleteMessage(db, other!.id, 'u2')).rejects.toMatchObject({ status: 404 })
+})
+
+const tip = async () => (await db.select({ leafId: schema.chat.leafId }).from(schema.chat).where(eq(schema.chat.id, chatId)))[0]!.leafId
+const parentOf = async (id: string) => (await db.select({ parentId: schema.message.parentId }).from(schema.message).where(eq(schema.message.id, id)))[0]?.parentId
+/** A branch at `parentId`, as "Save and resend" will make it, shown. */
+async function branch(id: string, parentId: string, parts: UIMessage['parts'] = [{ type: 'text', text: id }]) {
+	await db.insert(schema.message).values({ id, chatId, role: 'user', parts: parts as never, parentId })
+	await db.update(schema.chat).set({ leafId: id }).where(eq(schema.chat.id, chatId))
+}
+const shown = async () => shownThread(await listChatMessages(db, chatId), await tip()).map(message => message.id)
+
+test('a message follows the tip and becomes it; a lane joins only the tip; a regenerate without a target answers the tip', async () => {
+	await applyTurnTrigger(db, chatId, say('u1'))
+	await answer('a1', 'u1')
+	await applyTurnTrigger(db, chatId, say('u2'))
+	await branch('u2b', 'u1')
+	await applyTurnTrigger(db, chatId, say('u3'))
+	expect([await parentOf('u3'), await tip()]).toEqual(['u2b', 'u3'])
+	expect(await shown()).toEqual(['u1', 'a1', 'u2b', 'u3'])
+	expect(await applyTurnTrigger(db, chatId, regenerate())).toBe('u3')
+	// u2 is on the other branch: not the tip, so not joined.
+	await expect(applyTurnTrigger(db, chatId, say('u2', 'u2', laneB))).rejects.toMatchObject({ status: 409 })
+	expect(await applyTurnTrigger(db, chatId, say('u3', 'u3', laneB))).toBe('u3')
+})
+
+test('deleting a user message in the middle moves what followed up to its parent; deleting the tip moves the tip up', async () => {
+	for (const n of [1, 2, 3]) {
+		await applyTurnTrigger(db, chatId, say(`u${n}`))
+		await answer(`a${n}`, `u${n}`)
+	}
+	await deleteMessage(db, chatId, 'u2')
+	expect([await parentOf('u3'), await tip()]).toEqual(['u1', 'u3'])
+	expect(await shown()).toEqual(['u1', 'a1', 'u3', 'a3'])
+	await deleteMessage(db, chatId, 'u3')
+	expect(await tip()).toBe('u1')
+	expect(await shown()).toEqual(['u1', 'a1'])
+})
+
+test('"Save and resend" drops what followed on that message\'s branches only, and makes it the tip', async () => {
+	for (const n of [1, 2, 3]) {
+		await applyTurnTrigger(db, chatId, say(`u${n}`))
+		await answer(`a${n}`, `u${n}`)
+	}
+	await branch('u2b', 'u1')
+	await applyTurnTrigger(db, chatId, say('u3b'))
+	await editMessage(db, chatId, 'u2', { text: 'again', dropAfter: true })
+	expect(await ids()).toEqual(['u1', 'a1', 'u2', 'u2b', 'u3b'])
+	expect(await tip()).toBe('u2')
+	expect(await shown()).toEqual(['u1', 'a1', 'u2'])
+})
+
+test('an attachment stays while another message of the chat still names it', async () => {
+	const [file] = await db.insert(schema.file).values({ ownerId: userId, chatId, blobPath: 'x', mediaType: 'image/png', size: 1 }).returning()
+	const parts: UIMessage['parts'] = [{ type: 'text', text: 'see' }, { type: 'file', mediaType: 'image/png', url: `/api/v1/files/${file!.id}` }]
+	await applyTurnTrigger(db, chatId, { trigger: 'submit-message', message: { id: 'u1', role: 'user', parts: parts as never }, chatModelId: laneA })
+	await answer('a1', 'u1')
+	await applyTurnTrigger(db, chatId, say('u2'))
+	await branch('u1b', 'u1', parts)
+	expect((await deleteMessage(db, chatId, 'u1')).removedFileIds).toEqual([])
+	const [linked] = await db.select().from(schema.file).where(eq(schema.file.id, file!.id))
+	expect(linked?.messageId).toBe('u1b')
+	expect((await deleteMessage(db, chatId, 'u1b')).removedFileIds).toEqual([file!.id])
 })
 
 test('attachments link to their message once, only from the chat owner, and are reported when their message is deleted', async () => {

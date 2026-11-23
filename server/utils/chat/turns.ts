@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util'
 import { createError } from 'nuxt/server'
-import { and, asc, desc, eq, gt, gte, inArray, isNull, ne, or, sql, sum } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, isNull, ne, or, sql, sum } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import type { UIMessage } from 'ai'
 import { z } from 'zod'
@@ -109,9 +109,10 @@ const messageColumns = {
 }
 
 /**
- * A chat's messages in reading order: each user message in the order saved, followed by its answers. An
- * answer regenerated later still sits under its question. Of an answer's versions, the one shown. With a lane,
- * only that lane's thread: every user message, and that lane's own answers and summaries.
+ * A chat's messages on every branch, in reading order: each user message in the order saved, followed by its
+ * answers. An answer regenerated later still sits under its question. Of an answer's versions, the one shown. With
+ * a lane, only that lane's messages: every user message, and that lane's own answers and summaries. `shownThread`
+ * picks one branch.
  */
 export async function listChatMessages(db: Db, chatId: string, chatModelId?: string) {
 	return await db.select(messageColumns).from(tables.message)
@@ -126,60 +127,65 @@ export async function listChatMessages(db: Db, chatId: string, chatModelId?: str
 
 /**
  * Whether a lane's request for an existing user message joins it: the message is in this chat, it is the
- * chat's newest user message, it arrives unchanged, and this lane has not answered it yet.
+ * chat's tip, it arrives unchanged, and this lane has not answered it yet.
  */
 async function joinsMessage(db: Db, chatId: string, chatModelId: string, id: string, parts: UserMessageParts) {
-	const [[stored], later, answered] = await Promise.all([
+	const [[stored], tip, answered] = await Promise.all([
 		db.select({ chatId: tables.message.chatId, role: tables.message.role, parts: tables.message.parts }).from(tables.message).where(eq(tables.message.id, id)),
-		db.select({ id: tables.message.id }).from(tables.message).where(and(
-			eq(tables.message.chatId, chatId),
-			eq(tables.message.role, 'user'),
-			gt(tables.message.seq, db.select({ seq: tables.message.seq }).from(tables.message).where(eq(tables.message.id, id))),
-		)).limit(1),
+		chatTip(db, chatId),
 		db.select({ id: tables.message.id }).from(tables.message).where(and(
 			eq(tables.message.chatModelId, chatModelId),
 			eq(tables.message.parentId, id),
 		)).limit(1),
 	])
-	return stored?.chatId === chatId && stored.role === 'user' && isDeepStrictEqual(stored.parts, parts) && !later.length && !answered.length
+	return stored?.chatId === chatId && stored.role === 'user' && isDeepStrictEqual(stored.parts, parts) && tip === id && !answered.length
+}
+
+/** The tip of the branch shown: the chat's `leafId`, else its newest user message; `null` before any. */
+export async function chatTip(db: Db, chatId: string, lock = false) {
+	const query = db.select({ leafId: tables.chat.leafId }).from(tables.chat).where(eq(tables.chat.id, chatId))
+	const [chat] = lock ? await query.for('update') : await query
+	if (chat?.leafId) return chat.leafId
+	const [newest] = await db.select({ id: tables.message.id }).from(tables.message)
+		.where(and(eq(tables.message.chatId, chatId), eq(tables.message.role, 'user')))
+		.orderBy(desc(tables.message.seq)).limit(1)
+	return newest?.id ?? null
 }
 
 /**
  * Applies a turn's trigger before the model is called and returns the user message the answer replies to.
  * Nothing changes yet: the answer becomes the lane's shown version when it is saved (`saveAnswer`), so a failed
  * turn keeps the earlier one.
- * - `submit-message` saves a new message, or joins one that another lane saved for the same send
- *   (`joinsMessage`). Any other existing id is refused; edits are `PATCH /chats/:id/messages/:id`.
+ * - `submit-message` saves a new message after the chat's tip, as the new tip, or joins one that another lane saved
+ *   for the same send (`joinsMessage`). Any other existing id is refused; edits are `PATCH /chats/:id/messages/:id`.
  * - `regenerate-message` answers the target answer's question again, or the target user message, or
- *   without a target the newest user message.
+ *   without a target the tip.
  */
 export async function applyTurnTrigger(db: Db, chatId: string, request: TurnRequest): Promise<string> {
 	if (request.trigger === 'submit-message') {
 		const { id, parts } = request.message
-		const save = async (tx: Db) => {
+		const saved = await db.transaction(async (tx) => {
+			// One send at a time per chat, so the message follows the tip it read and becomes the tip.
+			const parentId = await chatTip(tx, chatId, true)
 			const [saved] = await tx.insert(tables.message)
-				.values({
-					id, chatId, role: 'user', parts,
-					// The chat's newest message, in the same statement.
-					parentId: sql`(select ${tables.message.id} from ${tables.message} where ${tables.message.chatId} = ${chatId} order by ${tables.message.seq} desc limit 1)`,
-				})
+				.values({ id, chatId, role: 'user', parts, parentId })
 				.onConflictDoNothing()
 				.returning({ id: tables.message.id })
-			if (saved) await attachFiles(tx, chatId, saved.id, parts)
+			if (!saved) return undefined
+			await attachFiles(tx, chatId, saved.id, parts)
+			await tx.update(tables.chat).set({ leafId: saved.id }).where(eq(tables.chat.id, chatId))
 			return saved
-		}
-		// Attachments are linked in the same transaction; a text-only message is one statement.
-		const saved = parts.some(part => part.type === 'file') ? await db.transaction(save) : await save(db)
+		})
 		if (saved) return saved.id
 		// Another lane's request saved it first, or the id is taken.
 		if (await joinsMessage(db, chatId, request.chatModelId, id, parts)) return id
 		throw createError({ status: 409, statusText: 'This message id is already in use' })
 	}
 
-	const [target] = request.messageId
-		? await db.select().from(tables.message).where(and(eq(tables.message.id, request.messageId), eq(tables.message.chatId, chatId)))
-		: await db.select().from(tables.message).where(and(eq(tables.message.chatId, chatId), eq(tables.message.role, 'user')))
-				.orderBy(sql`${tables.message.seq} desc`).limit(1)
+	const tip = request.messageId ? undefined : await chatTip(db, chatId)
+	const [target] = request.messageId || tip
+		? await db.select().from(tables.message).where(and(eq(tables.message.id, (request.messageId ?? tip)!), eq(tables.message.chatId, chatId)))
+		: []
 	if (!target) {
 		throw request.messageId
 			? createError({ status: 404, statusText: 'Message not found' })
@@ -232,12 +238,34 @@ export async function saveAnswer(db: Db, answer: { id: string, chatId: string, p
 	})
 }
 
-/** Deletes messages and returns their attachments, which the caller deletes from storage once this has committed. */
-async function deleteMessageRows(db: Db, ids: string[]) {
+/**
+ * Deletes messages and returns their attachments, which the caller deletes from storage once this has committed. A
+ * file another message of the chat still names (a branch made from a message with it) stays, linked to that message.
+ */
+async function deleteMessageRows(db: Db, chatId: string, ids: string[]) {
 	if (!ids.length) return []
 	const files = await db.select({ id: tables.file.id }).from(tables.file).where(inArray(tables.file.messageId, ids))
 	await db.delete(tables.message).where(inArray(tables.message.id, ids))
-	return files.map(file => file.id)
+	const removed: string[] = []
+	for (const file of files) {
+		const [other] = await db.select({ id: tables.message.id }).from(tables.message)
+			.where(and(eq(tables.message.chatId, chatId), sql`${tables.message.parts}::text like ${`%/files/${file.id}%`}`)).limit(1)
+		if (other) await db.update(tables.file).set({ messageId: other.id }).where(eq(tables.file.id, file.id))
+		else removed.push(file.id)
+	}
+	return removed
+}
+
+/** The user messages and summaries after a message on every branch from it. */
+async function descendantsOf(db: Db, chatId: string, messageId: string) {
+	const rows = await db.select({ id: tables.message.id, parentId: tables.message.parentId }).from(tables.message)
+		.where(and(eq(tables.message.chatId, chatId), ne(tables.message.role, 'assistant')))
+	const found: string[] = []
+	for (let level = [messageId]; level.length;) {
+		level = rows.filter(row => row.parentId && level.includes(row.parentId)).map(row => row.id)
+		found.push(...level)
+	}
+	return found
 }
 
 async function findMessage(db: Db, chatId: string, messageId: string) {
@@ -249,8 +277,8 @@ async function findMessage(db: Db, chatId: string, messageId: string) {
 /**
  * Replaces a message's text in place; nothing else changes. A user message is replaced whole, unless it has
  * attachments, which the editor cannot show. An answer keeps its reasoning, sources and tool parts, and is
- * marked edited. `dropAfter` (user messages) also deletes the message's answers and everything after it,
- * so it can be answered again.
+ * marked edited. `dropAfter` (user messages) also deletes the message's answers and everything after it on its
+ * branches, so it can be answered again as the tip.
  *
  * Returns the updated message and the attachments of deleted messages, which the caller deletes from storage.
  */
@@ -284,26 +312,22 @@ export async function editMessage(db: Db, chatId: string, messageId: string, edi
 
 		let removedFileIds: string[] = []
 		if (edit.dropAfter) {
-			const later = await tx.select({ id: tables.message.id }).from(tables.message).where(and(
-				eq(tables.message.chatId, chatId),
-				ne(tables.message.role, 'assistant'),
-				gt(tables.message.seq, message.seq),
-			))
-			const questions = [message.id, ...later.map(row => row.id)]
+			const later = await descendantsOf(tx, chatId, message.id)
 			const answers = await tx.select({ id: tables.message.id }).from(tables.message).where(and(
 				eq(tables.message.role, 'assistant'),
-				inArray(tables.message.parentId, questions),
+				inArray(tables.message.parentId, [message.id, ...later]),
 			))
-			removedFileIds = await deleteMessageRows(tx, [...later, ...answers].map(row => row.id))
+			removedFileIds = await deleteMessageRows(tx, chatId, [...later, ...answers.map(row => row.id)])
+			await tx.update(tables.chat).set({ leafId: message.id }).where(eq(tables.chat.id, chatId))
 		}
 		return { message: updated!, removedFileIds }
 	})
 }
 
 /**
- * Deletes one message: an answer version alone, or a user message with its answers and their versions. Everything
- * else stays. When the deleted answer was the one shown, the lane's newest remaining version is shown (`shown`).
- * Returns the deleted ids and their attachments, which the caller deletes from storage.
+ * Deletes one message: an answer version alone, or a user message with its answers and their versions; what followed
+ * the user message moves up to its parent. When the deleted answer was the one shown, the lane's newest remaining
+ * version is shown (`shown`). Returns the deleted ids and their attachments, which the caller deletes from storage.
  */
 export async function deleteMessage(db: Db, chatId: string, messageId: string) {
 	return await db.transaction(async (tx) => {
@@ -312,8 +336,13 @@ export async function deleteMessage(db: Db, chatId: string, messageId: string) {
 			? await tx.select({ id: tables.message.id }).from(tables.message)
 					.where(and(eq(tables.message.role, 'assistant'), eq(tables.message.parentId, message.id)))
 			: []
+		if (message.role === 'user') {
+			// What followed it on its branches moves up to its parent, and so does the tip.
+			await tx.update(tables.message).set({ parentId: message.parentId }).where(and(eq(tables.message.chatId, chatId), ne(tables.message.role, 'assistant'), eq(tables.message.parentId, message.id)))
+			await tx.update(tables.chat).set({ leafId: message.parentId }).where(and(eq(tables.chat.id, chatId), eq(tables.chat.leafId, message.id)))
+		}
 		const ids = [message.id, ...answers.map(row => row.id)]
-		const removedFileIds = await deleteMessageRows(tx, ids)
+		const removedFileIds = await deleteMessageRows(tx, chatId, ids)
 		const [next] = message.role === 'assistant' && message.active && message.parentId && message.chatModelId
 			? await tx.select({ id: tables.message.id }).from(tables.message)
 					.where(and(eq(tables.message.role, 'assistant'), eq(tables.message.parentId, message.parentId), eq(tables.message.chatModelId, message.chatModelId)))

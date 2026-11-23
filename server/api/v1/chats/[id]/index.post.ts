@@ -23,6 +23,7 @@ import { findStructureProfile } from '#server/utils/chat/structureProfiles'
 import { charactersById, laneLibraries } from '#server/utils/chat/characters'
 import { fillPlaceholders, laneIdentity } from '#shared/utils/character'
 import { groupInstructions, groupThread } from '#server/utils/chat/group'
+import { shownThread, threadTo } from '#server/utils/chat/thread'
 import type { FinishedStep, Pricing } from '#server/utils/inference/types'
 
 const TITLE_INSTRUCTIONS = `Write a title for a chat that starts with the user's message below.
@@ -81,16 +82,16 @@ export default defineEventHandler(async (event) => {
 	const parentId = await applyTurnTrigger(db, chatId, request)
 	const [previousAttempt, thread] = await Promise.all([
 		answerAttempt(db, lane.id, parentId),
-		// A group speaker reads every lane's answers; a separate lane only its own.
-		listChatMessages(db, chatId, group ? undefined : lane.id) as Promise<UIMessage<MessageMetadata>[]>,
+		// Every branch: the one read is picked below. A group speaker reads every lane's answers; a separate lane only its own.
+		listChatMessages(db, chatId, group ? undefined : lane.id) as Promise<(UIMessage<MessageMetadata> & { parentId: string | null, chatModelId: string | null })[]>,
 	])
 	// Each regenerate is one more attempt at the lane's answer to this message; past the admin's cap it is refused.
 	const attempt = previousAttempt + 1
 	if (attempt > maxRegenerations + 1) {
 		throw createError({ status: 429, statusText: `This answer was regenerated ${maxRegenerations === 1 ? 'once' : `${maxRegenerations} times`}, the most allowed.` })
 	}
-	// The thread up to the message being answered: a regenerated answer does not see what came after.
-	const upTo = thread.slice(0, thread.findIndex(message => message.id === parentId) + 1)
+	// The branch up to the message being answered: a regenerated answer does not see what came after, on any branch.
+	const upTo = threadTo(thread, parentId)
 	const firstText = upTo.find(message => message.role === 'user')?.parts.map(part => part.type === 'text' ? part.text : '').join(' ') ?? ''
 
 	// The first enabled lane names the chat, so a chat answered by several lanes is named once.
@@ -138,7 +139,7 @@ export default defineEventHandler(async (event) => {
 	const modelNameOf = (entry: typeof lane) => ((entry.platform === platform.id ? catalog.find(item => item.id === entry.modelId) : undefined) ?? catalog.find(item => item.id === config.defaultModel))?.name ?? 'Model'
 	const others = group ? answering.filter(entry => entry.id !== lane.id).map(entry => identityOf(entry, modelNameOf(entry)).names.char) : []
 	// A group speaker reads the shared thread, the others' answers under their names; otherwise the lane's own thread.
-	const history = group ? groupThread(thread, { laneId: lane.id, questionId: parentId, userName: identity.names.user }) : upTo
+	const history = group ? groupThread(shownThread(thread, parentId), { laneId: lane.id, questionId: parentId, userName: identity.names.user }) : upTo
 	// The chat's libraries, then its Character's (those the chat's owner may read): this lane only.
 	const libraries = await laneLibraries(db, user, (await chatLibraries(db, chatId)).map(({ id, name }) => ({ id, name })), character?.libraryIds ?? [])
 	// The file tools: with libraries, unless turned off, for models that take tools, where the platform allows app tools.

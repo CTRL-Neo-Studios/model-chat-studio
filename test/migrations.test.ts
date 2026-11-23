@@ -68,3 +68,26 @@ test('0014 turns projects into libraries attached to their chats, keeps their fi
 		.toEqual([{ id: u(50), structureProfileId: u(10), folderId: u(40) }, { id: u(51), structureProfileId: u(11), folderId: null }, { id: u(52), structureProfileId: null, folderId: null }])
 	expect((await db.select({ kind: schema.pin.kind }).from(schema.pin)).map(pin => pin.kind).sort()).toEqual(['library', 'structureProfile'])
 })
+
+test('0019 chains each user message and summary to the user message before it, and makes the last one the tip', async () => {
+	const u = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
+	// Before: a user message's parent was the newest message when it was sent (an answer, a summary), a summary had none.
+	const db = await createTestDb({
+		tag: '0019_conversation_tree',
+		seed: client => client.exec(`
+			INSERT INTO "user" ("id", "githubId", "username") VALUES ('${u(1)}', 1, 'u');
+			INSERT INTO "chat" ("id", "userId") VALUES ('${u(2)}', '${u(1)}'), ('${u(3)}', '${u(1)}');
+			INSERT INTO "message" ("id", "chatId", "role", "parts", "parentId") VALUES
+				('u1', '${u(2)}', 'user', '[]', NULL),
+				('a1', '${u(2)}', 'assistant', '[]', 'u1'),
+				('u2', '${u(2)}', 'user', '[]', 'a1'),
+				('s2', '${u(2)}', 'system', '[]', NULL),
+				('u3', '${u(2)}', 'user', '[]', 's2'),
+				('a1x', '${u(2)}', 'assistant', '[]', 'u1');
+		`),
+	})
+	expect(Object.fromEntries((await db.select({ id: schema.message.id, parentId: schema.message.parentId }).from(schema.message)).map(row => [row.id, row.parentId])))
+		.toEqual({ u1: null, a1: 'u1', u2: 'u1', s2: 'u2', u3: 'u2', a1x: 'u1' })
+	expect(await db.select({ id: schema.chat.id, leafId: schema.chat.leafId }).from(schema.chat).orderBy(asc(schema.chat.id)))
+		.toEqual([{ id: u(2), leafId: 'u3' }, { id: u(3), leafId: null }])
+})

@@ -1,6 +1,5 @@
 import { createError, defineEventHandler, readValidatedBody } from 'nuxt/server'
-import { db, schema } from 'hub:db'
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { db } from 'hub:db'
 import { z } from 'zod'
 import { getInstanceSettings } from '#server/utils/core/settings'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
@@ -8,6 +7,8 @@ import { assertRateLimit } from '#server/utils/core/rateLimit'
 import { requireChat } from '#server/utils/chat/access'
 import { listChatModels } from '#server/utils/chat/lanes'
 import { charactersById } from '#server/utils/chat/characters'
+import { listChatMessages } from '#server/utils/chat/turns'
+import { shownThread } from '#server/utils/chat/thread'
 import { decisionRequest, mentionedIds, orderSpeakers, readDecision, requestDecision, type Participant } from '#server/utils/chat/speakers'
 import { getCatalog, platformInference, useInference } from '#server/utils/inference'
 import { laneIdentity } from '#shared/utils/character'
@@ -30,14 +31,13 @@ export default defineEventHandler(async (event) => {
 	const { text, mentions } = await readValidatedBody(event, bodySchema)
 	assertRateLimit(`speakers:${user.id}`, 20, 60_000, 'messages')
 
-	const [lanes, inference, [last]] = await Promise.all([
+	const [lanes, inference, messages] = await Promise.all([
 		listChatModels(db, chat.id),
 		useInference(db, user.id),
-		// The latest round anyone answered; the message being sent is not in it yet, or has no speakers.
-		db.select({ metadata: schema.message.metadata }).from(schema.message)
-			.where(and(eq(schema.message.chatId, chat.id), eq(schema.message.role, 'user'), sql`jsonb_array_length(coalesce(${schema.message.metadata}->'speakers', '[]'::jsonb)) > 0`))
-			.orderBy(desc(schema.message.seq)).limit(1),
+		listChatMessages(db, chat.id),
 	])
+	// The latest round anyone answered on the branch shown; the message being sent is not in it yet, or has no speakers.
+	const last = shownThread(messages, chat.leafId).findLast(message => message.role === 'user' && message.metadata?.speakers?.length)
 	const answering = lanes.filter(lane => lane.enabled).slice(0, settings.maxChatModels)
 	const [characters, catalog] = await Promise.all([
 		charactersById(db, answering.map(lane => lane.characterId)),

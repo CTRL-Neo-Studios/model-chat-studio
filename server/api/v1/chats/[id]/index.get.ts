@@ -5,11 +5,13 @@ import { requireChat } from '#server/utils/chat/access'
 import { listAnswerVersions, listChatMessages, listChatShares } from '#server/utils/chat/turns'
 import { listChatModels } from '#server/utils/chat/lanes'
 import { chatLibraries } from '#server/utils/library/libraries'
+import { shownThread } from '#server/utils/chat/thread'
 
 /**
  * A chat with its lanes and messages, for the owner, the people it is shared with, and anyone when link access is on.
- * It names its libraries, each with the reader's `role` in it: `null` for someone who may not open it. Each answer
- * is the version shown; the owner also gets `versions`, every version's id of the answers that have several.
+ * It names its libraries, each with the reader's `role` in it: `null` for someone who may not open it. The messages
+ * are the branch shown (ending at the chat's tip), each answer the version shown; the owner also gets `versions`,
+ * every version's id of the answers that have several.
  */
 export default defineEventHandler(async (event) => {
 	const { userId, sharedWith: _, ...view } = await requireChat(event, 'readChat')
@@ -24,5 +26,5 @@ export default defineEventHandler(async (event) => {
 		isOwner ? listAnswerVersions(db, view.id) : {} as Record<string, string[]>,
 	])
 	const roleOf = (library: (typeof libraries)[number]) => !reader ? null : library.ownerId === reader ? 'owner' as const : library.members[reader] ?? null
-	return { ...view, isOwner, sharedWith, models, messages, versions, libraries: libraries.map(library => ({ id: library.id, name: library.name, role: roleOf(library) })) }
+	return { ...view, isOwner, sharedWith, models, messages: shownThread(messages, view.leafId), versions, libraries: libraries.map(library => ({ id: library.id, name: library.name, role: roleOf(library) })) }
 })
