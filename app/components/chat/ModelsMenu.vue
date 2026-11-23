@@ -14,7 +14,7 @@ const props = defineProps<{
 /** `group`: the models share one thread and answer in turn. */
 const mode = defineModel<'separate' | 'group'>('mode', { default: 'separate' })
 
-const { lanes, enabledLanes, settings, laneName, laneColor, laneModel, saved, adding } = props.chatLanes
+const { lanes, enabledLanes, settings, laneName, laneColor, laneAvatar, laneModel, saved, adding } = props.chatLanes
 const { models, maxChatModels } = useModels()
 // At the admin's limit, nothing more can be turned on or added until one is turned off.
 const full = computed(() => enabledLanes.value.length >= maxChatModels.value)
@@ -29,6 +29,7 @@ const profiles = computed(() => profileList.value ?? [])
 
 const swatch = (color: Lane['color']) => color ? LANE_COLOR_CLASSES[color] : 'border border-dashed border-accented'
 const swatchOf = (item: object) => 'swatch' in item && typeof item.swatch === 'string' ? item.swatch : ''
+const faceOf = (item: object) => 'face' in item && typeof item.face === 'string' ? item.face : undefined
 const levelLabels: Record<string, string> = { none: 'Off', on: 'On', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' }
 
 async function edit(lane: Lane) {
@@ -67,6 +68,7 @@ const items = computed<DropdownMenuItem[][]>(() => [
 		label: laneName(lane),
 		slot: 'lane' as const,
 		swatch: swatch(laneColor(lane)),
+		face: laneAvatar(lane),
 		class: lane.enabled ? undefined : 'opacity-60',
 		children: [[
 			...(props.answerLast && lane.enabled ? [{ label: 'Answer the last message', icon: 'i-lucide-message-square-reply', onSelect: () => props.answerLast?.(lane) }] : []),
@@ -142,14 +144,18 @@ const label = computed(() => enabledLanes.value.length === 1 ? laneName(enabledL
 	<UDropdownMenu v-model:open="open" :items="items" :content="{ align: 'start' }" :ui="{ content: 'w-60' }">
 		<UButton color="neutral" variant="ghost" trailing-icon="i-lucide-chevron-down" class="data-[state=open]:bg-elevated min-w-0" :ui="{ label: 'truncate' }">
 			<span class="flex -space-x-1 shrink-0">
-				<span v-for="lane in enabledLanes.slice(0, 4)" :key="lane.id" :class="['size-3 rounded-full ring-2 ring-(--ui-bg)', swatch(laneColor(lane))]" />
+				<template v-for="lane in enabledLanes.slice(0, 4)" :key="lane.id">
+					<img v-if="laneAvatar(lane)" :src="laneAvatar(lane)" alt="" class="size-4 rounded-full object-cover ring-2 ring-(--ui-bg)">
+					<span v-else :class="['size-3 rounded-full ring-2 ring-(--ui-bg)', swatch(laneColor(lane))]" />
+				</template>
 			</span>
 			<span class="truncate max-w-48">{{ label }}</span>
 			<UIcon v-if="adding" name="i-lucide-loader-circle" class="size-4 shrink-0 animate-spin text-dimmed" aria-label="Adding a model" />
 		</UButton>
 
 		<template #lane-leading="{ item }">
-			<span :class="['size-3 rounded-full shrink-0 m-0.5', swatchOf(item)]" />
+			<img v-if="faceOf(item)" :src="faceOf(item)" alt="" class="size-4 rounded-full object-cover shrink-0">
+			<span v-else :class="['size-3 rounded-full shrink-0 m-0.5', swatchOf(item)]" />
 		</template>
 	</UDropdownMenu>
 </template>

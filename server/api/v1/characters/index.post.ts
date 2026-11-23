@@ -9,7 +9,7 @@ import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { findCharacter, setCharacterLibraries } from '#server/utils/chat/characters'
 import { findLibrary } from '#server/utils/library/libraries'
 
-const bodySchema = characterFieldsSchema.partial({ color: true, instructions: true, libraryIds: true }).extend({
+const bodySchema = characterFieldsSchema.partial().required({ name: true }).extend({
 	/** Admins: publish it as an instance Character, which every member can use. */
 	instance: z.boolean().optional(),
 }).strict()

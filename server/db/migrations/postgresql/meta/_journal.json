@@ -141,6 +141,13 @@
       "when": 1795409717637,
       "tag": "0019_conversation_tree",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1795451570534,
+      "tag": "0020_character_cards",
+      "breakpoints": true
     }
   ]
 }

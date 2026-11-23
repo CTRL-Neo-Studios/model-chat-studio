@@ -117,7 +117,7 @@ function split(turn: Turn) {
 	const size = (test: (block: ContextBlock, index: number) => boolean) =>
 		turn.blocks.reduce((total, block, index) => total + (test(block, index) ? block.size : 0), 0)
 	return [
-		{ label: 'Instructions', size: size(block => block.kind === 'instructions'), class: 'bg-(--ui-border-accented)' },
+		{ label: 'Instructions and closing note', size: size(block => block.kind === 'instructions' || block.kind === 'note'), class: 'bg-(--ui-border-accented)' },
 		{ label: 'Summary', size: size(block => block.kind === 'summary'), class: 'bg-warning' },
 		{ label: 'Earlier messages', size: size((block, index) => block.kind === 'message' && index < last), class: 'bg-info' },
 		{ label: 'New message', size: size((block, index) => block.kind === 'message' && index === last), class: 'bg-primary' },

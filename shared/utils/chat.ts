@@ -138,9 +138,9 @@ export interface ContextBlock {
 	/**
 	 * `reference`: a library file or note, named with "@" in the message before it or fetched by `autoFetch`, the
 	 * added message of auto-fetched files (or where a structure profile puts them). `profile`: a structure profile's
-	 * message or files block.
+	 * message or files block. `note`: the lane's Character's closing note.
 	 */
-	kind: 'instructions' | 'omitted' | 'summary' | 'message' | 'reference' | 'autoFetch' | 'profile'
+	kind: 'instructions' | 'omitted' | 'summary' | 'message' | 'reference' | 'autoFetch' | 'profile' | 'note'
 	role: 'system' | 'user' | 'assistant'
 	label: string
 	/** Characters of text; attachments are not counted. */

@@ -311,6 +311,19 @@ export const character = pgTable("character", {
 	name: text().notNull(),
 	color: text({ enum: LANE_COLORS }),
 	instructions: text().notNull().default(""),
+	/** An image `file` row without a chat; it goes with the Character. */
+	avatarFileId: uuid().references((): AnyPgColumn => file.id, { onDelete: "set null" }),
+	/** Opening answers of a chat with this Character, the first shown first (milestone 9). */
+	greetings: jsonb().$type<string[]>().notNull().default([]),
+	/** Example dialogue, sent after the instructions. */
+	examples: text().notNull().default(""),
+	/** The closing note, sent after the conversation on every turn (a card's `post_history_instructions`). */
+	note: text().notNull().default(""),
+	/** Shown on the Characters page; never sent to a model. */
+	creatorNotes: text().notNull().default(""),
+	tags: jsonb().$type<string[]>().notNull().default([]),
+	/** An imported card's fields that have no place here, written back on export; `null` for Characters made here. */
+	card: jsonb().$type<Record<string, unknown>>(),
 
 	...createdUpdatedAtColumns
 }, (t) => [
