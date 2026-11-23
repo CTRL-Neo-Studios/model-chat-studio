@@ -4,8 +4,6 @@ import type { MessageMetadata } from '../../../shared/utils/chat'
 
 type StoredMessage = UIMessage<MessageMetadata> & { chatModelId?: string | null, parentId?: string | null }
 
-const textOf = (message: Pick<UIMessage, 'parts'>) => message.parts.map(part => part.type === 'text' ? part.text : '').join('')
-
 /** A message as the speaker reads it: starting with its writer's name. Files and "@" references stay. */
 function labelled(message: StoredMessage, name: string): UIMessage {
 	const first = message.parts.findIndex(part => part.type === 'text')
@@ -15,11 +13,27 @@ function labelled(message: StoredMessage, name: string): UIMessage {
 	return { id: message.id, role: 'user', parts }
 }
 
+/** At most this many characters of one chart's JSON go to the other speakers. */
+export const MAX_SHARED_CHART = 4_000
+
+/**
+ * Another speaker's answer as the others read it: its text, with each chart it drew in place as `[chart]` and the
+ * chart's JSON (title, type, data, series), cut at `MAX_SHARED_CHART` characters. Charts whose call failed are left out.
+ */
+function sharedText(answer: StoredMessage) {
+	return answer.parts.map((part) => {
+		if (part.type === 'text') return part.text
+		if (part.type !== 'tool-chart' || !('state' in part) || part.state !== 'output-available') return ''
+		const json = JSON.stringify(part.input)
+		return `\n\n[chart] ${json.length > MAX_SHARED_CHART ? `${json.slice(0, MAX_SHARED_CHART)}… (cut)` : json}\n\n`
+	}).join('').replace(/\n{3,}/g, '\n\n').trim()
+}
+
 /**
  * A group chat's shared thread as one speaker (`laneId`) sees it: every user message and every answer, each round's
  * answers in speaking order (the user message's `speakers`). The speaker's own answers stay its own; the user's
  * messages and the other speakers' answers become user messages that start with the writer's name, the answers as
- * text only (reasoning and tool calls stay with whoever made them). Summaries pass through.
+ * their text and charts (reasoning and other tool calls stay with whoever made them). Summaries pass through.
  *
  * With `questionId`, the thread ends at that round, holding the speakers before this one: on a regenerate, those
  * before its place in `speakers`; otherwise every answer given so far. Without, the whole thread (for `/compact`).
@@ -48,7 +62,10 @@ export function groupThread(messages: StoredMessage[], { laneId, questionId, use
 			: answers
 		for (const answer of seen) {
 			if (answer.chatModelId === laneId) thread.push(answer)
-			else if (textOf(answer).trim()) thread.push({ id: answer.id, role: 'user', parts: [{ type: 'text', text: `${answer.metadata?.lane?.name ?? 'Another model'}: ${textOf(answer)}` }] })
+			else {
+				const shared = sharedText(answer)
+				if (shared) thread.push({ id: answer.id, role: 'user', parts: [{ type: 'text', text: `${answer.metadata?.lane?.name ?? 'Another model'}: ${shared}` }] })
+			}
 		}
 		if (message.id === questionId) break
 	}

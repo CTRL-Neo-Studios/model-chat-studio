@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import type { UIMessage } from 'ai'
 import type { MessageMetadata } from '../shared/utils/chat'
-import { groupThread } from '../server/utils/chat/group'
+import { MAX_SHARED_CHART, groupThread } from '../server/utils/chat/group'
 
 type Stored = UIMessage<MessageMetadata> & { chatModelId?: string | null, parentId?: string | null }
 
@@ -61,4 +61,34 @@ test('summaries pass through; a message with only files still names its writer; 
 	expect(read(thread)).toEqual(['system Summary so far', 'user Captain: [file]'])
 	// Without a question (for /compact): the whole thread.
 	expect(read(groupThread(chat, { laneId: 'Engineer', userName: 'Captain' })).length).toBe(6)
+})
+
+test('the others\' charts come as JSON in place, cut when long; failed charts and other tools stay out', () => {
+	const chart = (input: object, state = 'output-available') => ({ type: 'tool-chart', toolCallId: 'c', state, input, output: input }) as unknown as Stored['parts'][number]
+	const sales = { title: 'Sales', type: 'bar', xKey: 'month', data: [{ month: 'Jan', total: 3 }], series: [{ key: 'total', name: 'Total', color: '#000' }] }
+	const big = { title: 'Big', data: Array.from({ length: 500 }, (_, day) => ({ day, value: day * 2 })) }
+	const thread = groupThread([
+		user('u1', 'Show sales', ['Engineer', 'Designer']),
+		{
+			...answer('e1', 'u1', 'Engineer', ''),
+			parts: [
+				{ type: 'text', text: 'Here it is.' },
+				chart(sales),
+				chart(big),
+				chart({ title: 'Broken' }, 'output-error'),
+				{ type: 'tool-read_file', toolCallId: 'r', state: 'output-available', input: { path: 'a' }, output: 'secret' } as unknown as Stored['parts'][number],
+				{ type: 'text', text: 'Rising.' },
+			],
+		},
+		// An answer that is only a chart still reaches the others.
+		{ ...answer('d0', 'u1', 'Critic', ''), parts: [chart(sales)] },
+	], { laneId: 'Reviewer', questionId: 'u1', userName: 'Captain' })
+	const [, engineer, critic] = read(thread)
+	expect(engineer).toStartWith(`user Engineer: Here it is.\n\n[chart] ${JSON.stringify(sales)}\n\n[chart] `)
+	expect(engineer).toEndWith('… (cut)\n\nRising.')
+	expect(engineer).toContain(JSON.stringify(big).slice(0, MAX_SHARED_CHART))
+	expect(engineer).not.toContain(JSON.stringify(big))
+	expect(engineer).not.toContain('Broken')
+	expect(engineer).not.toContain('secret')
+	expect(critic).toBe(`user Critic: [chart] ${JSON.stringify(sales)}`)
 })
