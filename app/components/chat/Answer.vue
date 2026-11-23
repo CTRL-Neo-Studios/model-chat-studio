@@ -6,6 +6,8 @@ import type { ChatMessage, PendingAnswer } from '~/composables/useLaneAnswers'
 /** One model's answer to a message: as a card with the model's label when several answer, or plain. */
 const props = defineProps<{
 	label: { name: string, color: LaneColor | null }
+	/** The lane's Character's avatar. */
+	avatar?: string
 	message?: ChatMessage
 	pending?: PendingAnswer
 	card: boolean
@@ -41,8 +43,9 @@ const queued = computed(() => props.pending?.status === 'queued')
 
 <template>
 	<div :class="card ? 'flex flex-col min-w-0 rounded-lg border border-default bg-default' : 'flex flex-col min-w-0'">
-		<div v-if="card" class="flex items-center gap-2 h-10 px-3 border-b border-default">
-			<span :class="['size-2.5 rounded-full shrink-0', label.color ? LANE_COLOR_CLASSES[label.color] : 'border border-dashed border-accented']" />
+		<!-- A single model's answer has a header only when its Character has a face. -->
+		<div v-if="card || avatar" :class="card ? 'flex items-center gap-2 h-10 px-3 border-b border-default' : 'flex items-center gap-2 mb-1'">
+			<LaneDot :color="label.color" :avatar="avatar" :avatar-class="card ? 'size-6' : 'size-7'" />
 			<span class="text-sm font-medium text-highlighted truncate">{{ label.name }}</span>
 			<UButton
 				v-if="(writing || queued) && isOwner"

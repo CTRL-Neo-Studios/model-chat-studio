@@ -89,7 +89,7 @@ const votes = computed(() => votesData.value ?? [])
 const { data: me } = useQuery(() => ({ ...meQuery, enabled: import.meta.client && isOwner.value }))
 
 const chatLanes = useChatLanes(data.value ?? undefined)
-const { lanes, enabledLanes, settings, laneModel, laneName, laneColor } = chatLanes
+const { lanes, enabledLanes, settings, laneModel, laneName, laneColor, laneAvatar } = chatLanes
 const answeringModels = computed(() => enabledLanes.value.flatMap(lane => laneModel(lane) ?? []))
 // "@" in a group chat names the participants first, then the libraries' files.
 const participants = useParticipantMentions(() => group.value ? enabledLanes.value.map(lane => laneName(lane)) : [])
@@ -460,6 +460,7 @@ onMounted(() => {
 									v-for="slot in slotsFor(message.id.slice(8))"
 									:key="slot.key"
 									:label="slot.label"
+									:avatar="slot.lane && laneAvatar(slot.lane)"
 									:message="slot.message"
 									:pending="slot.pending"
 									:card="cards(message.id.slice(8))"

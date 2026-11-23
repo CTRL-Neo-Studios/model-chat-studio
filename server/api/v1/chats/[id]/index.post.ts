@@ -153,7 +153,7 @@ export default defineEventHandler(async (event) => {
 		return entry && { entryId: entry.id, kind: entry.kind }
 	})
 	const built = buildContext({
-		thread: history, systemPrompt: identity.systemPrompt, promptLabel: identity.promptLabel, aboutUser: identity.aboutUser,
+		thread: history, systemPrompt: identity.systemPrompt, promptLabel: identity.promptLabel, examples: identity.examples, closingNote: identity.closingNote, aboutUser: identity.aboutUser,
 		group: group ? groupInstructions({ speaker: identity.names.char, others, user: identity.names.user }) : undefined,
 		webSearch, memoryLength: chat.settings.memoryLength ?? null, fileTools: withFileTools, profile: profileBlocks, resolvePath,
 	})

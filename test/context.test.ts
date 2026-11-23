@@ -119,3 +119,16 @@ test('with nothing to place (a separate chat, no Character), the blocks are left
 	expect(shape(context)).toEqual(['user:u4'])
 	expect(context.blocks.map(block => block.kind)).toEqual(['instructions', 'message'])
 })
+
+test('example dialogue follows the instructions; the closing note follows the conversation, and auto-fetched files go before it', () => {
+	const context = buildContext({ thread: thread.slice(-3), systemPrompt: 'You are Wren.', examples: 'Ana: Hi\nWren: Hello.', closingNote: 'Stay in character.', aboutUser: 'The user is Ana.', webSearch: false, memoryLength: 1 })
+	expect(context.instructions).toBe('You are Wren.\n\nExample dialogue:\nAna: Hi\nWren: Hello.\n\nThe user is Ana.')
+	expect(shape(context)).toEqual(['user:u4', 'user:closing-note'])
+	expect(context.messages.at(-1)?.parts).toEqual([{ type: 'text', text: 'Stay in character.' }])
+	expect(context.autoFetchAt).toBe(1)
+	expect(context.blocks.map(block => `${block.kind}:${block.label}`)).toEqual(['instructions:System prompt + example dialogue + your Character', 'omitted:2 earlier messages left out by memory', 'message:Message', 'note:Closing note'])
+	// A profile with its own auto-fetch place keeps it; the note stays right after the conversation.
+	const placed = buildContext({ thread: thread.slice(-1), systemPrompt: null, closingNote: 'Stay in character.', webSearch: false, memoryLength: null, profile: [{ id: 'h', kind: 'history' }, { id: 'm', kind: 'message', role: 'user', text: 'Profile reminder' }, { id: 'f', kind: 'autoFetch' }] })
+	expect(shape(placed)).toEqual(['user:u4', 'user:closing-note', 'user:profile-m'])
+	expect(placed.autoFetchAt).toBe(3)
+})

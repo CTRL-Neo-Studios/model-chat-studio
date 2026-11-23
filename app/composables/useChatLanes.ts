@@ -1,4 +1,5 @@
 import type { ChatSettings, LaneFields } from '#shared/utils/chat'
+import { characterAvatarUrl } from '#shared/utils/character'
 
 /** A lane: one model answering in a chat. A new chat's lanes are drafts with client-made ids until it is created. */
 export interface Lane extends LaneFields {
@@ -45,6 +46,11 @@ export function useChatLanes(chat?: SavedChat) {
 	const laneCharacter = (lane: Pick<Lane, 'characterId'>) => lane.characterId ? characterList.value?.find(character => character.id === lane.characterId) : undefined
 	const laneName = (lane: Pick<Lane, 'name' | 'modelId' | 'characterId'>) => laneCharacter(lane)?.name ?? lane.name ?? laneModel(lane)?.name ?? lane.modelId ?? 'Default model'
 	const laneColor = (lane: Pick<Lane, 'color' | 'characterId'>) => lane.color ?? laneCharacter(lane)?.color ?? null
+	/** The lane's Character's avatar, if it has one. */
+	const laneAvatar = (lane: Pick<Lane, 'characterId'>) => {
+		const character = laneCharacter(lane)
+		return character && characterAvatarUrl(character)
+	}
 
 	function draft(fields: Partial<Lane>): Lane {
 		return { id: crypto.randomUUID(), profileId: null, position: 0, platform: null, enabled: true, name: null, color: null, modelId: null, systemPrompt: null, params: {}, characterId: null, ...fields }
@@ -132,7 +138,7 @@ export function useChatLanes(chat?: SavedChat) {
 		if (base && !await act(base, { method: 'PATCH', body: { settings: settings.value } })) settings.value = before
 	}
 
-	return { saved: !!chat, lanes, settings, enabledLanes, adding, laneModel, laneName, laneColor, draft, fromProfile, add, duplicate, update, remove, move, applyToProfile, setSettings }
+	return { saved: !!chat, lanes, settings, enabledLanes, adding, laneModel, laneName, laneColor, laneAvatar, draft, fromProfile, add, duplicate, update, remove, move, applyToProfile, setSettings }
 }
 
 export type ChatLanes = ReturnType<typeof useChatLanes>

@@ -1,6 +1,6 @@
 # Roadmap: milestones 7 to 14
 
-Status: milestones 7 and 8 complete with their live runs (2026-11-23); milestone 9's spikes done, 9.1 next. Eight milestones, each with its own plan file. The conventions of milestone 1 (section 2 there) and the way of working so far apply unchanged: spikes first where a plan lists them, one phase per step, a check against a fixture platform for each phase, a live run at the end of each milestone.
+Status: milestones 7 and 8 complete with their live runs (2026-11-23); 9.1 built, 9.2 next. Eight milestones, each with its own plan file. The conventions of milestone 1 (section 2 there) and the way of working so far apply unchanged: spikes first where a plan lists them, one phase per step, a check against a fixture platform for each phase, a live run at the end of each milestone.
 
 ## Order
 
@@ -8,7 +8,7 @@ Status: milestones 7 and 8 complete with their live runs (2026-11-23); milestone
 |---|---|---|---|---|
 | 7 | Folders with a page and fuller defaults; group speakers see each other's charts | `milestone-7-folders.md` | — | 3 |
 | 8 | Branching: versions of an answer, branches of the conversation | `milestone-8-branching.md` | — | spike + 3 |
-| 9 | Character cards: avatar, greetings, examples, lorebooks, import and export | `milestone-9-character-cards.md` | 8.1 (versions, for alternate greetings) | spikes + 4 |
+| 9 | Character cards: avatar, greetings, examples, lorebooks with their options, import and export | `milestone-9-character-cards.md` | 8.1 (versions, for alternate greetings) | spikes + 5 |
 | 10 | Read-aloud and image generation | `milestone-10-read-aloud-images.md` | 7.3 for "speakers see images" | spikes + 4 |
 | 11 | Edit access for people a chat is shared with | `milestone-11-shared-editing.md` | 8.2 (the chat's tip) | 3 |
 | 12 | Export and import of chats | `milestone-12-export-import.md` | 8 to 11, so the file covers branches, versions, images and authors | spike + 4 |
@@ -44,6 +44,6 @@ Everything else about them is in the spikes of milestone 10.
 
 ## Across milestones
 
-- Migrations: two for milestone 8 (versions in 8.1, the tree in 8.2), one each for 9, 11, 13 and 14, numbered from `0018` in the order they are built. Milestones 7, 10 and 12 need none.
+- Migrations: two for milestone 8 (versions in 8.1, the tree in 8.2), two for 9 (the Character in 9.1, lorebooks in 9.4), one each for 11, 13 and 14, numbered from `0018` in the order they are built. Milestones 7, 10 and 12 need none.
 - New usage kinds: `tts`, `image` (10). Usage is always recorded for whoever made the call.
 - `scripts/app-smoke.ts` gains a step per milestone, so each one stays checkable live.

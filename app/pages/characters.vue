@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { DropdownMenuItem } from '@nuxt/ui'
-import type { CharacterFields } from '#shared/utils/character'
+import { type CharacterFields, characterAvatarUrl } from '#shared/utils/character'
 import { LazyCharacterEditor, LazyModalConfirm } from '#components'
 
 useHead({ title: 'Characters' })
@@ -25,26 +25,41 @@ const canEdit = computed(() => tab.value === 'mine' || isAdmin.value)
 
 const editor = overlay.create(LazyCharacterEditor)
 const confirm = overlay.create(LazyModalConfirm)
-const fields = ({ name, color, instructions, libraryIds }: Character): CharacterFields => ({ name, color, instructions, libraryIds })
+const fields = ({ name, color, instructions, libraryIds, greetings, examples, note, creatorNotes, tags }: Character): CharacterFields => ({ name, color, instructions, libraryIds, greetings, examples, note, creatorNotes, tags })
+const blank: CharacterFields = { name: '', color: null, instructions: '', libraryIds: [], greetings: [], examples: '', note: '', creatorNotes: '', tags: [] }
+const store = (saved: Character) => queryCache.setQueryData(charactersQuery.key, characters.value.some(entry => entry.id === saved.id) ? characters.value.map(entry => entry.id === saved.id ? saved : entry) : [...characters.value, saved])
+
+/** Sends an avatar chosen in the editor once the Character exists: a new image, or `null` to remove it. */
+async function sendAvatar(character: Character, avatar: File | null | undefined) {
+	if (avatar === undefined) return
+	const form = new FormData()
+	if (avatar) form.append('file', avatar)
+	const saved = await act<Character>(`/api/v1/characters/${character.id}/avatar`, avatar ? { method: 'PUT', body: form } : { method: 'DELETE' })
+	if (saved) store(saved)
+}
 
 async function create() {
-	const draft = await editor.open({ title: 'New Character', character: { name: '', color: null, instructions: '', libraryIds: [] } }).result
-	if (!draft) return
-	const created = await act<Character>('/api/v1/characters', { method: 'POST', body: { ...draft, instance: tab.value === 'instance' || undefined }, success: 'Character added' })
-	if (created) queryCache.setQueryData(charactersQuery.key, [...characters.value, created])
+	const result = await editor.open({ title: 'New Character', character: blank }).result
+	if (!result) return
+	const created = await act<Character>('/api/v1/characters', { method: 'POST', body: { ...result.fields, instance: tab.value === 'instance' || undefined }, success: 'Character added' })
+	if (!created) return
+	store(created)
+	await sendAvatar(created, result.avatar)
 }
 
 async function edit(character: Character) {
-	const draft = await editor.open({ title: 'Edit Character', character: fields(character) }).result
-	if (!draft) return
-	const saved = await act<Character>(`/api/v1/characters/${character.id}`, { method: 'PATCH', body: draft, success: 'Character saved' })
-	if (saved) queryCache.setQueryData(charactersQuery.key, characters.value.map(entry => entry.id === character.id ? saved : entry))
+	const result = await editor.open({ title: 'Edit Character', character: fields(character), avatar: characterAvatarUrl(character) }).result
+	if (!result) return
+	const saved = await act<Character>(`/api/v1/characters/${character.id}`, { method: 'PATCH', body: result.fields, success: 'Character saved' })
+	if (!saved) return
+	store(saved)
+	await sendAvatar(saved, result.avatar)
 }
 
 async function copy(character: Character, instance: boolean) {
-	// A copy leaves out libraries: the new owner may not read them.
+	// A copy leaves out libraries (the new owner may not read them) and the avatar.
 	const created = await act<Character>('/api/v1/characters', { method: 'POST', body: { ...fields(character), libraryIds: [], instance: instance || undefined }, success: instance ? 'Published for everyone' : 'Copied to your Characters' })
-	if (created) queryCache.setQueryData(charactersQuery.key, [...characters.value, created])
+	if (created) store(created)
 }
 
 async function remove(character: Character) {
@@ -96,7 +111,7 @@ function actions(character: Character): DropdownMenuItem[][] {
 				<ul v-else class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
 					<li v-for="character in shown" :key="character.id" class="flex flex-col gap-2 rounded-md border border-default p-4">
 						<div class="flex items-center gap-2">
-							<span :class="['size-2.5 rounded-full shrink-0', character.color ? LANE_COLOR_CLASSES[character.color] : 'bg-(--ui-border-accented)']" />
+							<LaneDot :color="character.color" :avatar="characterAvatarUrl(character)" avatar-class="size-8" dot-class="size-2.5" />
 							<span class="font-medium text-highlighted truncate flex-1">{{ character.name }}</span>
 							<PinButton kind="character" :target-id="character.id" />
 							<UDropdownMenu :items="actions(character)" :content="{ align: 'end' }">
@@ -106,8 +121,10 @@ function actions(character: Character): DropdownMenuItem[][] {
 						<p class="text-sm text-muted line-clamp-3" :class="!character.instructions && 'italic'">
 							{{ character.instructions || 'No instructions: the default ones apply.' }}
 						</p>
-						<div v-if="character.libraryIds.length" class="mt-auto">
-							<UBadge :label="`${character.libraryIds.length} ${character.libraryIds.length === 1 ? 'library' : 'libraries'}`" icon="i-lucide-library-big" color="neutral" variant="subtle" size="sm" />
+						<div v-if="character.libraryIds.length || character.greetings.length || character.tags.length" class="mt-auto flex flex-wrap gap-1.5">
+							<UBadge v-if="character.greetings.length" :label="`${character.greetings.length} ${character.greetings.length === 1 ? 'greeting' : 'greetings'}`" icon="i-lucide-message-circle" color="neutral" variant="subtle" size="sm" />
+							<UBadge v-if="character.libraryIds.length" :label="`${character.libraryIds.length} ${character.libraryIds.length === 1 ? 'library' : 'libraries'}`" icon="i-lucide-library-big" color="neutral" variant="subtle" size="sm" />
+							<UBadge v-for="tag in character.tags.slice(0, 4)" :key="tag" :label="tag" color="neutral" variant="outline" size="sm" />
 						</div>
 					</li>
 				</ul>

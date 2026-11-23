@@ -22,6 +22,10 @@ interface ContextInput {
 	systemPrompt: string | null
 	/** How the trace names `systemPrompt`: "System prompt", or the Character's name. */
 	promptLabel?: string
+	/** The lane's Character's example dialogue, filled: after the instructions. */
+	examples?: string
+	/** The lane's Character's closing note, filled: a user message after the conversation. */
+	closingNote?: string
 	/** Who the user is (their Character): after the instructions, or where the profile's `userCharacter` block puts it. */
 	aboutUser?: string
 	/** A group chat's paragraph (who the speaker is, who else is here): at the end of the instructions, or where the profile's `participants` block puts it. */
@@ -46,8 +50,12 @@ const PROFILE_FILES_TEXT = 'Files from the library, as the structure profile inc
 
 /**
  * What one lane's answer is given: the instructions, then its thread from the latest summary on, cut to the memory
- * length. Also returns the blocks of that context, in the order sent, for the turn trace.
+ * length, then its Character's closing note. Also returns the blocks of that context, in the order sent, for the
+ * turn trace.
  *
+ * - A Character's example dialogue follows its instructions, under "Example dialogue:".
+ * - The closing note is a user message after the thread (where the profile's `history` block is), on every turn;
+ *   auto-fetched files go before it unless the profile places them.
  * - A summary (role `system`) is sent as a user message: the AI SDK takes system messages only as instructions.
  * - The cut never starts on an answer: an answer whose question was left out is left out too, so the thread
  *   always opens with a user message. This keeps at most one message fewer than asked.
@@ -60,7 +68,7 @@ const PROFILE_FILES_TEXT = 'Files from the library, as the structure profile inc
  *   does not have is left out and named in the trace. Its `autoFetch` block marks where auto-fetched files go:
  *   `autoFetchAt`, and a trace block that says so.
  */
-export function buildContext({ thread, systemPrompt, promptLabel = 'System prompt', aboutUser, group, webSearch, memoryLength, fileTools = false, profile, resolvePath }: ContextInput) {
+export function buildContext({ thread, systemPrompt, promptLabel = 'System prompt', examples, closingNote, aboutUser, group, webSearch, memoryLength, fileTools = false, profile, resolvePath }: ContextInput) {
 	const summaryIndex = thread.findLastIndex(message => message.role === 'system')
 	const summary = summaryIndex >= 0 ? thread[summaryIndex] : undefined
 	let kept = thread.slice(summaryIndex + 1)
@@ -105,8 +113,9 @@ export function buildContext({ thread, systemPrompt, promptLabel = 'System promp
 	const userText = has('userCharacter') ? null : placed.userCharacter
 	const groupText = has('participants') ? null : placed.participants
 	const inInstructions = (kind: keyof typeof placed) => !!placed[kind] && (!has(kind) || head.some(block => block.kind === kind))
-	const instructions = [systemPrompt ?? (profileSystem.length ? null : DEFAULT_INSTRUCTIONS), ...headTexts, userText, webSearch && WEB_SEARCH_INSTRUCTIONS, fileTools && FILE_TOOLS_INSTRUCTIONS, groupText].filter(Boolean).join('\n\n')
-	const instructionsLabel = [systemPrompt ? promptLabel : profileSystem.length ? '' : 'Default instructions', profileSystem.length ? 'structure profile' : '', inInstructions('userCharacter') ? 'your Character' : '', inInstructions('participants') ? 'group chat' : ''].filter(Boolean).join(' + ')
+	const exampleText = examples && `Example dialogue:\n${examples}`
+	const instructions = [systemPrompt ?? (profileSystem.length ? null : DEFAULT_INSTRUCTIONS), exampleText, ...headTexts, userText, webSearch && WEB_SEARCH_INSTRUCTIONS, fileTools && FILE_TOOLS_INSTRUCTIONS, groupText].filter(Boolean).join('\n\n')
+	const instructionsLabel = [systemPrompt ? promptLabel : profileSystem.length ? '' : 'Default instructions', exampleText ? 'example dialogue' : '', profileSystem.length ? 'structure profile' : '', inInstructions('userCharacter') ? 'your Character' : '', inInstructions('participants') ? 'group chat' : ''].filter(Boolean).join(' + ')
 
 	const sent: UIMessage[] = []
 	const trace: ContextBlock[] = [{ kind: 'instructions', role: 'system', label: instructionsLabel.charAt(0).toUpperCase() + instructionsLabel.slice(1), size: instructions.length, text: instructions }]
@@ -115,6 +124,12 @@ export function buildContext({ thread, systemPrompt, promptLabel = 'System promp
 		if (block.kind === 'history') {
 			sent.push(...history.messages)
 			trace.push(...history.blocks)
+			if (closingNote) {
+				// Auto-fetched files go before the note, unless the profile places them.
+				if (!blocks.some(entry => entry.kind === 'autoFetch')) autoFetchAt = sent.length
+				sent.push({ id: 'closing-note', role: 'user', parts: [{ type: 'text', text: closingNote }] })
+				trace.push({ kind: 'note', role: 'user', label: 'Closing note', size: closingNote.length, text: closingNote, messageId: 'closing-note' })
+			}
 		}
 		else if (block.kind === 'autoFetch') {
 			autoFetchAt = sent.length

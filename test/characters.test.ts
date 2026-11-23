@@ -35,3 +35,17 @@ test('a Character with no instructions leaves the default instructions, not the 
 	const identity = laneIdentity({ lane, character: { name: 'Quiet', color: null, instructions: '  ' }, modelName: 'M', userName: 'Ana' })
 	expect(identity.systemPrompt).toBeNull()
 })
+
+test('a Character\'s example dialogue and closing note are filled like its instructions; empty ones are left out', () => {
+	const identity = laneIdentity({
+		lane,
+		character: { name: 'Wren', color: null, instructions: 'You are {{char}}.', examples: '{{user}}: Where to?\n{{char}}: North.', note: 'Stay {{char}}; {{user}} is listening.' },
+		userCharacter: { name: 'Captain', instructions: '' },
+		modelName: 'M',
+		userName: 'Ana',
+	})
+	expect(identity.examples).toBe('Captain: Where to?\nWren: North.')
+	expect(identity.closingNote).toBe('Stay Wren; Captain is listening.')
+	expect(laneIdentity({ lane, character: { name: 'Q', color: null, instructions: '', examples: ' ', note: '' }, modelName: 'M', userName: 'Ana' }))
+		.toMatchObject({ examples: undefined, closingNote: undefined })
+})
