@@ -1,6 +1,6 @@
 # Milestone 8: branching
 
-Status: planned. Part of `roadmap-milestones-7-14.md`. One migration.
+Status: spike I done (2026-11-22); 8.1 next. Part of `roadmap-milestones-7-14.md`. Two migrations (section 3).
 
 Goal: nothing is thrown away when an answer is written again or a message is changed. Two things, with two names:
 
@@ -42,7 +42,7 @@ After:
 |---|---|
 | `chat` | adds `leafId` (FK `message`, set null): the tip of the shown branch. Null reads as the newest user message. |
 | `message` | adds `active` (boolean, default true): on answers, the version shown. A partial unique index keeps one active answer per message and lane. `parentId` on user messages and summaries now means "the user message before it on its branch". |
-| migration `0018` | sets every user message's and summary's `parentId` to the user message saved before it in its chat (today's chats are one branch), and every chat's `leafId` to its last user message. Answers are already one per message and lane, so all stay active. |
+| migrations | 8.1 adds `active` and the index; answers are already one per message and lane, so all stay active. 8.2 adds `leafId`, sets every user message's and summary's `parentId` to the user message saved before it in its chat (today's chats are one branch), and every chat's `leafId` to its last user message. |
 
 Deleting a message moves the messages after it up to its parent in the same transaction; the foreign key's `set null` is only a backstop (it would turn what followed into a branch at the start).
 
@@ -68,13 +68,19 @@ Deleting a message moves the messages after it up to its parent in the same tran
 | # | Work | Done when |
 |---|---|---|
 | 8.P | Spike I, below | the migration and the index hold on both databases |
-| 8.1 | Versions: `active`, regenerate keeps the earlier answers, the version switch and its route, deleting a version, the stop preference | tests for saving, switching and deleting versions and for the cap; fixture: an answer regenerated twice has three versions; with version 1 showing, the next message's request holds version 1's text; a reload shows version 1 |
-| 8.2 | The tree on the server: `leafId`, the migration, `shownThread`, sending and joining by the tip, the turn's thread by path, `/compact`, speakers, overview, deleting with the move up, shared attachments. No change on screen. | tests for the thread picker (path, versions, summaries, a branch that leaves before a summary) and for deleting in the middle; every existing test passes; `scripts/app-smoke.ts` passes against a fixture platform |
+| 8.1 | Versions: `active` and its index (the first migration), regenerate keeps the earlier answers, the version switch and its route, deleting a version, the stop preference | tests for saving, switching and deleting versions and for the cap; fixture: an answer regenerated twice has three versions; with version 1 showing, the next message's request holds version 1's text; a reload shows version 1 |
+| 8.2 | The tree on the server: `leafId`, its migration (the backfill), `shownThread`, sending and joining by the tip, the turn's thread by path, `/compact`, speakers, overview, deleting with the move up, shared attachments. No change on screen. | tests for the thread picker (path, versions, summaries, a branch that leaves before a summary) and for deleting in the middle; every existing test passes; `scripts/app-smoke.ts` passes against a fixture platform |
 | 8.3 | Branches on screen: "Save and resend" branches, the switch on messages, the route that shows a branch, "Delete this branch"; a smoke step; the live run | fixture: turn 2 of a four-turn chat is edited and resent; the chat shows two turns and the request holds turns 1 and the new 2 only; the switch brings the four turns back, and a new message there continues the old branch; a message with an image can be resent. Live on both platforms through `scripts/app-smoke.ts`: versions and a branch |
 
 ## 7. To verify before building
 
 - **Spike I, the migration on real data.** On a copy of the dev database and on PGlite: the `parentId` backfill and the tip, the partial unique index on active answers, and `shownThread` returning every existing chat exactly as `listChatMessages` does today.
+
+Result (2026-11-22, `model-chat-studio-prep/scripts/spikes/m8/`): the dev database had no chats, so `seed.ts` made nine through the app on DeepSeek, one of each shape it can produce: turn 1 regenerated after turn 3, a lane removed after answering, `/compact` followed by a turn and by a regenerate from before the summary, a message deleted in the middle, a group with round 1 regenerated after round 2, an image with "Save" and "Save and resend", two lanes answering at once, and a temporary chat. `migration.ts` ran the draft migration on them in one transaction and rolled it back: 406 ms for 46 messages, no duplicate answers or orphans, and for all 20 threads (9 whole chats, 11 lanes) the draft `shownThread` over the migrated rows gave exactly what `listChatMessages` gives today. On PGlite, after every migration of the app: `parentId` chained the user messages and the summary to the user message before them, the tip was the last user message (none in an empty chat), the index refused a second active answer of one lane to one message and took an inactive one, deleting the chat removed everything despite the two foreign keys between chat and message, and deleting the tip message set `leafId` to null.
+
+The draft, kept for 8.1 and 8.2: the thread picker keeps the rows in `listChatMessages` order and filters them, so the order rule (an answer under its question, a summary at its place) is not repeated. A user message is shown when it is on the path from the tip up the `parentId` chain; an answer when its question is on the path and it is active; a summary when it has no parent or its parent is on the path.
+
+Found: the migration goes in two. 8.1 needs only `active` and the index; the `parentId` backfill would be overwritten in its old meaning ("the newest message when sent", which can be an answer) by every message sent until 8.2 changes how messages are sent. So `active` and the index come with 8.1, `leafId` and the backfill with 8.2.
 
 ## 8. Ceilings and things left out
 

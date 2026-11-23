@@ -4,7 +4,8 @@
 //   SESSION=<value of the nuxt-auth-session cookie> [BASE_URL=http://localhost:3000] bun scripts/app-smoke.ts [--search]
 //
 // Per platform: a plain turn, an image and a PDF, a regenerate, two models answering one message at once, a library
-// note found and read with the file tools, a group round in the order the message asks for, dictation, the spend
+// note found and read with the file tools, a group round in the order the message asks for, a chat started in a
+// folder whose defaults are a group (the second speaker reads the first one's chart), dictation, the spend
 // ledger, and deleting the chat. `--search` adds web search to the library question and a web search turn (on
 // OpenRouter each costs about $0.02). The test files come from `scripts/smoke-files.ts` (macOS makes them; elsewhere
 // `--wav`, `--image`, `--pdf`).
@@ -158,6 +159,37 @@ try {
 			}
 			finally {
 				await api('DELETE', `/chats/${groupId}`)
+			}
+		})
+
+		await step('folder defaults and a shared chart', async () => {
+			// A folder whose defaults are a two-model group; a chat started there with nothing but the folder.
+			const folder = await api<{ id: string }>('POST', '/folders', { name: 'Smoke analysts', parentId: null })
+			try {
+				await api('PATCH', `/folders/${folder.id}`, { defaults: { libraryIds: [], structureProfileId: null, mode: 'group', models: [{ modelId: model.id, name: 'Analyst' }, { modelId: model.id, name: 'Reviewer' }] } })
+				const groupId = crypto.randomUUID()
+				await api('POST', '/chats', { id: groupId, folderId: folder.id, message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'Hello, both of you.' }] } })
+				type Part = { type: string, input?: { data?: Record<string, string | number>[], xKey?: string, series?: { key: string }[] } }
+				const read = () => api<{ folderId: string | null, mode: string, models: { id: string, name: string | null }[], messages: { id: string, role: string, parts: Part[] }[] }>('GET', `/chats/${groupId}`)
+				const chat = await read()
+				const names = chat.models.map(lane => lane.name).join(', ')
+				if (chat.folderId !== folder.id || chat.mode !== 'group' || names !== 'Analyst, Reviewer') throw new Error(`started in ${chat.folderId}, ${chat.mode}, with ${names}`)
+				// The Reviewer can only answer from the Analyst's chart: the numbers are made up there.
+				const message = { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'Analyst: draw a bar chart of made-up monthly sales for four months with the chart tool, and write one short sentence without any numbers. Reviewer: name the month with the highest sales in the Analyst\'s chart, and its value.' }] }
+				const [analystLane, reviewerLane] = chat.models
+				const analyst = await turn(groupId, analystLane!.id, { trigger: 'submit-message', message })
+				if (!analyst.tools.includes('chart')) throw new Error(`the Analyst called ${analyst.tools.join(', ') || 'no tool'}: ${summary(analyst)}`)
+				const reviewer = await turn(groupId, reviewerLane!.id, { trigger: 'submit-message', message })
+				const input = (await read()).messages.find(entry => entry.id === analyst.messageId)?.parts.find(part => part.type === 'tool-chart')?.input
+				const key = input?.series?.[0]?.key ?? ''
+				const top = (input?.data ?? []).reduce<Record<string, string | number> | undefined>((best, point) => Number(point[key]) > Number(best?.[key] ?? -Infinity) ? point : best, undefined)
+				const value = String(top?.[key] ?? '?')
+				if (!reviewer.text.replace(/[,\s]/g, '').includes(value.replace(/[,\s]/g, ''))) throw new Error(`the chart's top is ${top?.[input?.xKey ?? '']} at ${value}; the Reviewer said ${summary(reviewer)}`)
+				return `in the folder as Analyst and Reviewer; chart top ${top?.[input?.xKey ?? '']} ${value}; Reviewer ${summary(reviewer)}`
+			}
+			finally {
+				for (const { id } of (await api<{ id: string, folderId: string | null }[]>('GET', '/chats')).filter(entry => entry.folderId === folder.id)) await api('DELETE', `/chats/${id}`)
+				await api('DELETE', `/folders/${folder.id}`)
 			}
 		})
 

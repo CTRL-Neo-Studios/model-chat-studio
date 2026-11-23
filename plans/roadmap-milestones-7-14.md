@@ -1,6 +1,6 @@
 # Roadmap: milestones 7 to 14
 
-Status: 7.1 to 7.3 built (2026-11-22); milestone 7's live run is left, then 8. Eight milestones, each with its own plan file. The conventions of milestone 1 (section 2 there) and the way of working so far apply unchanged: spikes first where a plan lists them, one phase per step, a check against a fixture platform for each phase, a live run at the end of each milestone.
+Status: milestone 7 complete with its live run (2026-11-22); milestone 8's spike done, 8.1 next. Eight milestones, each with its own plan file. The conventions of milestone 1 (section 2 there) and the way of working so far apply unchanged: spikes first where a plan lists them, one phase per step, a check against a fixture platform for each phase, a live run at the end of each milestone.
 
 ## Order
 
@@ -44,6 +44,6 @@ Everything else about them is in the spikes of milestone 10.
 
 ## Across milestones
 
-- Migrations: one each for milestones 8, 9, 11, 13 and 14, numbered from `0018` in the order they are built. Milestones 7, 10 and 12 need none.
+- Migrations: two for milestone 8 (versions in 8.1, the tree in 8.2), one each for 9, 11, 13 and 14, numbered from `0018` in the order they are built. Milestones 7, 10 and 12 need none.
 - New usage kinds: `tts`, `image` (10). Usage is always recorded for whoever made the call.
 - `scripts/app-smoke.ts` gains a step per milestone, so each one stays checkable live.
