@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DropdownMenuItem } from '@nuxt/ui'
 import { type CharacterFields, characterAvatarUrl } from '#shared/utils/character'
-import { LazyCharacterEditor, LazyModalConfirm } from '#components'
+import { LazyCharacterEditor, LazyModalConfirm, LazyModalImportReport } from '#components'
 
 useHead({ title: 'Characters' })
 
@@ -28,6 +28,24 @@ const confirm = overlay.create(LazyModalConfirm)
 const fields = ({ name, color, instructions, libraryIds, greetings, examples, note, creatorNotes, tags }: Character): CharacterFields => ({ name, color, instructions, libraryIds, greetings, examples, note, creatorNotes, tags })
 const blank: CharacterFields = { name: '', color: null, instructions: '', libraryIds: [], greetings: [], examples: '', note: '', creatorNotes: '', tags: [] }
 const store = (saved: Character) => queryCache.setQueryData(charactersQuery.key, characters.value.some(entry => entry.id === saved.id) ? characters.value.map(entry => entry.id === saved.id ? saved : entry) : [...characters.value, saved])
+
+// "Import card": a PNG with a card in it, or a card's JSON, becomes a Character of yours (under "Mine").
+const reportModal = overlay.create(LazyModalImportReport)
+const picker = ref<HTMLInputElement>()
+const importing = ref(false)
+async function importCard(file: File | undefined) {
+	if (!file || importing.value) return
+	if (picker.value) picker.value.value = ''
+	const form = new FormData()
+	form.append('file', file)
+	importing.value = true
+	const result = await act<{ character: Character, report: string[] }>('/api/v1/characters/import', { method: 'POST', body: form, success: 'Card imported' })
+	importing.value = false
+	if (!result) return
+	store(result.character)
+	tab.value = 'mine'
+	if (result.report.length) reportModal.open({ name: result.character.name, report: result.report })
+}
 
 /** Sends an avatar chosen in the editor once the Character exists: a new image, or `null` to remove it. */
 async function sendAvatar(character: Character, avatar: File | null | undefined) {
@@ -86,13 +104,16 @@ function actions(character: Character): DropdownMenuItem[][] {
 		<template #header>
 			<UDashboardNavbar title="Characters">
 				<template #right>
+					<input ref="picker" type="file" accept=".png,.json,image/png,application/json" class="hidden" @change="event => importCard((event.target as HTMLInputElement).files?.[0])">
+					<UButton icon="i-lucide-file-up" label="Import card" color="neutral" variant="outline" :loading="importing" :ui="{ label: 'hidden sm:inline' }" aria-label="Import card" @click="picker?.click()" />
 					<UButton v-if="canEdit" icon="i-lucide-plus" label="New Character" @click="create" />
 				</template>
 			</UDashboardNavbar>
 		</template>
 
 		<template #body>
-			<div class="w-full max-w-5xl mx-auto flex flex-col gap-4">
+			<!-- A card file dropped anywhere here is imported, as "Import card" does. -->
+			<div class="w-full max-w-5xl mx-auto flex flex-col gap-4" @dragover.prevent @drop.prevent="event => importCard(event.dataTransfer?.files[0])">
 				<p class="text-sm text-muted">
 					A Character is who a model is in a chat, or who you are. Give it to a model in a chat or a model profile; its instructions take the place of the system prompt.
 				</p>
