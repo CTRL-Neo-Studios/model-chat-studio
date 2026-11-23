@@ -1,6 +1,6 @@
 # Roadmap: milestones 7 to 14
 
-Status: milestone 7 complete with its live run (2026-11-22); milestone 8's spike done, 8.1 next. Eight milestones, each with its own plan file. The conventions of milestone 1 (section 2 there) and the way of working so far apply unchanged: spikes first where a plan lists them, one phase per step, a check against a fixture platform for each phase, a live run at the end of each milestone.
+Status: milestone 7 complete with its live run (2026-11-22); 8.1 built, 8.2 next. Eight milestones, each with its own plan file. The conventions of milestone 1 (section 2 there) and the way of working so far apply unchanged: spikes first where a plan lists them, one phase per step, a check against a fixture platform for each phase, a live run at the end of each milestone.
 
 ## Order
 

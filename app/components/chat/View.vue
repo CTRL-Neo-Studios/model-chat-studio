@@ -108,10 +108,16 @@ async function refreshTitle() {
 }
 
 const messages = shallowRef<ChatMessage[]>((data.value?.messages ?? []) as ChatMessage[])
+// Every version's id of the answers that have several, keyed by the version shown (owner only).
+const versions = shallowRef<Record<string, string[]>>({ ...data.value?.versions })
 const answers = useLaneAnswers(chatId, messages, {
 	onAnswered: refreshTitle,
 	keepPreviousOnStop: () => (me.value?.preferences.stoppedRegenerate ?? 'keep-previous') === 'keep-previous',
 	inTurn: () => group.value,
+	onVersion: (previousId, id) => {
+		const { [previousId]: list, ...rest } = versions.value
+		versions.value = { ...rest, [id]: [...(list ?? [previousId]), id] }
+	},
 })
 
 // The memory slider's range: the longest lane thread after its latest summary, in messages that count. A group
@@ -134,9 +140,10 @@ function writeBack() {
 		settings: settings.value,
 		models: lanes.value as typeof chat.models,
 		messages: messages.value as typeof chat.messages,
+		versions: versions.value,
 	})
 }
-watch(messages, writeBack)
+watch([messages, versions], writeBack)
 watch([visibility, sharedWith, settings, lanes], writeBack, { deep: true })
 
 /**
@@ -286,15 +293,31 @@ const deleteModal = useOverlay().create(LazyModalConfirm)
 async function deleteMessage(message: UIMessage) {
 	const confirmed = await deleteModal.open(message.role === 'user'
 		? { title: 'Delete message', description: 'This message and its answers will be deleted. This cannot be undone.', color: 'error' }
-		: { title: 'Delete response', description: 'This response will be deleted. This cannot be undone.', color: 'error' }).result
+		: versions.value[message.id]
+			? { title: 'Delete this version', description: 'This version of the response will be deleted; the newest one left is shown. This cannot be undone.', color: 'error' }
+			: { title: 'Delete response', description: 'This response will be deleted. This cannot be undone.', color: 'error' }).result
 	if (!confirmed) return
 	try {
-		const { ids } = await $fetch(`/api/v1/chats/${chatId}/messages/${message.id}`, { method: 'DELETE', headers: { [headerName]: csrf } })
-		messages.value = messages.value.filter(entry => !ids.includes(entry.id))
+		const { ids, shown } = await $fetch(`/api/v1/chats/${chatId}/messages/${message.id}`, { method: 'DELETE', headers: { [headerName]: csrf } })
+		// A deleted version gives its place to the version shown now.
+		messages.value = messages.value.flatMap(entry => entry.id === message.id && shown ? [shown as ChatMessage] : ids.includes(entry.id) ? [] : [entry])
+		const { [message.id]: list, ...rest } = versions.value
+		const left = list?.filter(id => !ids.includes(id)) ?? []
+		versions.value = shown && left.length > 1 ? { ...rest, [shown.id]: left } : rest
 	}
 	catch (error) {
 		toast.add({ description: serverMessage(error) ?? 'Failed to delete the message', icon: 'i-lucide-alert-circle', color: 'error' })
 	}
+}
+
+/** Shows another version of an answer in its place; the models read that version from then on. */
+async function showVersion(answer: ChatMessage, id: string) {
+	if (answers.busy.value) return
+	const shown = await act<ChatMessage>(`/api/v1/chats/${chatId}/messages/${id}`, { method: 'PATCH', body: { active: true } })
+	if (!shown) return
+	messages.value = messages.value.map(entry => entry.id === answer.id ? shown : entry)
+	const { [answer.id]: list, ...rest } = versions.value
+	if (list) versions.value = { ...rest, [shown.id]: list }
 }
 
 function getVote(messageId: string) {
@@ -419,8 +442,11 @@ onMounted(() => {
 									:editing="!!slot.message && editingMessageId === slot.message.id"
 									:vote="slot.message ? getVote(slot.message.id) : null"
 									:regenerable="!!slot.lane"
+									:versions="slot.message && versions[slot.message.id]"
+									:busy="answers.busy.value"
 									:class="settings.answerLayout !== 'stack' && !group && cards(message.id.slice(8)) ? 'min-w-80 flex-1 basis-0' : undefined"
 									@regenerate="slot.lane && answers.regenerate(slot.lane.id, question(message.id.slice(8)))"
+									@show="id => slot.message && showVersion(slot.message, id)"
 									@stop="slot.lane && answers.stop(message.id.slice(8), slot.lane.id)"
 									@dismiss="slot.lane && answers.dismiss(message.id.slice(8), slot.lane.id)"
 									@edit="startEdit"

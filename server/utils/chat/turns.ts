@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util'
 import { createError } from 'nuxt/server'
-import { and, asc, eq, gt, gte, inArray, isNull, ne, or, sql, sum } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, inArray, isNull, ne, or, sql, sum } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import type { UIMessage } from 'ai'
 import { z } from 'zod'
@@ -96,25 +96,29 @@ export async function listChatShares(db: Db, chatId: string) {
 
 const question = alias(tables.message, 'question')
 
+/** A message as the chat and the turn routes read it. */
+const messageColumns = {
+	id: tables.message.id,
+	role: tables.message.role,
+	parts: tables.message.parts,
+	metadata: tables.message.metadata,
+	chatModelId: tables.message.chatModelId,
+	/** For an answer, the user message it answers. */
+	parentId: tables.message.parentId,
+	createdAt: tables.message.createdAt,
+}
+
 /**
  * A chat's messages in reading order: each user message in the order saved, followed by its answers. An
- * answer regenerated later still sits under its question. With a lane, only that lane's thread: every user
- * message, and that lane's own answers and summaries.
+ * answer regenerated later still sits under its question. Of an answer's versions, the one shown. With a lane,
+ * only that lane's thread: every user message, and that lane's own answers and summaries.
  */
 export async function listChatMessages(db: Db, chatId: string, chatModelId?: string) {
-	return await db.select({
-		id: tables.message.id,
-		role: tables.message.role,
-		parts: tables.message.parts,
-		metadata: tables.message.metadata,
-		chatModelId: tables.message.chatModelId,
-		/** For an answer, the user message it answers. */
-		parentId: tables.message.parentId,
-		createdAt: tables.message.createdAt,
-	}).from(tables.message)
+	return await db.select(messageColumns).from(tables.message)
 		.leftJoin(question, and(eq(tables.message.role, 'assistant'), eq(question.id, tables.message.parentId)))
 		.where(and(
 			eq(tables.message.chatId, chatId),
+			eq(tables.message.active, true),
 			chatModelId ? or(eq(tables.message.role, 'user'), eq(tables.message.chatModelId, chatModelId)) : undefined,
 		))
 		.orderBy(sql`coalesce(${question.seq}, ${tables.message.seq})`, asc(tables.message.seq))
@@ -142,8 +146,8 @@ async function joinsMessage(db: Db, chatId: string, chatModelId: string, id: str
 
 /**
  * Applies a turn's trigger before the model is called and returns the user message the answer replies to.
- * Nothing is deleted: the answer replaces this lane's earlier answer to that message when it is saved
- * (`saveAnswer`), so a failed turn keeps the old one.
+ * Nothing changes yet: the answer becomes the lane's shown version when it is saved (`saveAnswer`), so a failed
+ * turn keeps the earlier one.
  * - `submit-message` saves a new message, or joins one that another lane saved for the same send
  *   (`joinsMessage`). Any other existing id is refused; edits are `PATCH /chats/:id/messages/:id`.
  * - `regenerate-message` answers the target answer's question again, or the target user message, or
@@ -187,30 +191,36 @@ export async function applyTurnTrigger(db: Db, chatId: string, request: TurnRequ
 	return target.parentId
 }
 
-/** Which attempt a lane's current answer to a user message is: 0 when it has none, 1 for the first answer. */
+/**
+ * Which attempt a lane's latest answer to a user message is, over all its versions: 0 when it has none, 1 for the
+ * first answer. Deleting the newest version gives its attempt back, as deleting an answer did before versions.
+ */
 export async function answerAttempt(db: Db, chatModelId: string, parentId: string) {
-	const [previous] = await db.select({ metadata: tables.message.metadata }).from(tables.message).where(and(
+	const [row] = await db.select({ attempt: sql<number | null>`max(coalesce((${tables.message.metadata}->>'attempt')::int, 1))` }).from(tables.message).where(and(
 		eq(tables.message.role, 'assistant'),
 		eq(tables.message.parentId, parentId),
 		eq(tables.message.chatModelId, chatModelId),
-	)).limit(1)
-	return previous ? previous.metadata?.attempt ?? 1 : 0
+	))
+	return row?.attempt ?? 0
 }
 
 /**
- * Saves a lane's answer to a user message, replacing the lane's earlier answer to it, if any. With
- * `keepPrevious`, an earlier answer stays and the new one is dropped. In a group chat (`speaker`), the lane joins
- * the end of the user message's `speakers` unless it is there already. Returns whether it was saved.
+ * Saves a lane's answer to a user message as the version shown; the lane's earlier answer to it, if any, stays as an
+ * earlier version. With `keepPrevious`, an earlier answer stays shown and the new one is dropped. In a group chat
+ * (`speaker`), the lane joins the end of the user message's `speakers` unless it is there already. Returns whether
+ * it was saved.
  */
 export async function saveAnswer(db: Db, answer: { id: string, chatId: string, parentId: string, chatModelId: string, parts: UIMessage['parts'], metadata: MessageMetadata }, keepPrevious = false, speaker = false) {
 	return await db.transaction(async (tx) => {
-		const previous = and(
+		const shown = and(
 			eq(tables.message.role, 'assistant'),
 			eq(tables.message.parentId, answer.parentId),
 			eq(tables.message.chatModelId, answer.chatModelId),
+			eq(tables.message.active, true),
 		)
-		if (keepPrevious && (await tx.select({ id: tables.message.id }).from(tables.message).where(previous).limit(1)).length) return false
-		await tx.delete(tables.message).where(previous)
+		if (keepPrevious && (await tx.select({ id: tables.message.id }).from(tables.message).where(shown).limit(1)).length) return false
+		// ponytail: two regenerates of one answer saved at the same moment: the second fails on the index and is lost.
+		await tx.update(tables.message).set({ active: false }).where(shown)
 		await tx.insert(tables.message).values({ ...answer, role: 'assistant' })
 		if (speaker) {
 			const speakers = sql`coalesce(${tables.message.metadata}->'speakers', '[]'::jsonb)`
@@ -291,7 +301,8 @@ export async function editMessage(db: Db, chatId: string, messageId: string, edi
 }
 
 /**
- * Deletes one message: an answer alone, or a user message with its answers. Everything else stays.
+ * Deletes one message: an answer version alone, or a user message with its answers and their versions. Everything
+ * else stays. When the deleted answer was the one shown, the lane's newest remaining version is shown (`shown`).
  * Returns the deleted ids and their attachments, which the caller deletes from storage.
  */
 export async function deleteMessage(db: Db, chatId: string, messageId: string) {
@@ -302,8 +313,48 @@ export async function deleteMessage(db: Db, chatId: string, messageId: string) {
 					.where(and(eq(tables.message.role, 'assistant'), eq(tables.message.parentId, message.id)))
 			: []
 		const ids = [message.id, ...answers.map(row => row.id)]
-		return { ids, removedFileIds: await deleteMessageRows(tx, ids) }
+		const removedFileIds = await deleteMessageRows(tx, ids)
+		const [next] = message.role === 'assistant' && message.active && message.parentId && message.chatModelId
+			? await tx.select({ id: tables.message.id }).from(tables.message)
+					.where(and(eq(tables.message.role, 'assistant'), eq(tables.message.parentId, message.parentId), eq(tables.message.chatModelId, message.chatModelId)))
+					.orderBy(desc(tables.message.seq)).limit(1)
+			: []
+		const [shown] = next ? await tx.update(tables.message).set({ active: true }).where(eq(tables.message.id, next.id)).returning(messageColumns) : []
+		return { ids, removedFileIds, shown }
 	})
+}
+
+/** Shows one version of an answer in place of the lane's other versions. Returns it, as the chat lists it. */
+export async function showVersion(db: Db, chatId: string, messageId: string) {
+	return await db.transaction(async (tx) => {
+		const message = await findMessage(tx, chatId, messageId)
+		if (message.role !== 'assistant' || !message.parentId || !message.chatModelId) throw createError({ status: 400, statusText: 'Only an answer of a model in this chat has versions' })
+		await tx.update(tables.message).set({ active: false }).where(and(
+			eq(tables.message.role, 'assistant'),
+			eq(tables.message.parentId, message.parentId),
+			eq(tables.message.chatModelId, message.chatModelId),
+			eq(tables.message.active, true),
+		))
+		const [shown] = await tx.update(tables.message).set({ active: true }).where(eq(tables.message.id, message.id)).returning(messageColumns)
+		return shown!
+	})
+}
+
+/** For each shown answer with earlier versions: every version's id, in the order made. */
+export async function listAnswerVersions(db: Db, chatId: string) {
+	const answers = await db.select({ id: tables.message.id, parentId: tables.message.parentId, chatModelId: tables.message.chatModelId, active: tables.message.active })
+		.from(tables.message)
+		.where(and(eq(tables.message.chatId, chatId), eq(tables.message.role, 'assistant')))
+		.orderBy(asc(tables.message.seq))
+	const byAnswer: Record<string, typeof answers> = {}
+	// Answers of removed lanes have lost which lane they were; their earlier versions stay hidden.
+	for (const answer of answers) if (answer.chatModelId) (byAnswer[`${answer.parentId}:${answer.chatModelId}`] ??= []).push(answer)
+	const versions: Record<string, string[]> = {}
+	for (const group of Object.values(byAnswer)) {
+		const shown = group.find(answer => answer.active)
+		if (shown && group.length > 1) versions[shown.id] = group.map(answer => answer.id)
+	}
+	return versions
 }
 
 /**

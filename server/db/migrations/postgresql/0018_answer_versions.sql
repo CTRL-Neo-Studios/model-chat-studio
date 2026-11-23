@@ -1,0 +1,2 @@
+ALTER TABLE "message" ADD COLUMN "active" boolean DEFAULT true NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "message_active_answer" ON "message" USING btree ("parentId","chatModelId") WHERE "message"."role" = 'assistant' and "message"."active";

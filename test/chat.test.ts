@@ -5,7 +5,7 @@ import * as schema from '../server/db/schema'
 import { chatAbilities, type ChatAccess } from '../shared/abilities/chatAbilities'
 import { authorize } from '../server/utils/core/authorize'
 import { setSetting } from '../server/utils/core/settings'
-import { answerAttempt, applyTurnTrigger, deleteMessage, editMessage, listChatMessages, monthlyBudgetStatus, saveAnswer, type TurnRequest } from '../server/utils/chat/turns'
+import { answerAttempt, applyTurnTrigger, deleteMessage, editMessage, listAnswerVersions, listChatMessages, monthlyBudgetStatus, saveAnswer, showVersion, type TurnRequest } from '../server/utils/chat/turns'
 import { assertLaneLimit, countEnabledLanes } from '../server/utils/chat/lanes'
 import { createTestDb, type TestDb } from './db'
 
@@ -79,7 +79,7 @@ test('resending a message that is not a join is refused: it changed, the lane an
 	expect(await listChatMessages(db, other!.id)).toEqual([])
 })
 
-test('regenerating answers the question again; the new answer replaces only that lane\'s answer, under its question', async () => {
+test('regenerating answers the question again; the new answer is shown in place of only that lane\'s answer, under its question', async () => {
 	await applyTurnTrigger(db, chatId, say('u1'))
 	await answer('a1', 'u1', laneA)
 	await answer('b1', 'u1', laneB)
@@ -95,6 +95,43 @@ test('regenerating answers the question again; the new answer replaces only that
 
 	expect(await applyTurnTrigger(db, chatId, regenerate('u1', laneB))).toBe('u1')
 	expect(await applyTurnTrigger(db, chatId, regenerate())).toBe('u2')
+})
+
+test('a regenerated answer keeps its earlier versions; any of them can be shown, and the threads follow', async () => {
+	await applyTurnTrigger(db, chatId, say('u1'))
+	await answer('a1', 'u1', laneA)
+	await answer('b1', 'u1', laneB)
+	await applyTurnTrigger(db, chatId, say('u2'))
+	await answer('a2', 'u2', laneA)
+	await answer('a1x', 'u1', laneA)
+	await answer('a1y', 'u1', laneA)
+
+	expect(await listAnswerVersions(db, chatId)).toEqual({ a1y: ['a1', 'a1x', 'a1y'] })
+	expect(await ids()).toEqual(['u1', 'b1', 'a1y', 'u2', 'a2'])
+
+	// Showing version 1: it is what the chat and the lane's thread hold from then on; later messages stay.
+	expect(await showVersion(db, chatId, 'a1')).toMatchObject({ id: 'a1', parentId: 'u1', chatModelId: laneA, parts: [{ type: 'text', text: 'a1' }] })
+	expect(await ids(laneA)).toEqual(['u1', 'a1', 'u2', 'a2'])
+	expect(await listAnswerVersions(db, chatId)).toEqual({ a1: ['a1', 'a1x', 'a1y'] })
+	await expect(showVersion(db, chatId, 'u1')).rejects.toMatchObject({ status: 400 })
+
+	// Deleting a version that is not shown leaves the shown one; deleting the shown one shows the newest left.
+	expect(await deleteMessage(db, chatId, 'a1x')).toMatchObject({ ids: ['a1x'], shown: undefined })
+	expect((await deleteMessage(db, chatId, 'a1')).shown).toMatchObject({ id: 'a1y' })
+	expect(await ids(laneA)).toEqual(['u1', 'a1y', 'u2', 'a2'])
+	expect(await listAnswerVersions(db, chatId)).toEqual({})
+	// A user message goes with every version of its answers.
+	await answer('a2x', 'u2', laneA)
+	expect((await deleteMessage(db, chatId, 'u2')).ids.toSorted()).toEqual(['a2', 'a2x', 'u2'])
+})
+
+test('the regenerate cap counts the versions made, whichever is shown', async () => {
+	await applyTurnTrigger(db, chatId, say('u1'))
+	for (const [id, attempt] of [['a1', 1], ['a1x', 2], ['a1y', 3]] as const) {
+		await saveAnswer(db, { id, chatId, parentId: 'u1', chatModelId: laneA, parts: [], metadata: { platform: 'deepseek', model: 'm', attempt } })
+	}
+	await showVersion(db, chatId, 'a1')
+	expect(await answerAttempt(db, laneA, 'u1')).toBe(3)
 })
 
 test('a stopped answer can leave the earlier answer in place; a first answer is saved either way', async () => {

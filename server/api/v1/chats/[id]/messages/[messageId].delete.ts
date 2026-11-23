@@ -5,12 +5,15 @@ import { requireChat } from '#server/utils/chat/access'
 import { deleteMessage } from '#server/utils/chat/turns'
 import { deleteStoredFiles } from '#server/utils/chat/files'
 
-/** Owner only: deletes an answer, or a user message with its answers. Returns the deleted ids. */
+/**
+ * Owner only: deletes an answer version, or a user message with its answers. Returns the deleted ids and, when the
+ * deleted answer was shown, the lane's version shown now.
+ */
 export default defineEventHandler(async (event) => {
 	const chat = await requireChat(event, 'manageChat')
 	const user = await useServerAuth().requireUser(event)
 
-	const { ids, removedFileIds } = await deleteMessage(db, chat.id, getRouterParam(event, 'messageId', { decode: true })!)
+	const { ids, removedFileIds, shown } = await deleteMessage(db, chat.id, getRouterParam(event, 'messageId', { decode: true })!)
 	await deleteStoredFiles(db, removedFileIds, user.id)
-	return { ids }
+	return { ids, shown: shown ?? null }
 })

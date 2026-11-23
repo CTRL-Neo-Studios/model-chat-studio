@@ -14,6 +14,10 @@ const props = defineProps<{
 	vote: boolean | null
 	/** Off for answers of a model that was removed from the chat. */
 	regenerable: boolean
+	/** Every version's id when the answer has several, oldest first. */
+	versions?: string[]
+	/** Something in the chat is being written: versions do not switch meanwhile. */
+	busy: boolean
 }>()
 
 const emit = defineEmits<{
@@ -25,12 +29,15 @@ const emit = defineEmits<{
 	vote: [message: UIMessage, isUpvoted: boolean]
 	save: [message: UIMessage, text: string, resend: boolean]
 	cancelEdit: []
+	/** Show another version of this answer. */
+	show: [id: string]
 }>()
 
 const streaming = computed(() => props.pending?.status === 'streaming')
 const writing = computed(() => props.pending?.status === 'submitted' || streaming.value)
 // A group speaker still waiting for its turn in the round.
 const queued = computed(() => props.pending?.status === 'queued')
+const versionIndex = computed(() => props.versions?.indexOf(props.message?.id ?? '') ?? -1)
 </script>
 
 <template>
@@ -82,6 +89,12 @@ const queued = computed(() => props.pending?.status === 'queued')
 		</div>
 
 		<div v-if="isOwner && message" :class="['flex items-center gap-0.5', card ? 'px-1.5 pb-1.5' : 'mt-1 -ms-1.5']">
+			<!-- The answer's versions, oldest first; the version shown is the one the models read from then on. -->
+			<div v-if="versions && versions.length > 1 && !writing && !editing" class="flex items-center text-xs text-muted tabular-nums">
+				<UButton icon="i-lucide-chevron-left" size="xs" color="neutral" variant="ghost" aria-label="Earlier version" :disabled="busy || versionIndex === 0" @click="emit('show', versions[versionIndex - 1]!)" />
+				<span :aria-label="`Version ${versionIndex + 1} of ${versions.length}`">{{ versionIndex + 1 }}/{{ versions.length }}</span>
+				<UButton icon="i-lucide-chevron-right" size="xs" color="neutral" variant="ghost" aria-label="Later version" :disabled="busy || versionIndex === versions.length - 1" @click="emit('show', versions[versionIndex + 1]!)" />
+			</div>
 			<ChatMessageActions
 				:message="message"
 				:streaming="writing"

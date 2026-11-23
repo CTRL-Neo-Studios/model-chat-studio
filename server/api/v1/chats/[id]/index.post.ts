@@ -236,7 +236,7 @@ export default defineEventHandler(async (event) => {
 					const usage = await recordUsage('chat', model.id, steps, price)
 					const stored = metadata(finishReason)
 					const parts = stored.refused ? [{ type: 'text' as const, text: REFUSAL }] : responseMessage.parts
-					// A stopped answer replaces the lane's earlier one unless the member chose to keep the earlier one.
+					// A stopped answer becomes the shown version unless the member chose to keep the earlier one.
 					const keepPrevious = isAborted && userPreferencesSchema.parse(user.preferences).stoppedRegenerate === 'keep-previous'
 					const saved = parts.length > 0
 						&& await saveAnswer(db, { id: responseMessage.id, chatId, parentId, chatModelId: lane.id, parts, metadata: stored }, keepPrevious, group)

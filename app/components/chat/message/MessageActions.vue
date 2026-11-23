@@ -66,7 +66,7 @@ const { copy, copied } = useClipboard({ copiedDuring: 2000 })
 			/>
 		</UTooltip>
 
-		<UTooltip v-if="regenerable" text="Regenerate response">
+		<UTooltip v-if="regenerable" text="Regenerate: write this answer again from what came before it. The rest of the chat stays, and the earlier answer is kept as a version.">
 			<UButton
 				size="sm"
 				color="neutral"

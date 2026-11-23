@@ -1,6 +1,6 @@
 # Milestone 8: branching
 
-Status: spike I done (2026-11-22); 8.1 next. Part of `roadmap-milestones-7-14.md`. Two migrations (section 3).
+Status: spike I and 8.1 built (2026-11-22); 8.2 next. Part of `roadmap-milestones-7-14.md`. Two migrations (section 3).
 
 Goal: nothing is thrown away when an answer is written again or a message is changed. Two things, with two names:
 
@@ -50,7 +50,7 @@ Deleting a message moves the messages after it up to its parent in the same tran
 
 | Route | Change |
 |---|---|
-| `GET /chats/:id` | `messages` is the shown thread, in today's shape. New `branching`: for each shown user message with other branches, the ids of all of them in the order made; for each shown answer with other versions, the ids of all of them. Owner only. |
+| `GET /chats/:id` | `messages` is the shown thread, in today's shape. Owner only: `versions`, for each shown answer with other versions the ids of all of them, oldest first (8.1); `branches`, for each shown user message with other branches the ids of all of them in the order made (8.3). |
 | `POST /chats/:id` (the turn) | `submit-message`: the new message's parent is the chat's tip, and it becomes the tip. `regenerate-message`: saves a new active version. The thread is the path to the message being answered. |
 | `PATCH /chats/:id/messages/:messageId` | `{ active: true }` shows a version. `{ text, branch: true }` replaces `dropAfter`: makes the sibling message, moves the tip to it, returns it. |
 | `PATCH /chats/:id` | `{ leafId }`: shows the branch through that message. The server moves the tip to the end of it (at each step, the branch made last) and returns the shown thread. |
@@ -59,7 +59,7 @@ Deleting a message moves the messages after it up to its parent in the same tran
 ## 5. Frontend
 
 - A small `‹ 2/3 ›` switch: on a user message that has branches, on an answer that has versions. Owner only; off while anything is being written.
-- The answer's actions: "Regenerate" (tooltip "Write this answer again from what came before it. The rest of the chat stays."). The edit form keeps "Save" and "Save and resend"; its hint says the earlier branch is kept.
+- The answer's actions: "Regenerate" (tooltip "Regenerate: write this answer again from what came before it. The rest of the chat stays, and the earlier answer is kept as a version."). The edit form keeps "Save" and "Save and resend"; its hint says the earlier branch is kept.
 - Switching replaces the list with what the server returns; the cached chat follows, as it does today.
 - The delete dialog on a message offers "This message and its answers" or "This branch".
 
@@ -71,6 +71,8 @@ Deleting a message moves the messages after it up to its parent in the same tran
 | 8.1 | Versions: `active` and its index (the first migration), regenerate keeps the earlier answers, the version switch and its route, deleting a version, the stop preference | tests for saving, switching and deleting versions and for the cap; fixture: an answer regenerated twice has three versions; with version 1 showing, the next message's request holds version 1's text; a reload shows version 1 |
 | 8.2 | The tree on the server: `leafId`, its migration (the backfill), `shownThread`, sending and joining by the tip, the turn's thread by path, `/compact`, speakers, overview, deleting with the move up, shared attachments. No change on screen. | tests for the thread picker (path, versions, summaries, a branch that leaves before a summary) and for deleting in the middle; every existing test passes; `scripts/app-smoke.ts` passes against a fixture platform |
 | 8.3 | Branches on screen: "Save and resend" branches, the switch on messages, the route that shows a branch, "Delete this branch"; a smoke step; the live run | fixture: turn 2 of a four-turn chat is edited and resent; the chat shows two turns and the request holds turns 1 and the new 2 only; the switch brings the four turns back, and a new message there continues the old branch; a message with an image can be resent. Live on both platforms through `scripts/app-smoke.ts`: versions and a branch |
+
+Built (8.1): migration `0018_answer_versions` adds `message.active` and the unique index `message_active_answer` (`parentId`, `chatModelId` where an active answer). In `server/utils/chat/turns.ts`, `saveAnswer` turns the lane's shown answer into an earlier version instead of deleting it; `listChatMessages` reads only shown versions, so the chat, every lane's thread, the group thread and `/compact` follow the version shown with no other change; `answerAttempt` takes the highest attempt over the versions (deleting the newest gives its attempt back, as deleting an answer did before); `showVersion` and `listAnswerVersions` are new; `deleteMessage` deletes one version and shows the lane's newest one left. Answers of a removed lane have no version switch: with the lane gone, which versions belong together is lost. `GET /chats/:id` gives the owner `versions` (shown answer id → every version's id, oldest first) rather than a `branching` object; 8.3 adds branches beside it. `PATCH …/messages/:id` takes `{ active: true }`; `DELETE` returns `shown`. On screen: `‹ 1/3 ›` before an answer's actions, off while anything is written; the chat page keeps `versions` beside its messages and adds a version when a regenerate finishes, or stops with "keep what was generated"; deleting a version says so and shows the next. Tests: versions kept, shown, followed by the lane's thread, deleted (shown and not), a user message going with all versions, and the cap over versions. Fixture check in Chromium (DeepSeek fixture): regenerated twice, "Version 3 of 3"; back to version 1, the next message's request held "assistant: Fixture answer 1."; after a reload, "Version 1 of 3" with answer 1; deleting version 1 showed answer 3 as "Version 2 of 2".
 
 ## 7. To verify before building
 

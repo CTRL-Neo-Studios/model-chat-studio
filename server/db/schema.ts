@@ -12,6 +12,7 @@ import {
 	text,
 	timestamp,
 	unique,
+	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
 import {relations, sql} from "drizzle-orm";
@@ -208,9 +209,12 @@ export const message = pgTable("message", {
 	metadata: jsonb().$type<MessageMetadata>(),
 	/** The lane that wrote an answer; `null` on user messages and on answers of a deleted lane. */
 	chatModelId: uuid().references(() => chatModel.id, { onDelete: "set null" }),
+	/** On answers, the version shown: a lane's other answers to the same message are its earlier versions. */
+	active: boolean().notNull().default(true),
 	createdAt,
 }, (t) => [
 	index().on(t.chatId, t.seq),
+	uniqueIndex("message_active_answer").on(t.parentId, t.chatModelId).where(sql`${t.role} = 'assistant' and ${t.active}`),
 ]);
 
 /** What one answer was given: its context blocks in the order sent. Messages and files are referenced, not copied. */

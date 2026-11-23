@@ -28,8 +28,9 @@ function describeError(error: unknown): string {
 
 /**
  * Streams answers lane by lane into one message list. Each lane's answer is its own request; several run at
- * once. An answer replaces that lane's earlier answer to the same question in place, so nothing after it moves.
- * (The AI SDK `Chat` drops later messages on regenerate; see plan section 6, spike A.)
+ * once. An answer is shown in place of that lane's earlier answer to the same question, which the server keeps as
+ * a version, so nothing after it moves. (The AI SDK `Chat` drops later messages on regenerate; see plan section 6,
+ * spike A.)
  */
 export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, options: {
 	/** After each answer that completes, e.g. to pick up the chat's new title. */
@@ -38,6 +39,8 @@ export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, opt
 	keepPreviousOnStop?: () => boolean
 	/** Whether lanes answer one after another (a group chat) rather than all at once. */
 	inTurn?: () => boolean
+	/** A lane's answer was written again: `id` is the newest version of the answer `previousId` was. */
+	onVersion?: (previousId: string, id: string) => void
 }) {
 	const { csrf, headerName } = useCsrf()
 	// The server keeps the history: send only the new message, or what to answer again, and the lane.
@@ -81,6 +84,9 @@ export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, opt
 		pending.value = { ...pending.value, [key]: { status: 'submitted', controller } }
 		const previous = answerOf(question.id, laneId)
 		let replacing = previous?.id
+		let parts = 0
+		// A new answer to a question the lane had answered is that answer's newest version, as the server saves it.
+		const versioned = () => previous && replacing && replacing !== previous.id && parts > 0 && options.onVersion?.(previous.id, replacing)
 		try {
 			const chunks = await transport.sendMessages({
 				trigger,
@@ -93,8 +99,10 @@ export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, opt
 			for await (const message of readUIMessageStream<UIMessage<MessageMetadata>>({ stream: chunks, terminateOnError: true })) {
 				place({ ...message, chatModelId: laneId, parentId: question.id }, question.id, replacing)
 				replacing = message.id
+				parts = message.parts.length
 				if (pending.value[key]?.status === 'submitted') pending.value = { ...pending.value, [key]: { status: 'streaming', controller } }
 			}
+			versioned()
 			options.onAnswered?.()
 		}
 		catch (error) {
@@ -102,8 +110,9 @@ export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, opt
 				pending.value = { ...pending.value, [key]: { status: 'error', error: describeError(error), controller } }
 				return false
 			}
-			// The server keeps the earlier answer in this case too.
+			// The server keeps the earlier answer in this case too; otherwise it saves what was written as a version.
 			if (previous && replacing !== previous.id && options.keepPreviousOnStop?.()) place(previous, question.id, replacing)
+			else versioned()
 		}
 		if (pending.value[key]?.controller === controller) {
 			const { [key]: _, ...rest } = pending.value
@@ -148,7 +157,7 @@ export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, opt
 		return ask(laneIds, question, 'submit-message')
 	}
 
-	/** Asks a lane to answer a user message again (or for the first time), replacing its earlier answer. */
+	/** Asks a lane to answer a user message again (or for the first time); its earlier answer becomes a version. */
 	function regenerate(laneId: string, question: ChatMessage) {
 		return stream(laneId, question, 'regenerate-message')
 	}
