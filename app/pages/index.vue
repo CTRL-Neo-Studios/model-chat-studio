@@ -1,8 +1,8 @@
 <script setup lang="ts">
-// `?profile=` is read once, so a change of it starts the screen afresh.
+// `?profile=` and `?folder=` are read once, so a change of either starts the screen afresh.
 const route = useRoute()
 </script>
 
 <template>
-	<NewChat :key="route.fullPath" />
+	<NewChat :key="route.fullPath" :folder-id="typeof route.query.folder === 'string' ? route.query.folder : undefined" />
 </template>

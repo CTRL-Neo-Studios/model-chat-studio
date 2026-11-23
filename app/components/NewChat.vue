@@ -2,9 +2,13 @@
 import type { ChatSettings } from '#shared/utils/chat'
 import type { PromptCommand } from '~/components/chat/Prompt.vue'
 
-/** The new-chat screen: pick models, write the first message. `temporary` starts a chat that is not kept. */
+/**
+ * The new-chat screen: pick models, write the first message. `temporary` starts a chat that is not kept; `folderId`
+ * starts it in that folder. The `heading` slot replaces the greeting; the default slot, the suggestions under the prompt.
+ */
 const props = defineProps<{
 	temporary?: boolean
+	folderId?: string
 }>()
 
 /** A temporary chat was created; the page shows it in place, without an id in the URL. */
@@ -59,19 +63,23 @@ const userCharacterId = computed({
 	set: (value: string | null) => userCharacterChoice.value = value,
 })
 
-// "Start a chat" on the profiles page starts from that profile alone. `?folder=` starts the chat in that folder, from
-// its defaults (or the nearest folder's above), as the server resolves them for this member; a folder without any
-// starts as the home page does. Otherwise the last chat's models and settings. Until the profiles (and the folder's
-// start) are here the models menu is a placeholder, and sending waits, so a chat does not go out without them.
+// "Start a chat" on the profiles page starts from that profile alone. In a folder the chat starts from its defaults
+// (or the nearest folder's above), as the server resolves them for this member; a folder without any starts as the
+// home page does. Otherwise the last chat's models and settings. Until the profiles (and the folder's start) are here
+// the models menu is a placeholder, and sending waits, so a chat does not go out without them.
 const { data: profilesData } = useQuery(modelProfilesQuery)
 const profileId = useRoute().query.profile
-const folderParam = props.temporary ? undefined : useRoute().query.folder
-const inFolder = typeof folderParam === 'string'
-const { data: start, status: startStatus } = useQuery(() => ({ ...folderStartQuery(inFolder ? folderParam : ''), enabled: import.meta.client && inFolder }))
+const inFolder = !!props.folderId
+const { data: start, refresh: refreshStart } = useQuery(() => ({ ...folderStartQuery(props.folderId ?? ''), enabled: import.meta.client && inFolder }))
+// Read afresh, never from the cache: what was cached may predate a change of the defaults or of what they name.
+const startRead = ref(!inFolder)
+onMounted(() => {
+	if (inFolder) refreshStart().finally(() => startRead.value = true)
+})
 const folder = computed(() => start.value?.folder)
 const ready = ref(false)
-const stopSetup = watch([profilesData, startStatus], ([profiles, status]) => {
-	if (ready.value || !profiles || (inFolder && status === 'pending')) return
+const stopSetup = watch([profilesData, startRead], ([profiles, read]) => {
+	if (ready.value || !profiles || !read) return
 	const defaults = start.value?.defaults
 	const fromQuery = profiles.find(profile => profile.id === profileId)
 	const fromFolder = !fromQuery && start.value?.lanes
@@ -173,16 +181,18 @@ const quickChats = [
 
 		<template #body>
 			<div class="flex flex-1">
-				<UContainer class="flex-1 flex flex-col justify-center gap-4 sm:gap-6 py-8">
-					<h1 class="text-3xl sm:text-4xl text-highlighted font-bold">
-						{{ temporary ? 'Temporary chat' : greeting }}
-					</h1>
-					<p v-if="temporary" class="text-muted -mt-2">
-						Not in your chats, and deleted when you leave or refresh this page. You can keep it once it has started.
-					</p>
-					<p v-else-if="folder" class="text-muted -mt-2">
-						A new chat in “{{ folder.name }}”{{ start?.defaults ? `, starting from ${start.from ? `the defaults of “${start.from.name}”` : 'its defaults'}` : '' }}.
-					</p>
+				<UContainer :class="['flex-1 flex flex-col gap-4 sm:gap-6', $slots.default ? 'justify-start pt-20 pb-8' : 'justify-center py-8']">
+					<slot name="heading">
+						<h1 class="text-3xl sm:text-4xl text-highlighted font-bold">
+							{{ temporary ? 'Temporary chat' : greeting }}
+						</h1>
+						<p v-if="temporary" class="text-muted -mt-2">
+							Not in your chats, and deleted when you leave or refresh this page. You can keep it once it has started.
+						</p>
+						<p v-else-if="folder" class="text-muted -mt-2">
+							A new chat in “{{ folder.name }}”{{ start?.defaults ? `, starting from ${start.from ? `the defaults of “${start.from.name}”` : 'its defaults'}` : '' }}.
+						</p>
+					</slot>
 
 					<UAlert
 						v-if="unavailable"
@@ -215,20 +225,22 @@ const quickChats = [
 						</template>
 					</ChatPrompt>
 
-					<div class="flex flex-wrap gap-2">
-						<UButton
-							v-for="quickChat in quickChats"
-							:key="quickChat.label"
-							:icon="quickChat.icon"
-							:label="quickChat.label"
-							:disabled="loading || unavailable"
-							size="sm"
-							color="neutral"
-							variant="outline"
-							class="rounded-full"
-							@click="createChat(quickChat.label)"
-						/>
-					</div>
+					<slot>
+						<div class="flex flex-wrap gap-2">
+							<UButton
+								v-for="quickChat in quickChats"
+								:key="quickChat.label"
+								:icon="quickChat.icon"
+								:label="quickChat.label"
+								:disabled="loading || unavailable"
+								size="sm"
+								color="neutral"
+								variant="outline"
+								class="rounded-full"
+								@click="createChat(quickChat.label)"
+							/>
+						</div>
+					</slot>
 				</UContainer>
 			</div>
 		</template>
