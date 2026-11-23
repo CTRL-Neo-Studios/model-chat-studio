@@ -29,3 +29,33 @@ export function shownThread<M extends ThreadMessage>(messages: M[], leafId: stri
 export function threadTo<M extends ThreadMessage>(messages: M[], questionId: string): M[] {
 	return shownThread(messages, questionId).filter(message => message.role === 'user' || message.parentId !== questionId)
 }
+
+/**
+ * For each user message shown that has other branches at its place: every branch's first message, in the order
+ * made (`messages` in `listChatMessages` order, every branch).
+ */
+export function branchesOf<M extends ThreadMessage>(messages: M[], shown: M[]) {
+	const users = messages.filter(message => message.role === 'user')
+	const branches: Record<string, string[]> = {}
+	for (const message of shown) {
+		if (message.role !== 'user') continue
+		const siblings = users.filter(user => user.parentId === message.parentId)
+		if (siblings.length > 1) branches[message.id] = siblings.map(user => user.id)
+	}
+	return branches
+}
+
+/**
+ * The end of the branch from `from` on: at each step the branch made last, until a message nothing follows. From
+ * `null`, the newest first message's branch. `users` are a chat's user messages in the order made.
+ */
+export function branchEnd(users: { id: string, parentId: string | null }[], from: string | null) {
+	let id = from ?? users.findLast(user => !user.parentId)?.id ?? null
+	// Bounded by the number of messages, so a cycle cannot loop.
+	for (let step = 0; id && step <= users.length; step++) {
+		const next = users.findLast(user => user.parentId === id)
+		if (!next) break
+		id = next.id
+	}
+	return id
+}

@@ -3,7 +3,8 @@
 //
 //   SESSION=<value of the nuxt-auth-session cookie> [BASE_URL=http://localhost:3000] bun scripts/app-smoke.ts [--search]
 //
-// Per platform: a plain turn, an image and a PDF, a regenerate, two models answering one message at once, a library
+// Per platform: a plain turn, an image and a PDF, a regenerate, switching to the earlier version and a branch from
+// the first message, two models answering one message at once, a library
 // note found and read with the file tools, a group round in the order the message asks for, a chat started in a
 // folder whose defaults are a group (the second speaker reads the first one's chart), dictation, the spend
 // ledger, and deleting the chat. `--search` adds web search to the library question and a web search turn (on
@@ -96,6 +97,27 @@ try {
 			const after = (await api<{ messages: unknown[] }>('GET', `/chats/${chatId}`)).messages.length
 			if (after !== before) throw new Error(`the chat went from ${before} to ${after} messages`)
 			return summary(lastAnswer)
+		})
+
+		await step('versions and a branch', async () => {
+			type Thread = { messages: { id: string, role: string }[], versions: Record<string, string[]>, branches: Record<string, string[]> }
+			const before = await api<Thread>('GET', `/chats/${chatId}`)
+			// The regenerate above kept the earlier answer as version 1.
+			const answer = before.messages.findLast(entry => entry.role === 'assistant')
+			const versions = answer ? before.versions[answer.id] : undefined
+			if (!versions || versions.length < 2) throw new Error(`the last answer has ${versions?.length ?? 0} versions`)
+			await api('PATCH', `/chats/${chatId}/messages/${versions[0]}`, { active: true })
+			if (!(await api<Thread>('GET', `/chats/${chatId}`)).messages.some(entry => entry.id === versions[0])) throw new Error('version 1 is not shown after switching to it')
+			// "Save and resend" on the first message: the model answers the new text alone, and the earlier branch comes back whole.
+			const first = before.messages.find(entry => entry.role === 'user')!
+			const branch = await api<{ id: string }>('PATCH', `/chats/${chatId}/messages/${first.id}`, { text: 'Reply with the single word: ping', branch: true })
+			const answered = await turn(chatId, laneId, { trigger: 'regenerate-message', messageId: branch.id })
+			if (!/ping/i.test(answered.text)) throw new Error(`expected ping, got ${summary(answered)}`)
+			const onBranch = await api<Thread>('GET', `/chats/${chatId}`)
+			if (onBranch.messages.length !== 2 || onBranch.branches[branch.id]?.length !== 2) throw new Error(`the branch shows ${onBranch.messages.length} messages and ${onBranch.branches[branch.id]?.length ?? 0} branches`)
+			const back = await api<Thread>('PUT', `/chats/${chatId}/tip`, { messageId: first.id })
+			if (back.messages.length !== before.messages.length) throw new Error(`back on the earlier branch: ${back.messages.length} messages, ${before.messages.length} before`)
+			return `${versions.length} versions, version 1 shown; the branch ${summary(answered)}; back to ${back.messages.length} messages`
 		})
 
 		await step('two models', async () => {

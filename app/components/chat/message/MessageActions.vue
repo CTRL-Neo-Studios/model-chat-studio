@@ -14,6 +14,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
 	edit: [message: UIMessage]
 	delete: [message: UIMessage]
+	/** A user message with everything after it on its branch. */
+	deleteBranch: [message: UIMessage]
 	regenerate: [message: UIMessage]
 	vote: [message: UIMessage, isUpvoted: boolean]
 }>()
@@ -107,8 +109,8 @@ const { copy, copied } = useClipboard({ copiedDuring: 2000 })
 			</time>
 		</UTooltip>
 
-		<!-- The editor only edits text; a message with attachments is regenerated instead. -->
-		<UTooltip v-if="!message.parts.some(part => part.type === 'file')" text="Edit message">
+		<!-- The editor edits the text; attachments, "@" references and mentions stay. -->
+		<UTooltip v-if="message.parts.some(part => part.type === 'text')" text="Edit message">
 			<UButton
 				size="sm"
 				color="neutral"
@@ -119,15 +121,14 @@ const { copy, copied } = useClipboard({ copiedDuring: 2000 })
 			/>
 		</UTooltip>
 
-		<UTooltip text="Delete message">
-			<UButton
-				size="sm"
-				color="neutral"
-				variant="ghost"
-				icon="i-lucide-trash"
-				aria-label="Delete message"
-				@click="emit('delete', message)"
-			/>
-		</UTooltip>
+		<UDropdownMenu
+			:items="[
+				{ label: 'Delete this message', description: 'With its answers; what follows stays', icon: 'i-lucide-trash', onSelect: () => emit('delete', message) },
+				{ label: 'Delete this branch', description: 'This message and everything after it', icon: 'i-lucide-git-branch', color: 'error', onSelect: () => emit('deleteBranch', message) },
+			]"
+			:content="{ align: 'end' }"
+		>
+			<UButton size="sm" color="neutral" variant="ghost" icon="i-lucide-trash" aria-label="Delete" />
+		</UDropdownMenu>
 	</template>
 </template>

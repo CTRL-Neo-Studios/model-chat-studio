@@ -5,9 +5,9 @@ import * as schema from '../server/db/schema'
 import { chatAbilities, type ChatAccess } from '../shared/abilities/chatAbilities'
 import { authorize } from '../server/utils/core/authorize'
 import { setSetting } from '../server/utils/core/settings'
-import { answerAttempt, applyTurnTrigger, deleteMessage, editMessage, listAnswerVersions, listChatMessages, monthlyBudgetStatus, saveAnswer, showVersion, type TurnRequest } from '../server/utils/chat/turns'
+import { answerAttempt, applyTurnTrigger, branchMessage, chatThread, deleteMessage, editMessage, listAnswerVersions, listChatMessages, monthlyBudgetStatus, saveAnswer, showBranch, showVersion, type TurnRequest } from '../server/utils/chat/turns'
 import { assertLaneLimit, countEnabledLanes } from '../server/utils/chat/lanes'
-import { shownThread } from '../server/utils/chat/thread'
+import { shownThread, threadTo } from '../server/utils/chat/thread'
 import { createTestDb, type TestDb } from './db'
 
 let db: TestDb
@@ -202,7 +202,7 @@ test('a lane\'s thread holds its own summaries only, where they were made', asyn
 	expect(await ids(laneB)).toEqual(['u1', 'b1', 'sB', 'u2'])
 })
 
-test('editing a message changes only its text; with dropAfter its answers and the later turns go', async () => {
+test('editing a message changes only its text', async () => {
 	await applyTurnTrigger(db, chatId, say('u1'))
 	await answer('a1', 'u1')
 	await applyTurnTrigger(db, chatId, say('u2'))
@@ -212,12 +212,9 @@ test('editing a message changes only its text; with dropAfter its answers and th
 	// Regenerated last, so saved after everything else, but it answers u1.
 	await answer('a1x', 'u1')
 
-	const { message } = await editMessage(db, chatId, 'u2', { text: 'new' })
+	const message = await editMessage(db, chatId, 'u2', 'new')
 	expect(message.parts).toEqual([{ type: 'text', text: 'new' }])
 	expect(await ids()).toEqual(['u1', 'a1x', 'u2', 'a2', 'u3', 'a3'])
-
-	await editMessage(db, chatId, 'u2', { text: 'again', dropAfter: true })
-	expect(await ids()).toEqual(['u1', 'a1x', 'u2'])
 })
 
 test('editing an answer replaces its text, keeps its other parts and marks it edited', async () => {
@@ -228,15 +225,14 @@ test('editing an answer replaces its text, keeps its other parts and marks it ed
 		{ type: 'source-url', sourceId: 's', url: 'https://example.com' },
 		{ type: 'text', text: 'more' },
 	])
-	const { message } = await editMessage(db, chatId, 'a1', { text: 'new' })
+	const message = await editMessage(db, chatId, 'a1', 'new')
 	expect(message.parts).toEqual([
 		{ type: 'reasoning', text: 'thinking' },
 		{ type: 'text', text: 'new' },
 		{ type: 'source-url', sourceId: 's', url: 'https://example.com' },
 	])
 	expect(message.metadata).toMatchObject({ model: 'm', edited: true })
-	await expect(editMessage(db, chatId, 'a1', { text: 'x', dropAfter: true })).rejects.toMatchObject({ status: 400 })
-	await expect(editMessage(db, chatId, 'missing', { text: 'x' })).rejects.toMatchObject({ status: 404 })
+	await expect(editMessage(db, chatId, 'missing', 'x')).rejects.toMatchObject({ status: 404 })
 })
 
 test('deleting removes an answer alone, or a user message with its answers', async () => {
@@ -290,17 +286,36 @@ test('deleting a user message in the middle moves what followed up to its parent
 	expect(await shown()).toEqual(['u1', 'a1'])
 })
 
-test('"Save and resend" drops what followed on that message\'s branches only, and makes it the tip', async () => {
-	for (const n of [1, 2, 3]) {
-		await applyTurnTrigger(db, chatId, say(`u${n}`))
-		await answer(`a${n}`, `u${n}`)
-	}
-	await branch('u2b', 'u1')
-	await applyTurnTrigger(db, chatId, say('u3b'))
-	await editMessage(db, chatId, 'u2', { text: 'again', dropAfter: true })
-	expect(await ids()).toEqual(['u1', 'a1', 'u2', 'u2b', 'u3b'])
-	expect(await tip()).toBe('u2')
-	expect(await shown()).toEqual(['u1', 'a1', 'u2'])
+test('"Save and resend" starts a branch with the new text and the attachments; switching and deleting branches move the tip', async () => {
+	const [file] = await db.insert(schema.file).values({ ownerId: userId, chatId, blobPath: 'x', mediaType: 'image/png', size: 1 }).returning()
+	const image = { type: 'file' as const, mediaType: 'image/png', url: `/api/v1/files/${file!.id}` }
+	await applyTurnTrigger(db, chatId, say('u1'))
+	await answer('a1', 'u1')
+	await applyTurnTrigger(db, chatId, { trigger: 'submit-message', message: { id: 'u2', role: 'user', parts: [{ type: 'text', text: 'old' }, image] }, chatModelId: laneA })
+	await answer('a2', 'u2')
+	await applyTurnTrigger(db, chatId, say('u3'))
+	await answer('a3', 'u3')
+
+	const u2b = await branchMessage(db, chatId, 'u2', 'new')
+	expect(u2b).toMatchObject({ role: 'user', parentId: 'u1', parts: [{ type: 'text', text: 'new' }, image] })
+	expect([await tip(), await shown()]).toEqual([u2b.id, ['u1', 'a1', u2b.id]])
+	// The model answering the branch reads turn 1 and the new turn 2 only.
+	expect(threadTo(await listChatMessages(db, chatId), u2b.id).map(message => message.id)).toEqual(['u1', 'a1', u2b.id])
+	expect((await chatThread(db, chatId, true)).branches).toEqual({ [u2b.id]: ['u2', u2b.id] })
+
+	// Back to the earlier branch: to its end, and a new message continues it.
+	expect(await showBranch(db, chatId, 'u2')).toBe('u3')
+	expect(await shown()).toEqual(['u1', 'a1', 'u2', 'a2', 'u3', 'a3'])
+	await applyTurnTrigger(db, chatId, say('u4'))
+	expect(await parentOf('u4')).toBe('u3')
+
+	// Deleting the branch shown moves the tip to the branch made last at its place; the file stays for u2b.
+	const { ids: gone, removedFileIds } = await deleteMessage(db, chatId, 'u2', true)
+	expect(gone.toSorted()).toEqual(['a2', 'a3', 'u2', 'u3', 'u4'])
+	expect(removedFileIds).toEqual([])
+	expect([await tip(), await shown()]).toEqual([u2b.id, ['u1', 'a1', u2b.id]])
+	expect((await chatThread(db, chatId, true)).branches).toEqual({})
+	await expect(showBranch(db, chatId, 'a1')).rejects.toMatchObject({ status: 400 })
 })
 
 test('an attachment stays while another message of the chat still names it', async () => {
@@ -338,11 +353,11 @@ test('attachments link to their message once, only from the chat owner, and are 
 	await answer('a1', 'u1')
 	// Already part of u1, so another message cannot take it.
 	await expect(applyTurnTrigger(db, chatId, withFile('u2', mine))).rejects.toMatchObject({ status: 400 })
-	// The editor cannot show attachments.
-	await expect(editMessage(db, chatId, 'u1', { text: 'x' })).rejects.toMatchObject({ status: 400 })
+	// Edited text keeps the attachment.
+	expect((await editMessage(db, chatId, 'u1', 'x')).parts).toEqual([{ type: 'text', text: 'x' }, { type: 'file', mediaType: 'image/png', url: `/api/v1/files/${mine}` }])
 
-	// Resending u0 drops u1, and with it u1's attachment.
-	expect((await editMessage(db, chatId, 'u0', { text: 'edited', dropAfter: true })).removedFileIds).toEqual([mine])
+	// Deleting u0's branch drops u1, and with it u1's attachment.
+	expect((await deleteMessage(db, chatId, 'u0', true)).removedFileIds).toEqual([mine])
 })
 
 test('the budget counts this month on the instance key only; a member budget wins over the default', async () => {
@@ -396,7 +411,7 @@ test('only the owner may change a chat; shared and link access are read-only', a
 	await expect(manage(person('owner', 'user', true), linkChat)).rejects.toMatchObject({ status: 403 })
 })
 
-test('a group answer joins the round\'s speakers once, in the order answered; "Save and resend" clears them', async () => {
+test('a group answer joins the round\'s speakers once, in the order answered; a branch has rounds of its own', async () => {
 	await applyTurnTrigger(db, chatId, say('u1'))
 	const save = (id: string, lane: string) => saveAnswer(db, { id, chatId, parentId: 'u1', chatModelId: lane, parts: [{ type: 'text', text: id }], metadata: {} }, false, true)
 	const speakers = async () => (await db.select().from(schema.message).where(eq(schema.message.id, 'u1')))[0]?.metadata?.speakers
@@ -405,6 +420,7 @@ test('a group answer joins the round\'s speakers once, in the order answered; "S
 	// A regenerate keeps the lane's place.
 	await save('b2', laneB)
 	expect(await speakers()).toEqual([laneB, laneA])
-	await editMessage(db, chatId, 'u1', { text: 'again', dropAfter: true })
-	expect(await speakers()).toBeUndefined()
+	// "Save and resend": the new branch has its own rounds; the earlier one keeps its order.
+	expect((await branchMessage(db, chatId, 'u1', 'again')).metadata).toBeNull()
+	expect(await speakers()).toEqual([laneB, laneA])
 })

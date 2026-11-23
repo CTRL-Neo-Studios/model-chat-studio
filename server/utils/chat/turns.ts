@@ -9,6 +9,7 @@ import * as tables from '../../db/schema'
 import type { MessageMetadata } from '../../../shared/utils/chat'
 import { FILE_URL_PATTERN } from '../../../shared/utils/file'
 import { type Db, getSetting } from '../core/settings'
+import { branchEnd, branchesOf, shownThread } from './thread'
 
 const textPartSchema = z.object({ type: z.literal('text'), text: z.string().min(1).max(100_000) })
 /** An attachment uploaded with `PUT /chats/:id/files`; never an arbitrary URL, which the server would fetch. */
@@ -274,75 +275,61 @@ async function findMessage(db: Db, chatId: string, messageId: string) {
 	return message
 }
 
+/** A user message's parts with new text: its attachments, "@" references and mentions stay. */
+const withText = (parts: UIMessage['parts'], text: string): UIMessage['parts'] => [{ type: 'text', text }, ...parts.filter(part => part.type !== 'text')]
+
 /**
- * Replaces a message's text in place; nothing else changes. A user message is replaced whole, unless it has
- * attachments, which the editor cannot show. An answer keeps its reasoning, sources and tool parts, and is
- * marked edited. `dropAfter` (user messages) also deletes the message's answers and everything after it on its
- * branches, so it can be answered again as the tip.
- *
- * Returns the updated message and the attachments of deleted messages, which the caller deletes from storage.
+ * Replaces a message's text in place; nothing else changes. A user message keeps its attachments, "@" references
+ * and mentions. An answer keeps its reasoning, sources and tool parts, and is marked edited. Returns the message.
  */
-export async function editMessage(db: Db, chatId: string, messageId: string, edit: { text: string, dropAfter?: boolean }) {
-	return await db.transaction(async (tx) => {
-		const message = await findMessage(tx, chatId, messageId)
-		let parts: UIMessage['parts']
-		let metadata = message.metadata
-		if (message.role === 'user') {
-			if (message.parts.some(part => part.type === 'file')) throw createError({ status: 400, statusText: 'A message with attachments cannot be edited' })
-			// Its "@" references and mentions stay; the new text may name them or not.
-			parts = [{ type: 'text', text: edit.text }, ...message.parts.filter(part => part.type === 'data-reference' || part.type === 'data-mention')]
-			// Its answers go with "Save and resend", and so does the round's order.
-			if (edit.dropAfter && metadata?.speakers) {
-				const { speakers: _, ...rest } = metadata
-				metadata = Object.keys(rest).length ? rest : null
-			}
-		}
-		else if (message.role === 'assistant' && !edit.dropAfter) {
-			const first = message.parts.findIndex(part => part.type === 'text')
-			parts = message.parts.filter(part => part.type !== 'text')
-			parts.splice(first === -1 ? parts.length : first, 0, { type: 'text', text: edit.text })
-			metadata = metadata && { ...metadata, edited: true }
-		}
-		else {
-			throw createError({ status: 400, statusText: 'Only your own messages can be answered again' })
-		}
-
-		const [updated] = await tx.update(tables.message).set({ parts, metadata }).where(eq(tables.message.id, message.id))
-			.returning({ id: tables.message.id, role: tables.message.role, parts: tables.message.parts, metadata: tables.message.metadata })
-
-		let removedFileIds: string[] = []
-		if (edit.dropAfter) {
-			const later = await descendantsOf(tx, chatId, message.id)
-			const answers = await tx.select({ id: tables.message.id }).from(tables.message).where(and(
-				eq(tables.message.role, 'assistant'),
-				inArray(tables.message.parentId, [message.id, ...later]),
-			))
-			removedFileIds = await deleteMessageRows(tx, chatId, [...later, ...answers.map(row => row.id)])
-			await tx.update(tables.chat).set({ leafId: message.id }).where(eq(tables.chat.id, chatId))
-		}
-		return { message: updated!, removedFileIds }
-	})
+export async function editMessage(db: Db, chatId: string, messageId: string, text: string) {
+	const message = await findMessage(db, chatId, messageId)
+	let parts: UIMessage['parts']
+	let metadata = message.metadata
+	if (message.role === 'user') {
+		parts = withText(message.parts, text)
+	}
+	else if (message.role === 'assistant') {
+		const first = message.parts.findIndex(part => part.type === 'text')
+		parts = message.parts.filter(part => part.type !== 'text')
+		parts.splice(first === -1 ? parts.length : first, 0, { type: 'text', text })
+		metadata = metadata && { ...metadata, edited: true }
+	}
+	else {
+		throw createError({ status: 400, statusText: 'A summary cannot be edited' })
+	}
+	const [updated] = await db.update(tables.message).set({ parts, metadata }).where(eq(tables.message.id, message.id))
+		.returning({ id: tables.message.id, role: tables.message.role, parts: tables.message.parts, metadata: tables.message.metadata })
+	return updated!
 }
 
 /**
  * Deletes one message: an answer version alone, or a user message with its answers and their versions; what followed
- * the user message moves up to its parent. When the deleted answer was the one shown, the lane's newest remaining
- * version is shown (`shown`). Returns the deleted ids and their attachments, which the caller deletes from storage.
+ * the user message moves up to its parent. With `branch`, a user message goes with everything after it on its
+ * branches, and the tip, if it was there, moves to the branch made last at its place, else to its parent. When the
+ * deleted answer was the one shown, the lane's newest remaining version is shown (`shown`). Returns the deleted ids
+ * and their attachments, which the caller deletes from storage.
  */
-export async function deleteMessage(db: Db, chatId: string, messageId: string) {
+export async function deleteMessage(db: Db, chatId: string, messageId: string, branch = false) {
 	return await db.transaction(async (tx) => {
 		const message = await findMessage(tx, chatId, messageId)
+		const later = message.role === 'user' && branch ? await descendantsOf(tx, chatId, message.id) : []
 		const answers = message.role === 'user'
 			? await tx.select({ id: tables.message.id }).from(tables.message)
-					.where(and(eq(tables.message.role, 'assistant'), eq(tables.message.parentId, message.id)))
+					.where(and(eq(tables.message.role, 'assistant'), inArray(tables.message.parentId, [message.id, ...later])))
 			: []
-		if (message.role === 'user') {
+		if (message.role === 'user' && !branch) {
 			// What followed it on its branches moves up to its parent, and so does the tip.
 			await tx.update(tables.message).set({ parentId: message.parentId }).where(and(eq(tables.message.chatId, chatId), ne(tables.message.role, 'assistant'), eq(tables.message.parentId, message.id)))
 			await tx.update(tables.chat).set({ leafId: message.parentId }).where(and(eq(tables.chat.id, chatId), eq(tables.chat.leafId, message.id)))
 		}
-		const ids = [message.id, ...answers.map(row => row.id)]
+		const ids = [message.id, ...later, ...answers.map(row => row.id)]
 		const removedFileIds = await deleteMessageRows(tx, chatId, ids)
+		if (branch) {
+			// Deleting the tip's message set `leafId` to null.
+			const [chat] = await tx.select({ leafId: tables.chat.leafId }).from(tables.chat).where(eq(tables.chat.id, chatId))
+			if (!chat?.leafId) await tx.update(tables.chat).set({ leafId: branchEnd(await listUserMessages(tx, chatId), message.parentId) }).where(eq(tables.chat.id, chatId))
+		}
 		const [next] = message.role === 'assistant' && message.active && message.parentId && message.chatModelId
 			? await tx.select({ id: tables.message.id }).from(tables.message)
 					.where(and(eq(tables.message.role, 'assistant'), eq(tables.message.parentId, message.parentId), eq(tables.message.chatModelId, message.chatModelId)))
@@ -350,6 +337,63 @@ export async function deleteMessage(db: Db, chatId: string, messageId: string) {
 			: []
 		const [shown] = next ? await tx.update(tables.message).set({ active: true }).where(eq(tables.message.id, next.id)).returning(messageColumns) : []
 		return { ids, removedFileIds, shown }
+	})
+}
+
+/** A chat's user messages in the order made: the tree's nodes. */
+async function listUserMessages(db: Db, chatId: string) {
+	return await db.select({ id: tables.message.id, parentId: tables.message.parentId }).from(tables.message)
+		.where(and(eq(tables.message.chatId, chatId), eq(tables.message.role, 'user')))
+		.orderBy(asc(tables.message.seq))
+}
+
+/** Shows the branch through a user message: the tip moves to its end, taking at each step the branch made last. */
+export async function showBranch(db: Db, chatId: string, messageId: string) {
+	return await db.transaction(async (tx) => {
+		const message = await findMessage(tx, chatId, messageId)
+		if (message.role !== 'user') throw createError({ status: 400, statusText: 'Only a message of yours starts a branch' })
+		const leafId = branchEnd(await listUserMessages(tx, chatId), message.id)
+		await tx.update(tables.chat).set({ leafId }).where(eq(tables.chat.id, chatId))
+		return leafId
+	})
+}
+
+/** The branches one message may have at its place. */
+export const MAX_BRANCHES = 50
+
+/**
+ * What the chat page shows: the branch at the chat's tip, each answer the version shown; for the owner, also every
+ * version's id of the answers that have several and every branch's first message of the messages that have several.
+ */
+export async function chatThread(db: Db, chatId: string, isOwner: boolean) {
+	const [[chat], messages, versions] = await Promise.all([
+		db.select({ leafId: tables.chat.leafId }).from(tables.chat).where(eq(tables.chat.id, chatId)),
+		listChatMessages(db, chatId),
+		isOwner ? listAnswerVersions(db, chatId) : {} as Record<string, string[]>,
+	])
+	const shown = shownThread(messages, chat?.leafId ?? null)
+	return { messages: shown, versions, branches: isOwner ? branchesOf(messages, shown) : {} as Record<string, string[]> }
+}
+
+/**
+ * "Save and resend": a new branch at a user message's place, with the new text and the message's attachments,
+ * "@" references and mentions. It becomes the tip; the earlier branch stays. Returns it, as the chat lists it.
+ */
+export async function branchMessage(db: Db, chatId: string, messageId: string, text: string) {
+	return await db.transaction(async (tx) => {
+		const message = await findMessage(tx, chatId, messageId)
+		if (message.role !== 'user') throw createError({ status: 400, statusText: 'Only your own messages can be answered again' })
+		const [siblings] = await tx.select({ count: sql<number>`count(*)::int` }).from(tables.message).where(and(
+			eq(tables.message.chatId, chatId),
+			eq(tables.message.role, 'user'),
+			message.parentId ? eq(tables.message.parentId, message.parentId) : isNull(tables.message.parentId),
+		))
+		if ((siblings?.count ?? 0) >= MAX_BRANCHES) throw createError({ status: 400, statusText: `A message can have at most ${MAX_BRANCHES} branches` })
+		const [branch] = await tx.insert(tables.message)
+			.values({ id: crypto.randomUUID(), chatId, role: 'user', parentId: message.parentId, parts: withText(message.parts, text) })
+			.returning(messageColumns)
+		await tx.update(tables.chat).set({ leafId: branch!.id }).where(eq(tables.chat.id, chatId))
+		return branch!
 	})
 }
 

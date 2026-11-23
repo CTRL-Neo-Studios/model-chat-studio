@@ -110,6 +110,8 @@ async function refreshTitle() {
 const messages = shallowRef<ChatMessage[]>((data.value?.messages ?? []) as ChatMessage[])
 // Every version's id of the answers that have several, keyed by the version shown (owner only).
 const versions = shallowRef<Record<string, string[]>>({ ...data.value?.versions })
+// Every branch's first message at the places that have several, keyed by the one shown (owner only).
+const branches = shallowRef<Record<string, string[]>>({ ...data.value?.branches })
 const answers = useLaneAnswers(chatId, messages, {
 	onAnswered: refreshTitle,
 	keepPreviousOnStop: () => (me.value?.preferences.stoppedRegenerate ?? 'keep-previous') === 'keep-previous',
@@ -141,9 +143,10 @@ function writeBack() {
 		models: lanes.value as typeof chat.models,
 		messages: messages.value as typeof chat.messages,
 		versions: versions.value,
+		branches: branches.value,
 	})
 }
-watch([messages, versions], writeBack)
+watch([messages, versions, branches], writeBack)
 watch([visibility, sharedWith, settings, lanes], writeBack, { deep: true })
 
 /**
@@ -268,46 +271,68 @@ function startEdit(message: UIMessage) {
 	if (!editingMessageId.value) editingMessageId.value = message.id
 }
 
-/** Replaces a message's text. "Save and resend" also drops what followed and has every model answer again. */
+/** Replaces a message's text. "Save and resend" starts a branch with the new text instead, which every model answers. */
 async function saveEdit(message: UIMessage, text: string, resend: boolean) {
 	editingMessageId.value = null
+	let branch: ChatMessage | undefined
 	try {
 		const updated = await $fetch(`/api/v1/chats/${chatId}/messages/${message.id}`, {
 			method: 'PATCH',
 			headers: { [headerName]: csrf },
-			body: { text, dropAfter: resend || undefined },
+			body: { text, branch: resend || undefined },
 		})
 		const index = messages.value.findIndex(entry => entry.id === message.id)
-		const next = messages.value.map(entry => entry.id === message.id ? { ...entry, parts: updated.parts, metadata: updated.metadata ?? undefined } : entry)
-		messages.value = resend ? next.slice(0, index + 1) : next
+		if (resend) {
+			// The new branch takes the message's place, with nothing after it yet; the earlier branch is one switch away.
+			branch = updated as ChatMessage
+			messages.value = [...messages.value.slice(0, index), branch]
+			const { [message.id]: list, ...rest } = branches.value
+			branches.value = { ...rest, [branch.id]: [...(list ?? [message.id]), branch.id] }
+		}
+		else {
+			messages.value = messages.value.map(entry => entry.id === message.id ? { ...entry, parts: updated.parts, metadata: updated.metadata ?? undefined } : entry)
+		}
 	}
 	catch (error) {
 		toast.add({ description: serverMessage(error) ?? 'Failed to save the message', icon: 'i-lucide-alert-circle', color: 'error' })
 		return
 	}
-	if (resend) answers.regenerateAll(question(message.id), roundOrder(question(message.id).parts))
+	if (branch) answers.regenerateAll(branch, roundOrder(branch.parts))
+}
+
+/** The thread as the server shows it now: after a deletion or a switch of branch. */
+function setThread(thread: { messages: unknown[], versions: Record<string, string[]>, branches: Record<string, string[]> }) {
+	messages.value = thread.messages as ChatMessage[]
+	versions.value = thread.versions
+	branches.value = thread.branches
 }
 
 const deleteModal = useOverlay().create(LazyModalConfirm)
 
 async function deleteMessage(message: UIMessage) {
 	const confirmed = await deleteModal.open(message.role === 'user'
-		? { title: 'Delete message', description: 'This message and its answers will be deleted. This cannot be undone.', color: 'error' }
+		? { title: 'Delete message', description: 'This message and its answers will be deleted; what follows it stays. This cannot be undone.', color: 'error' }
 		: versions.value[message.id]
 			? { title: 'Delete this version', description: 'This version of the response will be deleted; the newest one left is shown. This cannot be undone.', color: 'error' }
 			: { title: 'Delete response', description: 'This response will be deleted. This cannot be undone.', color: 'error' }).result
 	if (!confirmed) return
-	try {
-		const { ids, shown } = await $fetch(`/api/v1/chats/${chatId}/messages/${message.id}`, { method: 'DELETE', headers: { [headerName]: csrf } })
-		// A deleted version gives its place to the version shown now.
-		messages.value = messages.value.flatMap(entry => entry.id === message.id && shown ? [shown as ChatMessage] : ids.includes(entry.id) ? [] : [entry])
-		const { [message.id]: list, ...rest } = versions.value
-		const left = list?.filter(id => !ids.includes(id)) ?? []
-		versions.value = shown && left.length > 1 ? { ...rest, [shown.id]: left } : rest
-	}
-	catch (error) {
-		toast.add({ description: serverMessage(error) ?? 'Failed to delete the message', icon: 'i-lucide-alert-circle', color: 'error' })
-	}
+	const result = await act<{ thread: Parameters<typeof setThread>[0] }>(`/api/v1/chats/${chatId}/messages/${message.id}`, { method: 'DELETE' })
+	if (result) setThread(result.thread)
+}
+
+/** Deletes a user message with everything after it on its branch; the chat shows the branch beside it, or what came before. */
+async function deleteBranch(message: UIMessage) {
+	const confirmed = await deleteModal.open({ title: 'Delete this branch', description: 'This message and everything after it on this branch will be deleted. Other branches stay. This cannot be undone.', color: 'error' }).result
+	if (!confirmed) return
+	const result = await act<{ thread: Parameters<typeof setThread>[0] }>(`/api/v1/chats/${chatId}/messages/${message.id}?branch=true`, { method: 'DELETE' })
+	if (result) setThread(result.thread)
+}
+
+/** Shows another branch at a message's place, to its end; the conversation continues from there. */
+async function showBranch(id: string) {
+	if (answers.busy.value) return
+	const thread = await act<Parameters<typeof setThread>[0]>(`/api/v1/chats/${chatId}/tip`, { method: 'PUT', body: { messageId: id } })
+	if (thread) setThread(thread)
 }
 
 /** Shows another version of an answer in its place; the models read that version from then on. */
@@ -485,15 +510,19 @@ onMounted(() => {
 						</template>
 
 						<template v-if="isOwner" #actions="{ message }">
-							<ChatMessageActions
-								v-if="message.role === 'user'"
-								:message="message"
-								:streaming="false"
-								:editing="editingMessageId === message.id"
-								:vote="null"
-								@edit="startEdit"
-								@delete="deleteMessage"
-							/>
+							<template v-if="message.role === 'user'">
+								<!-- The message's branches: the conversation continues from the one shown. -->
+								<ChatSwitch v-if="branches[message.id] && editingMessageId !== message.id" :ids="branches[message.id]!" :current="message.id" noun="branch" :disabled="answers.busy.value" @show="showBranch" />
+								<ChatMessageActions
+									:message="message"
+									:streaming="false"
+									:editing="editingMessageId === message.id"
+									:vote="null"
+									@edit="startEdit"
+									@delete="deleteMessage"
+									@delete-branch="deleteBranch"
+								/>
+							</template>
 						</template>
 
 						<template v-if="isOwner" #footer>

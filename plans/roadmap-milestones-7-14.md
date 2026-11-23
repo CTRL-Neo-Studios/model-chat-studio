@@ -1,6 +1,6 @@
 # Roadmap: milestones 7 to 14
 
-Status: milestone 7 complete with its live run (2026-11-22); 8.1 and 8.2 built (2026-11-23), 8.3 next. Eight milestones, each with its own plan file. The conventions of milestone 1 (section 2 there) and the way of working so far apply unchanged: spikes first where a plan lists them, one phase per step, a check against a fixture platform for each phase, a live run at the end of each milestone.
+Status: milestones 7 and 8 complete with their live runs (2026-11-23); milestone 9's spikes done, 9.1 next. Eight milestones, each with its own plan file. The conventions of milestone 1 (section 2 there) and the way of working so far apply unchanged: spikes first where a plan lists them, one phase per step, a check against a fixture platform for each phase, a live run at the end of each milestone.
 
 ## Order
 
@@ -40,7 +40,7 @@ Everything else about them is in the spikes of milestone 10.
 ## Asked of you, when the milestone starts
 
 1. **The OpenRouter chat export sample** (milestone 12, before spike N).
-2. **Character cards to test with** (milestone 9, before spike J): a few of your own, or I use public ones.
+2. ~~**Character cards to test with** (milestone 9, before spike J)~~: received 2026-11-23, "Ignathius (UT)" as JSON and PNG in `scripts/testdata/`; spike J also used SillyTavern's default "Seraphina".
 
 ## Across milestones
 

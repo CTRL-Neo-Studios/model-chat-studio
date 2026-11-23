@@ -37,7 +37,6 @@ const streaming = computed(() => props.pending?.status === 'streaming')
 const writing = computed(() => props.pending?.status === 'submitted' || streaming.value)
 // A group speaker still waiting for its turn in the round.
 const queued = computed(() => props.pending?.status === 'queued')
-const versionIndex = computed(() => props.versions?.indexOf(props.message?.id ?? '') ?? -1)
 </script>
 
 <template>
@@ -89,12 +88,8 @@ const versionIndex = computed(() => props.versions?.indexOf(props.message?.id ??
 		</div>
 
 		<div v-if="isOwner && message" :class="['flex items-center gap-0.5', card ? 'px-1.5 pb-1.5' : 'mt-1 -ms-1.5']">
-			<!-- The answer's versions, oldest first; the version shown is the one the models read from then on. -->
-			<div v-if="versions && versions.length > 1 && !writing && !editing" class="flex items-center text-xs text-muted tabular-nums">
-				<UButton icon="i-lucide-chevron-left" size="xs" color="neutral" variant="ghost" aria-label="Earlier version" :disabled="busy || versionIndex === 0" @click="emit('show', versions[versionIndex - 1]!)" />
-				<span :aria-label="`Version ${versionIndex + 1} of ${versions.length}`">{{ versionIndex + 1 }}/{{ versions.length }}</span>
-				<UButton icon="i-lucide-chevron-right" size="xs" color="neutral" variant="ghost" aria-label="Later version" :disabled="busy || versionIndex === versions.length - 1" @click="emit('show', versions[versionIndex + 1]!)" />
-			</div>
+			<!-- The answer's versions; the version shown is the one the models read from then on. -->
+			<ChatSwitch v-if="versions && versions.length > 1 && !writing && !editing" :ids="versions" :current="message.id" noun="version" :disabled="busy" @show="id => emit('show', id)" />
 			<ChatMessageActions
 				:message="message"
 				:streaming="writing"
