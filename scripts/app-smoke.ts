@@ -3,66 +3,13 @@
 //
 //   SESSION=<value of the nuxt-auth-session cookie> [BASE_URL=http://localhost:3000] bun scripts/app-smoke.ts [--search]
 //
-// Per platform: a plain turn, an image and a PDF, a regenerate, two models answering one message at once,
-// dictation, the spend ledger, and deleting the chat. `--search` adds a web search turn (on OpenRouter that costs about $0.02).
-// The test files come from `scripts/smoke-files.ts` (macOS makes them; elsewhere `--wav`, `--image`, `--pdf`).
+// Per platform: a plain turn, an image and a PDF, a regenerate, two models answering one message at once, a library
+// note found and read with the file tools, a group round in the order the message asks for, dictation, the spend
+// ledger, and deleting the chat. `--search` adds web search to the library question and a web search turn (on
+// OpenRouter each costs about $0.02). The test files come from `scripts/smoke-files.ts` (macOS makes them; elsewhere
+// `--wav`, `--image`, `--pdf`).
 import { IMAGE_WORD, makeSmokeFiles, PDF_WORD, SENTENCE } from './smoke-files'
-
-const BASE = (process.env.BASE_URL ?? 'http://localhost:3000').replace(/\/$/, '')
-if (!process.env.SESSION) {
-	console.error('Set SESSION to the value of the nuxt-auth-session cookie of an admin (browser dev tools, Application > Cookies).')
-	process.exit(1)
-}
-
-// Cookies: the session, plus whatever the first page sets (the CSRF secret).
-const cookies: Record<string, string> = { 'nuxt-auth-session': process.env.SESSION }
-const cookieHeader = () => Object.entries(cookies).map(([name, value]) => `${name}=${value}`).join('; ')
-const home = await fetch(`${BASE}/`, { headers: { cookie: cookieHeader() }, redirect: 'manual' })
-for (const line of home.headers.getSetCookie()) {
-	const [pair] = line.split(';')
-	const [name, ...value] = pair!.split('=')
-	cookies[name!.trim()] = value.join('=')
-}
-const csrf = /name="csrf-token" content="([^"]+)"/.exec(await home.text())?.[1]
-if (home.status !== 200 || !csrf) {
-	console.error(`The home page answered ${home.status} without a CSRF token: is SESSION an admin's current session?`)
-	process.exit(1)
-}
-
-async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
-	const response = await fetch(`${BASE}/api/v1${path}`, {
-		method,
-		headers: { 'cookie': cookieHeader(), 'csrf-token': csrf!, ...(body !== undefined && !(body instanceof FormData) && { 'content-type': 'application/json' }) },
-		body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body),
-	})
-	const text = await response.text()
-	if (!response.ok) throw new Error(`${method} ${path} answered ${response.status}: ${text.slice(0, 300)}`)
-	return text ? JSON.parse(text) : undefined as T
-}
-
-interface Turn { text: string, messageId?: string, metadata?: Record<string, unknown>, error?: string, sources: string[] }
-
-/** Sends one lane's turn and reads the UI message stream the way the chat page does. */
-async function turn(chatId: string, chatModelId: string, body: Record<string, unknown>): Promise<Turn> {
-	const response = await fetch(`${BASE}/api/v1/chats/${chatId}`, {
-		method: 'POST',
-		headers: { 'cookie': cookieHeader(), 'csrf-token': csrf!, 'content-type': 'application/json' },
-		body: JSON.stringify({ ...body, chatModelId }),
-	})
-	if (!response.ok) throw new Error(`turn answered ${response.status}: ${(await response.text()).slice(0, 300)}`)
-	const result: Turn = { text: '', sources: [] }
-	for (const line of (await response.text()).split('\n')) {
-		if (!line.startsWith('data: ') || line === 'data: [DONE]') continue
-		const chunk = JSON.parse(line.slice(6))
-		if (chunk.type === 'start') result.messageId = chunk.messageId
-		if (chunk.type === 'text-delta') result.text += chunk.delta
-		if (chunk.type === 'source-url') result.sources.push(chunk.url)
-		if (chunk.type === 'error') result.error = chunk.errorText
-		if (chunk.messageMetadata) result.metadata = { ...result.metadata, ...chunk.messageMetadata }
-	}
-	if (result.error) throw new Error(`the turn failed: ${result.error}`)
-	return result
-}
+import { api, BASE, cookieHeader, turn, type Turn } from './smoke-client'
 
 let failures = 0
 async function step(name: string, run: () => Promise<string>) {
@@ -161,6 +108,57 @@ try {
 			if (saved !== 1) throw new Error(`the message was saved ${saved} times`)
 			if (!/pong/i.test(first!.text) || !/second/i.test(other!.text)) throw new Error(`got ${summary(first!)} and ${summary(other!)}`)
 			return `${summary(first!)} and ${summary(other!)}`
+		})
+
+		await step('library tools', async () => {
+			// A note the model is not given: no tags, so auto-fetch (tags by default) leaves it to the file tools.
+			const codename = `KESTREL-${Math.floor(1000 + Math.random() * 9000)}`
+			const library = await api<{ id: string }>('POST', '/libraries', { name: `Smoke ${codename}` })
+			try {
+				await api('POST', `/libraries/${library.id}/entries`, { kind: 'note', name: 'project.md', content: ['# Project notes', '', 'Kick-off on Monday.', 'The team meets on Thursdays.', `Codename: ${codename}`].join('\n') })
+				await api('PUT', `/chats/${chatId}/libraries/${library.id}`)
+				// With --search, tools and web search in one answer.
+				const search = process.argv.includes('--search') && model.webSearch
+				if (search) await api('PATCH', `/chats/${chatId}`, { settings: { webSearch: true } })
+				const question = `Read the project note in this chat's library and tell me the codename on its last line.${search ? ' Also look up on the web what the latest Nuxt release is, and cite your source.' : ''}`
+				lastAnswer = await turn(chatId, laneId, { trigger: 'submit-message', message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: question }] } })
+				const tools = lastAnswer.tools.join(', ') || 'none'
+				if (!lastAnswer.tools.some(name => name === 'list_files' || name === 'search_files') || !lastAnswer.tools.includes('read_file')) throw new Error(`tools called: ${tools}; ${summary(lastAnswer)}`)
+				if (!lastAnswer.text.includes(codename)) throw new Error(`no ${codename} after ${tools}: ${summary(lastAnswer)}`)
+				if (search && !lastAnswer.sources.length) throw new Error(`no web sources after ${tools}: ${summary(lastAnswer)}`)
+				return `${tools}; ${summary(lastAnswer)}${search ? `, ${lastAnswer.sources.length} sources` : ''}`
+			}
+			finally {
+				await api('DELETE', `/libraries/${library.id}`)
+			}
+		})
+
+		await step('group round', async () => {
+			// Designer first in lane order: the order has to come from the message.
+			const groupId = crypto.randomUUID()
+			await api('POST', '/chats', { id: groupId, mode: 'group', models: [{ modelId: model.id, name: 'Designer' }, { modelId: model.id, name: 'Engineer' }], message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'Hello, both of you.' }] } })
+			try {
+				const lanes = (await api<{ models: { id: string, name: string | null }[] }>('GET', `/chats/${groupId}`)).models
+				const nameOf = (id: string) => lanes.find(lane => lane.id === id)?.name
+				const text = 'Engineer, solve this: what is 17 × 23? Designer, put the Engineer\'s result in one sentence afterwards.'
+				const order = await api<{ speakers: string[], by: string }>('POST', `/chats/${groupId}/speakers`, { text, mentions: [] })
+				if (order.speakers.map(nameOf).join(', ') !== 'Engineer, Designer') throw new Error(`order ${order.speakers.map(nameOf).join(', ')}, by ${order.by}`)
+				// One after another, as the chat page asks them.
+				const message = { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text }] }
+				const answers: Turn[] = []
+				for (const id of order.speakers) answers.push(await turn(groupId, id, { trigger: 'submit-message', message }))
+				const { messages } = await api<{ messages: { id: string, metadata?: { speakers?: string[] } | null }[] }>('GET', `/chats/${groupId}`)
+				const saved = messages.find(entry => entry.id === message.id)?.metadata?.speakers ?? []
+				if (saved.join() !== order.speakers.join()) throw new Error(`saved speakers ${saved.map(nameOf).join(', ') || 'none'}`)
+				const [engineer, designer] = answers
+				const { traces } = await api<{ traces: { messageId: string, blocks: { kind: string, role: string, messageId?: string }[] }[] }>('GET', `/chats/${groupId}/overview`)
+				const given = traces.find(trace => trace.messageId === designer!.messageId)?.blocks.some(block => block.kind === 'message' && block.role === 'user' && block.messageId === engineer!.messageId)
+				if (!given) throw new Error('the Designer was not given the Engineer\'s answer')
+				return `by ${order.by}: Engineer ${summary(engineer!)}, then Designer ${summary(designer!)}`
+			}
+			finally {
+				await api('DELETE', `/chats/${groupId}`)
+			}
 		})
 
 		if (process.argv.includes('--search')) {

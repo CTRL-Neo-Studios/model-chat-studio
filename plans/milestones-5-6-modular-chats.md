@@ -200,6 +200,8 @@ Live run, `bun run dev`, decision model `typesafe/jev-1.14`, the "Group" profile
 
 Both Designers drew with the chart tool from the Engineer's answer; neither wrote for the other. The Engineers addressed the Designer by name ("Designer, over to you") without answering for it.
 
+Repeatable since the live checks (`plans/live-checks.md`): `scripts/decision-battery.ts` runs this battery through `POST /chats/:id/speakers` (66 of 66 on 2026-11-22), and `scripts/app-smoke.ts` has a group round whose Designer must be given the Engineer's answer.
+
 ## 5. To verify before building
 
 - **Spike F, group transcript: confirmed live.** A weather-app chat, two rounds; the speaker's own round-1 line as an assistant message, everyone else's (user included) as user messages starting with "Name:", several user messages in a row. Instructions: who the speaker is, who else is present, that others' messages start with their name, and to answer once as itself without writing for anyone else or starting with its own name. Designer (after the Engineer) and Architect (after both) on DeepSeek `deepseek-flash` with thinking off and on, OpenRouter `openai/gpt-5-mini` and `deepseek/deepseek-v4.1-flash`: 8 of 8 answered once, as themselves, on topic, with no lines for others and no name prefix. The Architects built on the Designer's answer of the same round (its 30-minute dimming), so a speaker reads and uses the earlier ones. 1.1 to 2.5 s on DeepSeek, 7 to 11 s on `gpt-5-mini`; together about $0.004.

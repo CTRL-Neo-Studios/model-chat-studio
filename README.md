@@ -71,9 +71,12 @@ Through a running instance, as an admin (it switches the active platform for the
 
 ```bash
 SESSION=<nuxt-auth-session cookie> BASE_URL=http://localhost:3000 bun scripts/app-smoke.ts [--search]
+SESSION=<nuxt-auth-session cookie> BASE_URL=http://localhost:3000 bun scripts/decision-battery.ts [--model typesafe/jev-1.14] [--repeats 3]
 ```
 
-It runs, on each platform with an instance key: a turn, an image and a PDF, a regenerate, dictation, the spend ledger, and deleting the chat. `--search` adds a web search turn (about $0.02 on OpenRouter). The test files are made with macOS tools; elsewhere pass `--wav`, `--image` and `--pdf`.
+`app-smoke.ts` runs, on each platform with an instance key: a turn, an image and a PDF, a regenerate, two models answering one message, a library note found and read with the file tools, a group round in the order the message asks for (the second speaker given the first one's answer), dictation, the spend ledger, and deleting the chat. `--search` adds web search to the library question and a web search turn (about $0.02 each on OpenRouter). The test files are made with macOS tools; elsewhere pass `--wav`, `--image` and `--pdf`.
+
+`decision-battery.ts` asks the decision model who answers spike G's messages, through `POST /chats/:id/speakers`, with two and three participants in both orders; it sets the decision model for the run and puts the setting back, prints every miss, and fails below 95%. It needs an OpenRouter key; a run of 66 calls costs about $0.002 and takes about 5 minutes (the route allows 20 calls a minute).
 
 ## Limits
 
