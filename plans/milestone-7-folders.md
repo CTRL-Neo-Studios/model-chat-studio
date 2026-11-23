@@ -1,6 +1,6 @@
 # Milestone 7: folders with a page and fuller defaults; group speakers see charts
 
-Status: planned. Part of `roadmap-milestones-7-12.md`. No migration.
+Status: 7.1 built; 7.2 next. Part of `roadmap-milestones-7-14.md`. No migration.
 
 Goal: a folder can be a place to work in, the way a project was, without becoming one. It still only organises chats unless you give it defaults.
 
@@ -54,6 +54,8 @@ Goal: a folder can be a place to work in, the way a project was, without becomin
 | 7.1 | Fuller defaults: schema, the dialog's new fields, "Use this chat's setup", the home page starting from them, `POST /chats` filling what is absent | tests for the fill and for each "goes missing" rule; in Chromium against a fixture platform: a folder set from a two-model group chat starts a new chat with the same two models, group mode, Character and web search, and the fixture receives them; a folder without defaults starts as the home page does |
 | 7.2 | The folder page and "Open folder" | in Chromium: the page lists a folder's chats and sub-folders, starts a chat in it from its prompt, and edits its defaults; a reload arrives with skeletons, a click from the sidebar with its data |
 | 7.3 | Group speakers see the others' charts | a test for the thread builder; the fixture's second request holds the first speaker's chart data under its name |
+
+Built (7.1): `folderDefaultsSchema` takes `models` (`newLaneSchema`, moved to `shared/utils/chat.ts`), `mode`, `userCharacterId` and `settings`; `nearestWithDefaults` returns the folder the defaults come from (`nearestDefaults` is gone). `folderStart` (`server/utils/chat/folderStart.ts`) applies the "goes missing" rules once, for both `POST /chats` (what the request leaves out) and the new `GET /folders/:id/start`, which the new-chat screen reads instead of working the rules out itself; it also returns the lanes as the values they start with. `PATCH /folders/:id` checks the models and Character as chat creation does. The dialog sets models (by profile; lanes with fields of their own come from a chat), the answers' mode, who you are and web search; other chat settings copied from a chat are kept and said so. "Use as the folder's defaults…" sits in the menu of a chat inside a folder and opens the dialog filled with that chat's setup, to review before saving. Fixture check in Chromium (DeepSeek fixture): a two-model group chat (Engineer, Designer) with Captain and web search, used as "Work"'s defaults; `/?folder=` showed "2 models in a group"; the new chat was in the folder, group, Captain, web search on, lanes Engineer/blue and Designer/pink, and the requests held "This is a group chat. You are Engineer…", "The user is Captain.", "Captain: Plan the release" and DeepSeek's web search tools; a folder without defaults showed the home page's models with "A new chat in “Plain 71”." NuxtHub's schema type cache had to be cleared again (`FolderDefaults` lives outside the schema file).
 
 ## 6. Ceilings and things left out
 

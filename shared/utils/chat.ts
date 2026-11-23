@@ -77,6 +77,11 @@ export const laneFieldsSchema = z.object({
 
 export type LaneFields = z.infer<typeof laneFieldsSchema>
 
+/** A lane to create: lane fields, optionally starting from a profile (`profileId`) that they are applied over. */
+export const newLaneSchema = laneFieldsSchema.partial().extend({ profileId: z.uuid().optional() })
+
+export type NewLane = z.infer<typeof newLaneSchema>
+
 /** The editable fields of a model profile: a model with its settings, used to start lanes. */
 export const profileFieldsSchema = z.object({
 	name: z.string().trim().min(1).max(60),

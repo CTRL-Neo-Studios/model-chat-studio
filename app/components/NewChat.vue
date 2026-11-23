@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { ChatSettings } from '#shared/utils/chat'
-import { nearestDefaults } from '#shared/utils/folderDefaults'
 import type { PromptCommand } from '~/components/chat/Prompt.vue'
 
 /** The new-chat screen: pick models, write the first message. `temporary` starts a chat that is not kept. */
@@ -36,24 +35,6 @@ const lastSettings = useCookie<ChatSettings>('chat-settings', { default: () => (
 const { autoFetch: _, ...lastShared } = lastSettings.value
 settings.value = { ...lastShared }
 
-// "Start a chat" on the profiles page starts from that profile alone. The lanes start from the profiles, so they
-// fill in once the profiles are here (usually cached already); until then the models menu is a placeholder.
-const { data: profilesData } = useQuery(modelProfilesQuery)
-const profileId = useRoute().query.profile
-const lanesReady = ref(false)
-const stopLanes = watch(profilesData, (profiles) => {
-	if (!profiles || lanesReady.value) return
-	const fromQuery = profiles.find(profile => profile.id === profileId)
-	lanes.value = (fromQuery ? [{ profileId: fromQuery.id }] : lastLanes.value).flatMap((source) => {
-		if (!source.profileId) return [draft({ modelId: source.modelId ?? null })]
-		const profile = profiles.find(entry => entry.id === source.profileId)
-		return profile ? [draft(fromProfile(profile))] : []
-	})
-	if (!lanes.value.length) lanes.value = [draft({})]
-	lanesReady.value = true
-	queueMicrotask(() => stopLanes())
-}, { immediate: true })
-
 const greeting = computed(() => {
 	const hour = new Date().getHours()
 	const timeGreeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
@@ -64,39 +45,58 @@ const greeting = computed(() => {
 // Files upload to the new chat's id before the chat exists; creating it links them to the first message.
 const { uploads, promptFiles, uploading, parts: fileParts } = usePromptUploads(chatId)
 
-// The libraries the chat will read and its structure profile, chosen before the first message; "@" names their files.
-// `?folder=` starts the chat in that folder, with the folder's defaults (or the nearest above) filled in, removable.
-const folderParam = props.temporary ? undefined : useRoute().query.folder
-const { data: libraryList } = useQuery(librariesQuery)
-const { data: folderList } = useQuery(foldersQuery)
-const { data: profileList } = useQuery(structureProfilesQuery)
-const folder = computed(() => typeof folderParam === 'string' ? folderList.value?.find(entry => entry.id === folderParam) : undefined)
+// What the chat starts with, all removable before the first message: the libraries it reads, its structure profile,
+// the answers' mode and who the user is.
 const libraryIds = ref<string[]>([])
 const structureProfileId = ref<string | null>(null)
-// The defaults fill in once the folders, libraries and profiles are here; sending waits for that, so a chat started
-// at once does not go out without them. Libraries left and profiles deleted since the defaults were set are skipped.
-const defaultsReady = ref(typeof folderParam !== 'string')
-const stopDefaults = watch([folderList, libraryList, profileList], ([folders, libraries, profiles]) => {
-	if (defaultsReady.value || !folders || !libraries || !profiles) return
-	const defaults = folder.value ? nearestDefaults(folders, folder.value.id) : null
-	libraryIds.value = (defaults?.libraryIds ?? []).filter(id => libraries.some(library => library.id === id))
-	structureProfileId.value = profiles.find(profile => profile.id === defaults?.structureProfileId)?.id ?? null
-	defaultsReady.value = true
-	queueMicrotask(() => stopDefaults())
-}, { immediate: true })
-const ready = computed(() => lanesReady.value && defaultsReady.value)
-// Who the user is: their default Character from the settings until they pick another here.
+// Separate answers, or a group chat where the models share one thread and answer in turn; fixed once the chat starts.
+const mode = ref<'separate' | 'group'>('separate')
+// Who the user is: their default Character from the settings until they (or the folder) pick another.
 const { data: me } = useQuery(meQuery)
 const userCharacterChoice = ref<string | null>()
 const userCharacterId = computed({
 	get: () => userCharacterChoice.value !== undefined ? userCharacterChoice.value : me.value?.preferences.characterId ?? null,
 	set: (value: string | null) => userCharacterChoice.value = value,
 })
+
+// "Start a chat" on the profiles page starts from that profile alone. `?folder=` starts the chat in that folder, from
+// its defaults (or the nearest folder's above), as the server resolves them for this member; a folder without any
+// starts as the home page does. Otherwise the last chat's models and settings. Until the profiles (and the folder's
+// start) are here the models menu is a placeholder, and sending waits, so a chat does not go out without them.
+const { data: profilesData } = useQuery(modelProfilesQuery)
+const profileId = useRoute().query.profile
+const folderParam = props.temporary ? undefined : useRoute().query.folder
+const inFolder = typeof folderParam === 'string'
+const { data: start, status: startStatus } = useQuery(() => ({ ...folderStartQuery(inFolder ? folderParam : ''), enabled: import.meta.client && inFolder }))
+const folder = computed(() => start.value?.folder)
+const ready = ref(false)
+const stopSetup = watch([profilesData, startStatus], ([profiles, status]) => {
+	if (ready.value || !profiles || (inFolder && status === 'pending')) return
+	const defaults = start.value?.defaults
+	const fromQuery = profiles.find(profile => profile.id === profileId)
+	const fromFolder = !fromQuery && start.value?.lanes
+	lanes.value = fromFolder
+		? fromFolder.map(lane => draft(lane))
+		: (fromQuery ? [{ profileId: fromQuery.id }] : lastLanes.value).flatMap((source) => {
+				if (!source.profileId) return [draft({ modelId: source.modelId ?? null })]
+				const profile = profiles.find(entry => entry.id === source.profileId)
+				return profile ? [draft(fromProfile(profile))] : []
+			})
+	if (!lanes.value.length) lanes.value = [draft({})]
+	if (defaults) {
+		libraryIds.value = defaults.libraryIds
+		structureProfileId.value = defaults.structureProfileId
+		if (defaults.settings) settings.value = { ...defaults.settings }
+		if (defaults.mode) mode.value = defaults.mode
+		if (defaults.userCharacterId !== undefined) userCharacterChoice.value = defaults.userCharacterId
+	}
+	ready.value = true
+	queueMicrotask(() => stopSetup())
+}, { immediate: true })
+
+const { data: libraryList } = useQuery(librariesQuery)
 const { items: libraryMentions, partsFor } = useLibraryMentions(() => libraryIds.value.flatMap(id => (libraryList.value ?? []).find(library => library.id === id) ?? []))
 const references = ref<string[]>([])
-
-// Separate answers, or a group chat where the models share one thread and answer in turn; fixed once the chat starts.
-const mode = ref<'separate' | 'group'>('separate')
 // "@" in a group chat names the participants first: picked ones answer the first round, in the order written.
 const participants = useParticipantMentions(() => mode.value === 'group' ? enabledLanes.value.map(lane => chatLanes.laneName(lane)) : [])
 const mentions = computed(() => [...participants.items.value, ...libraryMentions.value])
@@ -165,7 +165,7 @@ const quickChats = [
 		<template #header>
 			<Navbar>
 				<template #title>
-					<ChatModelsMenu v-if="!unavailable && lanesReady" v-model:mode="mode" :chat-lanes="chatLanes" choose-mode />
+					<ChatModelsMenu v-if="!unavailable && ready" v-model:mode="mode" :chat-lanes="chatLanes" choose-mode />
 					<USkeleton v-else-if="!unavailable" class="h-8 w-40" aria-label="Loading the models" />
 				</template>
 			</Navbar>
@@ -181,7 +181,7 @@ const quickChats = [
 						Not in your chats, and deleted when you leave or refresh this page. You can keep it once it has started.
 					</p>
 					<p v-else-if="folder" class="text-muted -mt-2">
-						A new chat in “{{ folder.name }}”, starting from its defaults.
+						A new chat in “{{ folder.name }}”{{ start?.defaults ? `, starting from ${start.from ? `the defaults of “${start.from.name}”` : 'its defaults'}` : '' }}.
 					</p>
 
 					<UAlert

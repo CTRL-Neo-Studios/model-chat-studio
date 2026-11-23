@@ -1,6 +1,6 @@
-# Roadmap: milestones 7 to 12
+# Roadmap: milestones 7 to 14
 
-Status: 7.1 in progress (2026-11-22). Six milestones, each with its own plan file. The conventions of milestone 1 (section 2 there) and the way of working so far apply unchanged: spikes first where a plan lists them, one phase per step, a check against a fixture platform for each phase, a live run at the end of each milestone.
+Status: 7.1 built (2026-11-22); 7.2 next. Eight milestones, each with its own plan file. The conventions of milestone 1 (section 2 there) and the way of working so far apply unchanged: spikes first where a plan lists them, one phase per step, a check against a fixture platform for each phase, a live run at the end of each milestone.
 
 ## Order
 
@@ -12,8 +12,10 @@ Status: 7.1 in progress (2026-11-22). Six milestones, each with its own plan fil
 | 10 | Read-aloud and image generation | `milestone-10-read-aloud-images.md` | 7.3 for "speakers see images" | spikes + 4 |
 | 11 | Edit access for people a chat is shared with | `milestone-11-shared-editing.md` | 8.2 (the chat's tip) | 3 |
 | 12 | Export and import of chats | `milestone-12-export-import.md` | 8 to 11, so the file covers branches, versions, images and authors | spike + 4 |
+| 13 | Explore: publishing and getting Characters, libraries, structure profiles and packs | `milestone-13-explore.md` | 7.1 (folder defaults as a pack's setup), 9 (what a Character holds) | spike + 4 |
+| 14 | Explore: stars, star lists, review before publishing, reports | `milestone-14-explore-stars-review.md` | 13 | 3 |
 
-Why this order: folders are small and change nothing underneath. Branching changes how messages are stored, so it comes before everything that reads or writes them. Cards reuse answer versions for alternate greetings. Export comes last so its file format is written once.
+Why this order: folders are small and change nothing underneath. Branching changes how messages are stored, so it comes before everything that reads or writes them. Cards reuse answer versions for alternate greetings. Export comes after 8 to 11 so its file format is written once. Explore copies Characters, libraries and folder setups between members, so it waits for milestone 9 to finish what a Character is; it needs nothing of 10 to 12 and can move up to right after 9.
 
 ## Decided (your answers, 2026-11-22)
 
@@ -24,6 +26,7 @@ Why this order: folders are small and change nothing underneath. Branching chang
 | Regenerate | Keeps the earlier answers as versions; later messages stay, and nothing after the answer is sent to the model. That is what OpenRouter's Chatroom does on retry (you, 2026-11-22), so Regenerate keeps its name and there is no second button. Editing with "Save and resend" starts a branch. |
 | Edit access | The sender pays: their own key, else the instance key against their budget. |
 | Images | A switch on the chat (the model decides when to draw), plus a `/image` command. Through the stored OpenRouter key whichever platform answers. |
+| Explore (you, 2026-11-22) | A place on the instance to publish and get Characters, libraries, structure profiles and whole setups, without money, after nuxt.com/modules. Stars and named star lists as on GitHub; saving to a list stars. Admins and moderators control it: open by default, or reviewed (each publication approved, or rejected with a reason and published again), or off. |
 
 ## What the platforms offer (docs read 2026-11-22)
 
@@ -41,6 +44,6 @@ Everything else about them is in the spikes of milestone 10.
 
 ## Across milestones
 
-- Migrations: `0018` (milestone 8), `0019` (9), `0020` (11). Milestones 7, 10 and 12 need none.
+- Migrations: one each for milestones 8, 9, 11, 13 and 14, numbered from `0018` in the order they are built. Milestones 7, 10 and 12 need none.
 - New usage kinds: `tts`, `image` (10). Usage is always recorded for whoever made the call.
 - `scripts/app-smoke.ts` gains a step per milestone, so each one stays checkable live.

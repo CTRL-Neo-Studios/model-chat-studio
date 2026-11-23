@@ -1,6 +1,6 @@
 # Milestone 8: branching
 
-Status: planned. Part of `roadmap-milestones-7-12.md`. Migration `0018`.
+Status: planned. Part of `roadmap-milestones-7-14.md`. One migration.
 
 Goal: nothing is thrown away when an answer is written again or a message is changed. Two things, with two names:
 

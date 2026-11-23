@@ -1,7 +1,7 @@
 import { createError } from 'nuxt/server'
 import { and, asc, count, eq, isNull, or } from 'drizzle-orm'
 import { z } from 'zod'
-import { laneFieldsSchema, type LaneFields } from '../../../shared/utils/chat'
+import type { LaneFields, NewLane } from '../../../shared/utils/chat'
 // Relative, not `hub:db`, so this module also loads in `bun test`.
 import * as tables from '../../db/schema'
 import { type Db, getSetting } from '../core/settings'
@@ -20,9 +20,6 @@ const laneColumns = {
 	params: tables.chatModel.params,
 	characterId: tables.chatModel.characterId,
 }
-
-/** A lane to create: lane fields, optionally starting from a profile (`profileId`) that they are applied over. */
-export const newLaneSchema = laneFieldsSchema.partial().extend({ profileId: z.uuid().optional() })
 
 /** A chat's lanes in their display order. */
 export async function listChatModels(db: Db, chatId: string) {
@@ -70,7 +67,7 @@ export async function laneValues(db: Db, fields: Partial<LaneFields>) {
  * The values of a new lane. From a profile, the lane copies it (and keeps its id, for "Apply to profile");
  * the given fields apply on top. Only the member's own profiles and Characters, and the instance ones, can be used.
  */
-export async function newLaneValues(db: Db, userId: string, { profileId, ...fields }: z.infer<typeof newLaneSchema>) {
+export async function newLaneValues(db: Db, userId: string, { profileId, ...fields }: NewLane) {
 	let base = {}
 	if (profileId) {
 		const [profile] = await db.select().from(tables.modelProfile).where(and(

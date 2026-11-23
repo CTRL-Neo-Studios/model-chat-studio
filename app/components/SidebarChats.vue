@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DropdownMenuItem, TreeItem } from '@nuxt/ui'
 import { LazyModalConfirm, LazyModalFolderDefaults, LazyModalMoveTo, LazyModalRename } from '#components'
-import { nearestDefaults } from '#shared/utils/folderDefaults'
+import { type FolderDefaults, nearestWithDefaults } from '#shared/utils/folderDefaults'
 import type { UIChat } from '~/composables/useChats'
 
 /**
@@ -165,20 +165,34 @@ async function deleteFolder(folder: Folder) {
 	}
 }
 
-// "Defaults…": what new chats started in the folder begin with.
-async function editDefaults(folder: Folder) {
-	const above = folder.parentId ? folders.value.find(entry => entry.id === folder.parentId) : undefined
-	const inheritedDefaults = above ? nearestDefaults(folders.value, above.id) : null
-	const from = inheritedDefaults && folders.value.find(entry => entry.defaults === inheritedDefaults)
+// "Defaults…": what new chats started in the folder begin with. `preset` fills the dialog with another setup first.
+async function editDefaults(folder: Folder, preset?: FolderDefaults) {
+	const inherited = folder.parentId ? nearestWithDefaults(folders.value, folder.parentId) : null
 	const defaults = await defaultsModal.open({
 		name: folder.name,
-		defaults: folder.defaults,
-		inherited: inheritedDefaults && from ? { from: from.name, defaults: inheritedDefaults } : null,
+		defaults: preset ?? folder.defaults,
+		own: !!folder.defaults,
+		inherited: inherited && { from: inherited.name, defaults: inherited.defaults },
 	}).result
 	if (defaults === undefined) return
 	const before = folderList.value
 	queryCache.setQueryData(foldersQuery.key, list => list?.map(entry => entry.id === folder.id ? { ...entry, defaults } : entry) ?? [])
 	if (!await act(`/api/v1/folders/${folder.id}`, { method: 'PATCH', body: { defaults }, success: 'Defaults saved' }) && before) queryCache.setQueryData(foldersQuery.key, before)
+}
+
+/** "Use as the folder's defaults…": the chat's models, mode, who you are, settings, libraries and profile, to review and save. */
+async function setupAsDefaults(chatId: string, folder: Folder) {
+	const { data: chat } = await queryCache.refresh(queryCache.ensure(chatQuery(chatId)))
+	if (!chat) return
+	await editDefaults(folder, {
+		// Only libraries the member can still open: a chat can name others'.
+		libraryIds: chat.libraries.flatMap(library => library.role ? [library.id] : []),
+		structureProfileId: chat.structureProfileId,
+		models: chat.models.map(({ profileId, name, color, modelId, systemPrompt, params, enabled, characterId }) => ({ ...(profileId && { profileId }), name, color, modelId, systemPrompt, params, enabled, characterId })),
+		mode: chat.mode,
+		userCharacterId: chat.userCharacterId,
+		settings: chat.settings,
+	})
 }
 
 function folderActions(folder: Folder): DropdownMenuItem[][] {
@@ -196,12 +210,14 @@ function folderActions(folder: Folder): DropdownMenuItem[][] {
 }
 
 function chatActions(chat: { id: string, label: string }): DropdownMenuItem[][] {
+	const folder = folders.value.find(entry => entry.id === props.chats.find(item => item.id === chat.id)?.folderId)
 	return [[
 		pinItem('chat', chat.id),
 		{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => renameChat(chat.id, chat.label === 'Untitled' ? '' : chat.label) },
 		{ label: 'Move to…', icon: 'i-lucide-folder-input', onSelect: () => moveTo('chat', chat.id, chat.label) },
+		...(folder ? [{ label: 'Use as the folder\'s defaults…', icon: 'i-lucide-folder-cog', onSelect: () => setupAsDefaults(chat.id, folder) }] : []),
 	], [
-		{ label: 'Delete', icon: 'i-lucide-trash', color: 'error', onSelect: () => deleteChat(chat.id) },
+		{ label: 'Delete', icon: 'i-lucide-trash', color: 'error' as const, onSelect: () => deleteChat(chat.id) },
 	]]
 }
 

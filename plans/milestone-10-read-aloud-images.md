@@ -1,6 +1,6 @@
 # Milestone 10: read-aloud and image generation
 
-Status: planned. Part of `roadmap-milestones-7-12.md`. No migration. Needs 7.3 for "speakers see images".
+Status: planned. Part of `roadmap-milestones-7-14.md`. No migration. Needs 7.3 for "speakers see images".
 
 Goal: an answer can be listened to, and a chat can make images.
 

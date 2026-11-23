@@ -30,6 +30,14 @@ export const foldersQuery = defineQueryOptions({
 	query: () => useRequestFetch()('/api/v1/folders'),
 })
 
+/** What a new chat in a folder starts with, as the server resolves the folder's defaults for this member. */
+export const folderStartQuery = defineQueryOptions((id: string) => ({
+	key: ['folders', id, 'start'],
+	query: () => useRequestFetch()(`/api/v1/folders/${id}/start`),
+	// It depends on profiles, Characters and libraries that change elsewhere: read it again on each visit.
+	staleTime: 0,
+}))
+
 export const pinsQuery = defineQueryOptions({
 	key: ['pins'],
 	query: () => useRequestFetch()('/api/v1/pins'),

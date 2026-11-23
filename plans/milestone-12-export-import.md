@@ -1,6 +1,6 @@
 # Milestone 12: export and import of chats
 
-Status: planned. Part of `roadmap-milestones-7-12.md`. No migration. Comes last, so the file covers branches, versions, images and authors (milestones 8 to 11).
+Status: planned. Part of `roadmap-milestones-7-14.md`. No migration. Comes after milestones 8 to 11, so the file covers branches, versions, images and authors.
 
 Goal: a chat can leave this instance and come back, or come in from OpenRouter's Chatroom.
 

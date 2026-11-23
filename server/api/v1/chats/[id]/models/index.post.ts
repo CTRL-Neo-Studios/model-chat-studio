@@ -4,7 +4,8 @@ import { eq, max } from 'drizzle-orm'
 import { z } from 'zod'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { requireChat } from '#server/utils/chat/access'
-import { assertLaneLimit, countEnabledLanes, findChatModel, newLaneSchema, newLaneValues } from '#server/utils/chat/lanes'
+import { assertLaneLimit, countEnabledLanes, findChatModel, newLaneValues } from '#server/utils/chat/lanes'
+import { newLaneSchema } from '#shared/utils/chat'
 
 const bodySchema = newLaneSchema.extend({
 	/** Copies this lane of the chat; the other fields apply on top. */

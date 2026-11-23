@@ -1,6 +1,6 @@
 # Milestone 9: Character cards
 
-Status: planned. Part of `roadmap-milestones-7-12.md`. Migration `0019`. Needs 8.1 (answer versions) for alternate greetings.
+Status: planned. Part of `roadmap-milestones-7-14.md`. One migration. Needs 8.1 (answer versions) for alternate greetings.
 
 Goal: a Character becomes what a character card describes (a face, an opening line, example dialogue, a lorebook), and cards made elsewhere can be brought in and taken out.
 

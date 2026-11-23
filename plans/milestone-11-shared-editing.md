@@ -1,6 +1,6 @@
 # Milestone 11: edit access for people a chat is shared with
 
-Status: planned. Part of `roadmap-milestones-7-12.md`. Migration `0020`. Needs 8.2 (the chat's tip).
+Status: planned. Part of `roadmap-milestones-7-14.md`. One migration. Needs 8.2 (the chat's tip).
 
 Goal: someone a chat is shared with can take part in it, not only read it.
 
@@ -33,7 +33,7 @@ Goal: someone a chat is shared with can take part in it, not only read it.
 | Table | Change |
 |---|---|
 | `chatShare` | adds `role` (`viewer`, `editor`; default `viewer`) |
-| `message` | adds `userId` (FK `user`, set null): who sent a user message. Migration `0020` sets it to the chat's owner on existing messages. |
+| `message` | adds `userId` (FK `user`, set null): who sent a user message. The migration sets it to the chat's owner on existing messages. |
 
 ## 4. API
 

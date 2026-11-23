@@ -10,6 +10,8 @@ import { profileAbilities } from '#shared/abilities/profileAbilities'
 import { authorize } from '#server/utils/core/authorize'
 import { findLibrary } from '#server/utils/library/libraries'
 import { findStructureProfile } from '#server/utils/chat/structureProfiles'
+import { newLaneValues } from '#server/utils/chat/lanes'
+import { assertCharacterUsable } from '#server/utils/chat/characters'
 
 const bodySchema = z.object({
 	name: folderNameSchema,
@@ -29,9 +31,11 @@ export default defineEventHandler(async (event) => {
 	const folder = folders.find(entry => entry.id === id)
 	if (!folder) throw createError({ status: 404, statusText: 'Folder not found' })
 	if (fields.parentId !== undefined) assertFolderParent(folders, fields.parentId, id)
-	// Defaults name only libraries and profiles the member may use now; later losses are skipped when used.
+	// Defaults name only what the member may use now; later losses are skipped when a chat starts (`folderStart`).
 	for (const libraryId of fields.defaults?.libraryIds ?? []) await authorize(event, libraryAbilities().readLibrary, await findLibrary(db, libraryId))
 	if (fields.defaults?.structureProfileId) await authorize(event, profileAbilities().readProfile, await findStructureProfile(db, fields.defaults.structureProfileId))
+	for (const lane of fields.defaults?.models ?? []) await newLaneValues(db, user.id, lane)
+	await assertCharacterUsable(db, user.id, fields.defaults?.userCharacterId)
 
 	const [updated] = await db.update(schema.chatFolder).set(fields).where(eq(schema.chatFolder.id, id!)).returning(folderColumns)
 	return updated!
