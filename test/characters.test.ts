@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
 import { fillPlaceholders, laneIdentity } from '../shared/utils/character'
+import { greetingMessages } from '../server/utils/chat/greetings'
 
 const lane = { name: null, color: null, systemPrompt: 'Answer as {{char}} would.' }
 
@@ -48,4 +49,21 @@ test('a Character\'s example dialogue and closing note are filled like its instr
 	expect(identity.closingNote).toBe('Stay Wren; Captain is listening.')
 	expect(laneIdentity({ lane, character: { name: 'Q', color: null, instructions: '', examples: ' ', note: '' }, modelName: 'M', userName: 'Ana' }))
 		.toMatchObject({ examples: undefined, closingNote: undefined })
+})
+
+test('greetings: every answering lane\'s Character greets, filled, the first shown; in a group only the first lane', () => {
+	const characters = { w: { name: 'Wren', color: 'blue' as const, greetings: ['Hi {{user}}, I am {{char}}.', 'Back again, {{user}}?'] }, q: { name: 'Quiet', color: null, greetings: [] }, b: { name: 'Bard', color: null, greetings: ['A song!'] } }
+	const lanes = [
+		{ id: 'l0', enabled: true, color: null, characterId: 'q' },
+		{ id: 'l1', enabled: true, color: 'red' as const, characterId: 'w' },
+		{ id: 'l2', enabled: false, color: null, characterId: 'b' },
+		{ id: 'l3', enabled: true, color: null, characterId: 'b' },
+	]
+	const written = greetingMessages({ chatId: 'c', lanes, characters, userName: 'Ana', group: false })
+	expect(written.map(({ chatModelId, active, parts, parentId, metadata }) => ({ chatModelId, active, text: parts[0]!.text, parentId, metadata }))).toEqual([
+		{ chatModelId: 'l1', active: true, text: 'Hi Ana, I am Wren.', parentId: null, metadata: { greeting: true, lane: { name: 'Wren', color: 'red' } } },
+		{ chatModelId: 'l1', active: false, text: 'Back again, Ana?', parentId: null, metadata: { greeting: true, lane: { name: 'Wren', color: 'red' } } },
+		{ chatModelId: 'l3', active: true, text: 'A song!', parentId: null, metadata: { greeting: true, lane: { name: 'Bard', color: null } } },
+	])
+	expect(greetingMessages({ chatId: 'c', lanes, characters, userName: 'Ana', group: true }).map(message => message.chatModelId)).toEqual(['l1', 'l1'])
 })

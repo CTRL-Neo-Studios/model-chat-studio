@@ -92,3 +92,9 @@ test('the others\' charts come as JSON in place, cut when long; failed charts an
 	expect(engineer).not.toContain('secret')
 	expect(critic).toBe(`user Critic: [chart] ${JSON.stringify(sales)}`)
 })
+
+test('a greeting opens the shared thread: the greeter\'s own, the others\' under its name', () => {
+	const greeted: Stored[] = [{ id: 'g', role: 'assistant', parentId: null, chatModelId: 'Bard', metadata: { greeting: true, lane: { name: 'Bard', color: null } }, parts: [{ type: 'text', text: 'Welcome, traveller.' }] }, user('u1', 'Hello', ['Bard', 'Guard'])]
+	expect(read(groupThread(greeted, { laneId: 'Bard', questionId: 'u1', userName: 'Captain' }))).toEqual(['assistant Welcome, traveller.', 'user Captain: Hello'])
+	expect(read(groupThread(greeted, { laneId: 'Guard', questionId: 'u1', userName: 'Captain' }))).toEqual(['user Bard: Welcome, traveller.', 'user Captain: Hello'])
+})

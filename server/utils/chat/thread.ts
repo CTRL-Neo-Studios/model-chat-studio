@@ -2,9 +2,9 @@ interface ThreadMessage { id: string, role: 'user' | 'assistant' | 'system', par
 
 /**
  * The branch of a chat that ends at `leafId`, from its messages in `listChatMessages` order (every branch, the
- * shown version of each answer): the user messages on the way from the first one to the tip, each with its answers,
- * and the summaries made on that way. Without a tip, or one that is gone, the newest user message is the tip.
- * The rows keep their order, so an answer stays under its question and a summary at its place.
+ * shown version of each answer): the greetings, the user messages on the way from the first one to the tip, each with
+ * its answers, and the summaries made on that way. Without a tip, or one that is gone, the newest user message is
+ * the tip. The rows keep their order, so an answer stays under its question and a summary at its place.
  */
 export function shownThread<M extends ThreadMessage>(messages: M[], leafId: string | null): M[] {
 	const byId = Object.fromEntries(messages.map(message => [message.id, message]))
@@ -15,11 +15,8 @@ export function shownThread<M extends ThreadMessage>(messages: M[], leafId: stri
 		path[id] = true
 		id = byId[id]?.parentId ?? undefined
 	}
-	return messages.filter(message => message.role === 'user'
-		? path[message.id]
-		: message.role === 'assistant'
-			? !!message.parentId && path[message.parentId]
-			: !message.parentId || path[message.parentId])
+	// Answers and summaries follow their message; a greeting answers none, so it opens every branch.
+	return messages.filter(message => message.role === 'user' ? path[message.id] : !message.parentId || path[message.parentId])
 }
 
 /**

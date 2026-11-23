@@ -128,6 +128,8 @@ export interface MessageMetadata {
 	fetched?: { entryId: string, name: string }[]
 	/** A group chat's user message: the lanes that answered it, in speaking order. */
 	speakers?: string[]
+	/** A Character's greeting, written when the chat started: it answers no message, and is not regenerated. */
+	greeting?: boolean
 }
 
 /**

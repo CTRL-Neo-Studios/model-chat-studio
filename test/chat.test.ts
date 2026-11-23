@@ -135,6 +135,22 @@ test('the regenerate cap counts the versions made, whichever is shown', async ()
 	expect(await answerAttempt(db, laneA, 'u1')).toBe(3)
 })
 
+test('greetings are versions of one answer to no message: shown first, switched, and read by their lane only', async () => {
+	await db.insert(schema.message).values([
+		{ id: 'g1', chatId, role: 'assistant', parentId: null, chatModelId: laneA, active: true, parts: [{ type: 'text', text: 'Hello' }] },
+		{ id: 'g2', chatId, role: 'assistant', parentId: null, chatModelId: laneA, active: false, parts: [{ type: 'text', text: 'Welcome back' }] },
+	])
+	await applyTurnTrigger(db, chatId, say('u1'))
+	expect(await ids()).toEqual(['g1', 'u1'])
+	expect(await ids(laneB)).toEqual(['u1'])
+	expect(await listAnswerVersions(db, chatId)).toEqual({ g1: ['g1', 'g2'] })
+	await showVersion(db, chatId, 'g2')
+	expect(await ids(laneA)).toEqual(['g2', 'u1'])
+	expect((await deleteMessage(db, chatId, 'g2')).shown).toMatchObject({ id: 'g1' })
+	// A greeting is not answered again: it answers no message.
+	await expect(applyTurnTrigger(db, chatId, regenerate('g1'))).rejects.toMatchObject({ status: 400 })
+})
+
 test('a stopped answer can leave the earlier answer in place; a first answer is saved either way', async () => {
 	const save = (id: string, parentId: string) => saveAnswer(db, { id, chatId, parentId, chatModelId: laneA, parts: [{ type: 'text', text: id }], metadata: { platform: 'deepseek', model: 'm' } }, true)
 	await applyTurnTrigger(db, chatId, say('u1'))

@@ -150,12 +150,13 @@ watch([messages, versions, branches], writeBack)
 watch([visibility, sharedWith, settings, lanes], writeBack, { deep: true })
 
 /**
- * The page as a list: each user message followed by one entry for its answers, and a divider where the chat was
- * compacted, holding that run of summaries (one per lane).
+ * The page as a list: the greetings as one entry (`answers:`, they answer no message), each user message followed by
+ * one entry for its answers, and a divider where the chat was compacted, holding that run of summaries (one per lane).
  */
 const shown = computed(() => messages.value.flatMap((message, index): ChatMessage[] => {
 	if (message.role === 'user') return [message, { id: `answers:${message.id}`, role: 'assistant', parts: [{ type: 'text', text: '' }], parentId: message.id }]
 	if (message.role === 'system' && messages.value[index - 1]?.role !== 'system') return [{ id: `summaries:${message.id}`, role: 'assistant', parts: [{ type: 'text', text: '' }] }]
+	if (message.role === 'assistant' && !message.parentId && !messages.value.slice(0, index).some(earlier => earlier.role === 'assistant' && !earlier.parentId)) return [{ id: 'answers:', role: 'assistant', parts: [{ type: 'text', text: '' }], parentId: null }]
 	return []
 }))
 
@@ -204,12 +205,13 @@ async function runCommand(kind: PromptCommand['kind']) {
  * arrived.
  */
 function slotsFor(questionId: string) {
-	const speakers = group.value ? question(questionId).metadata?.speakers ?? [] : []
+	const speakers = group.value ? messages.value.find(message => message.id === questionId)?.metadata?.speakers ?? [] : []
 	const place = (laneId: string | null | undefined) => {
 		const index = speakers.indexOf(laneId ?? '')
 		return index === -1 ? speakers.length : index
 	}
-	const given = messages.value.filter(message => message.role === 'assistant' && message.parentId === questionId)
+	// Greetings (`questionId` '') answer no message.
+	const given = messages.value.filter(message => message.role === 'assistant' && (message.parentId ?? '') === questionId)
 	const arrived = (laneId: string) => {
 		const index = given.findIndex(answer => answer.chatModelId === laneId)
 		return index === -1 ? given.length : index
@@ -372,11 +374,12 @@ async function vote(message: UIMessage, isUpvoted: boolean) {
 	}
 }
 
-// A chat just created arrives with only its first message: every model answers it. Coming back to it later does
-// not, even when its cached copy still has one message.
+// A chat just created arrives with only its first message (and its Characters' greetings): every model answers it.
+// Coming back to it later does not, even when its cached copy still has one message.
 onMounted(() => {
-	const [first] = messages.value
-	if (isOwner.value && messages.value.length === 1 && first && props.firstAnswer) {
+	const asked = messages.value.filter(message => message.role === 'user')
+	const [first] = asked
+	if (isOwner.value && asked.length === 1 && first && props.firstAnswer && !messages.value.some(message => message.parentId === first.id)) {
 		answers.regenerateAll(first, roundOrder(first.parts))
 	}
 })
@@ -467,11 +470,11 @@ onMounted(() => {
 									:is-owner="isOwner"
 									:editing="!!slot.message && editingMessageId === slot.message.id"
 									:vote="slot.message ? getVote(slot.message.id) : null"
-									:regenerable="!!slot.lane"
+									:regenerable="!!slot.lane && message.id !== 'answers:'"
 									:versions="slot.message && versions[slot.message.id]"
 									:busy="answers.busy.value"
 									:class="settings.answerLayout !== 'stack' && !group && cards(message.id.slice(8)) ? 'min-w-80 flex-1 basis-0' : undefined"
-									@regenerate="slot.lane && answers.regenerate(slot.lane.id, question(message.id.slice(8)))"
+									@regenerate="slot.lane && message.id !== 'answers:' && answers.regenerate(slot.lane.id, question(message.id.slice(8)))"
 									@show="id => slot.message && showVersion(slot.message, id)"
 									@stop="slot.lane && answers.stop(message.id.slice(8), slot.lane.id)"
 									@dismiss="slot.lane && answers.dismiss(message.id.slice(8), slot.lane.id)"

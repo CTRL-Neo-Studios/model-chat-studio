@@ -33,15 +33,24 @@ function sharedText(answer: StoredMessage) {
  * A group chat's shared thread as one speaker (`laneId`) sees it: every user message and every answer, each round's
  * answers in speaking order (the user message's `speakers`). The speaker's own answers stay its own; the user's
  * messages and the other speakers' answers become user messages that start with the writer's name, the answers as
- * their text and charts (reasoning and other tool calls stay with whoever made them). Summaries pass through.
+ * their text and charts (reasoning and other tool calls stay with whoever made them). A greeting opens the thread.
+ * Summaries pass through.
  *
  * With `questionId`, the thread ends at that round, holding the speakers before this one: on a regenerate, those
  * before its place in `speakers`; otherwise every answer given so far. Without, the whole thread (for `/compact`).
  */
 export function groupThread(messages: StoredMessage[], { laneId, questionId, userName }: { laneId: string, questionId?: string, userName: string }): UIMessage[] {
 	const thread: UIMessage[] = []
+	/** The speaker's own answer as it is; another's as a user message under its name, if it says anything. */
+	const pushAnswer = (answer: StoredMessage) => {
+		const shared = answer.chatModelId === laneId ? undefined : sharedText(answer)
+		if (answer.chatModelId === laneId) thread.push(answer)
+		else if (shared) thread.push({ id: answer.id, role: 'user', parts: [{ type: 'text', text: `${answer.metadata?.lane?.name ?? 'Another model'}: ${shared}` }] })
+	}
 	for (const message of messages) {
 		if (message.role === 'system') thread.push(message)
+		// A greeting answers no message: it opens the thread.
+		if (message.role === 'assistant' && !message.parentId) pushAnswer(message)
 		if (message.role !== 'user') continue
 		thread.push(labelled(message, userName))
 
@@ -60,13 +69,7 @@ export function groupThread(messages: StoredMessage[], { laneId, questionId, use
 		const seen = message.id === questionId
 			? answers.filter(answer => answer.chatModelId !== laneId && (own === -1 || place(answer) < own))
 			: answers
-		for (const answer of seen) {
-			if (answer.chatModelId === laneId) thread.push(answer)
-			else {
-				const shared = sharedText(answer)
-				if (shared) thread.push({ id: answer.id, role: 'user', parts: [{ type: 'text', text: `${answer.metadata?.lane?.name ?? 'Another model'}: ${shared}` }] })
-			}
-		}
+		for (const answer of seen) pushAnswer(answer)
 		if (message.id === questionId) break
 	}
 	return thread

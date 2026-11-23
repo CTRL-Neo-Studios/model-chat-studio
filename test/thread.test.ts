@@ -41,3 +41,9 @@ test('a model answering a message reads the path to it, without its answers or a
 test('a parent chain that loops ends instead of hanging', () => {
 	expect(ids(shownThread([user('x', 'y'), user('y', 'x')], 'x'))).toEqual(['x', 'y'])
 })
+
+test('a greeting answers no message: it opens every branch, and the first message\'s answerer reads it', () => {
+	const greeted: Row[] = [{ id: 'g', role: 'assistant', parentId: null }, ...chat]
+	expect(ids(shownThread(greeted, 'u3b'))).toEqual(['g', 'u1', 'a1', 'u2b', 'a2b', 'u3b', 'a3b'])
+	expect(ids(threadTo(greeted, 'u1'))).toEqual(['g', 'u1'])
+})

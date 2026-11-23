@@ -9,8 +9,9 @@ const { models } = useModels()
 
 // Model, provider, tokens, cost and time, as far as the platform reported them.
 const parts = computed(() => {
-	const { model, provider, inputTokens, outputTokens, reasoningTokens, costUsd, durationMs, edited } = props.metadata
+	const { model, provider, inputTokens, outputTokens, reasoningTokens, costUsd, durationMs, edited, greeting } = props.metadata
 	return [
+		greeting ? 'Greeting' : undefined,
 		models.value.find(entry => entry.id === model)?.name ?? model,
 		provider,
 		inputTokens !== undefined && outputTokens !== undefined && `${formatTokens(inputTokens)} in · ${formatTokens(outputTokens)} out`,

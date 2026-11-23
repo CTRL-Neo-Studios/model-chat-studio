@@ -269,6 +269,9 @@ async function descendantsOf(db: Db, chatId: string, messageId: string) {
 	return found
 }
 
+/** Messages after the same one: an answer's question, a branch's place; none for greetings and first messages. */
+const sameParent = (parentId: string | null) => parentId ? eq(tables.message.parentId, parentId) : isNull(tables.message.parentId)
+
 async function findMessage(db: Db, chatId: string, messageId: string) {
 	const [message] = await db.select().from(tables.message).where(and(eq(tables.message.id, messageId), eq(tables.message.chatId, chatId)))
 	if (!message) throw createError({ status: 404, statusText: 'Message not found' })
@@ -330,9 +333,9 @@ export async function deleteMessage(db: Db, chatId: string, messageId: string, b
 			const [chat] = await tx.select({ leafId: tables.chat.leafId }).from(tables.chat).where(eq(tables.chat.id, chatId))
 			if (!chat?.leafId) await tx.update(tables.chat).set({ leafId: branchEnd(await listUserMessages(tx, chatId), message.parentId) }).where(eq(tables.chat.id, chatId))
 		}
-		const [next] = message.role === 'assistant' && message.active && message.parentId && message.chatModelId
+		const [next] = message.role === 'assistant' && message.active && message.chatModelId
 			? await tx.select({ id: tables.message.id }).from(tables.message)
-					.where(and(eq(tables.message.role, 'assistant'), eq(tables.message.parentId, message.parentId), eq(tables.message.chatModelId, message.chatModelId)))
+					.where(and(eq(tables.message.role, 'assistant'), eq(tables.message.chatModelId, message.chatModelId), sameParent(message.parentId)))
 					.orderBy(desc(tables.message.seq)).limit(1)
 			: []
 		const [shown] = next ? await tx.update(tables.message).set({ active: true }).where(eq(tables.message.id, next.id)).returning(messageColumns) : []
@@ -386,7 +389,7 @@ export async function branchMessage(db: Db, chatId: string, messageId: string, t
 		const [siblings] = await tx.select({ count: sql<number>`count(*)::int` }).from(tables.message).where(and(
 			eq(tables.message.chatId, chatId),
 			eq(tables.message.role, 'user'),
-			message.parentId ? eq(tables.message.parentId, message.parentId) : isNull(tables.message.parentId),
+			sameParent(message.parentId),
 		))
 		if ((siblings?.count ?? 0) >= MAX_BRANCHES) throw createError({ status: 400, statusText: `A message can have at most ${MAX_BRANCHES} branches` })
 		const [branch] = await tx.insert(tables.message)
@@ -401,10 +404,10 @@ export async function branchMessage(db: Db, chatId: string, messageId: string, t
 export async function showVersion(db: Db, chatId: string, messageId: string) {
 	return await db.transaction(async (tx) => {
 		const message = await findMessage(tx, chatId, messageId)
-		if (message.role !== 'assistant' || !message.parentId || !message.chatModelId) throw createError({ status: 400, statusText: 'Only an answer of a model in this chat has versions' })
+		if (message.role !== 'assistant' || !message.chatModelId) throw createError({ status: 400, statusText: 'Only an answer of a model in this chat has versions' })
 		await tx.update(tables.message).set({ active: false }).where(and(
 			eq(tables.message.role, 'assistant'),
-			eq(tables.message.parentId, message.parentId),
+			sameParent(message.parentId),
 			eq(tables.message.chatModelId, message.chatModelId),
 			eq(tables.message.active, true),
 		))

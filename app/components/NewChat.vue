@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ChatSettings } from '#shared/utils/chat'
+import { characterAvatarUrl, fillPlaceholders } from '#shared/utils/character'
 import type { PromptCommand } from '~/components/chat/Prompt.vue'
 
 /**
@@ -61,6 +62,21 @@ const userCharacterChoice = ref<string | null>()
 const userCharacterId = computed({
 	get: () => userCharacterChoice.value !== undefined ? userCharacterChoice.value : me.value?.preferences.characterId ?? null,
 	set: (value: string | null) => userCharacterChoice.value = value,
+})
+
+// The greetings the chat will open with, as `POST /chats` writes them (`greetingMessages`): every answering lane's
+// Character's first one, in a group only the first lane's, with `{{char}}` and `{{user}}` filled.
+const { data: characterList } = useQuery(charactersQuery)
+const greetingPreviews = computed(() => {
+	const byId = Object.fromEntries((characterList.value ?? []).map(character => [character.id, character]))
+	const userName = (userCharacterId.value && byId[userCharacterId.value]?.name) || user.value?.name || user.value?.username || 'you'
+	const greeting = enabledLanes.value.flatMap((lane) => {
+		const character = lane.characterId ? byId[lane.characterId] : undefined
+		return character?.greetings.length
+			? [{ laneId: lane.id, name: character.name, color: lane.color ?? character.color, avatar: characterAvatarUrl(character), text: fillPlaceholders(character.greetings[0]!, { char: character.name, user: userName }), more: character.greetings.length - 1 }]
+			: []
+	})
+	return mode.value === 'group' && enabledLanes.value.length >= 2 ? greeting.slice(0, 1) : greeting
 })
 
 // "Start a chat" on the profiles page starts from that profile alone. In a folder the chat starts from its defaults
@@ -193,6 +209,16 @@ const quickChats = [
 							A new chat in “{{ folder.name }}”{{ start?.defaults ? `, starting from ${start.from ? `the defaults of “${start.from.name}”` : 'its defaults'}` : '' }}.
 						</p>
 					</slot>
+
+					<!-- The chat opens with these: each answering Character's first greeting, in a group only the first one's. -->
+					<div v-for="preview in greetingPreviews" :key="preview.laneId" class="flex flex-col gap-1.5 rounded-lg border border-default p-3">
+						<div class="flex items-center gap-2">
+							<LaneDot :color="preview.color" :avatar="preview.avatar" avatar-class="size-6" />
+							<span class="text-sm font-medium text-highlighted">{{ preview.name }}</span>
+							<span class="text-xs text-dimmed">opens the chat{{ preview.more ? `; ${preview.more} more ${preview.more === 1 ? 'greeting' : 'greetings'} to flip to` : '' }}</span>
+						</div>
+						<ChatComark :value="preview.text" :streaming="false" class="text-sm text-muted line-clamp-6" />
+					</div>
 
 					<UAlert
 						v-if="unavailable"

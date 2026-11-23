@@ -12,7 +12,8 @@ import { authorize } from '#server/utils/core/authorize'
 import { findLibrary, MAX_CHAT_LIBRARIES } from '#server/utils/library/libraries'
 import { findStructureProfile } from '#server/utils/chat/structureProfiles'
 import { folderStart } from '#server/utils/chat/folderStart'
-import { assertCharacterUsable } from '#server/utils/chat/characters'
+import { assertCharacterUsable, charactersById } from '#server/utils/chat/characters'
+import { greetingMessages } from '#server/utils/chat/greetings'
 import { userPreferencesSchema } from '#shared/utils/preferences'
 
 const bodySchema = z.object({
@@ -37,8 +38,9 @@ const bodySchema = z.object({
 })
 
 /**
- * Creates a chat with its lanes and first message. Each lane's answer is requested with `POST /chats/:id`. In a
- * folder, what the request leaves out comes from the folder's defaults (`folderStart`).
+ * Creates a chat with its lanes, the greetings of their Characters (`greetingMessages`) and its first message. Each
+ * lane's answer is requested with `POST /chats/:id`. In a folder, what the request leaves out comes from the folder's
+ * defaults (`folderStart`).
  */
 export default defineEventHandler(async (event) => {
 	const user = await useServerAuth().requireUser(event)
@@ -67,17 +69,26 @@ export default defineEventHandler(async (event) => {
 			: preferred && await assertCharacterUsable(db, user.id, preferred).then(() => preferred, () => null)
 	await assertCharacterUsable(db, user.id, userCharacterId)
 	await assertLaneLimit(db, models.filter(fields => fields.enabled !== false).length)
-	const lanes = await Promise.all(models.map(async (fields, position) => ({ chatId: id, position, ...await newLaneValues(db, user.id, fields) })))
+	const lanes = await Promise.all(models.map(async (fields, position) => ({ id: crypto.randomUUID(), chatId: id, position, ...await newLaneValues(db, user.id, fields) })))
+	const characters = await charactersById(db, [...lanes.map(lane => lane.characterId ?? null), userCharacterId ?? null])
+	const greetings = greetingMessages({
+		chatId: id,
+		lanes: lanes.map(lane => ({ id: lane.id, enabled: lane.enabled ?? true, color: lane.color ?? null, characterId: lane.characterId ?? null })),
+		characters,
+		userName: (userCharacterId && characters[userCharacterId]?.name) || user.name || user.username,
+		group: mode === 'group',
+	})
 
 	return await db.transaction(async (tx) => {
 		const [chat] = await tx.insert(schema.chat).values({ id, userId: user.id, settings, temporary, folderId, structureProfileId, userCharacterId, mode }).onConflictDoNothing().returning()
-		const [saved] = chat
-			? await tx.insert(schema.message).values({ id: message.id, chatId: id, role: 'user', parts: message.parts }).onConflictDoNothing().returning()
-			: []
-		if (!chat || !saved) throw createError({ status: 409, statusText: 'This id is already in use' })
+		if (!chat) throw createError({ status: 409, statusText: 'This id is already in use' })
+		await tx.insert(schema.chatModel).values(lanes)
+		// The greetings open the chat, so they are saved before its first message.
+		if (greetings.length) await tx.insert(schema.message).values(greetings)
+		const [saved] = await tx.insert(schema.message).values({ id: message.id, chatId: id, role: 'user', parts: message.parts }).onConflictDoNothing().returning()
+		if (!saved) throw createError({ status: 409, statusText: 'This id is already in use' })
 		// The first message is the tip; the chat row comes first, so it is set once the message exists.
 		await tx.update(schema.chat).set({ leafId: saved.id }).where(eq(schema.chat.id, id))
-		await tx.insert(schema.chatModel).values(lanes)
 		// Attach order is `createdAt`; one statement would give every row the same time.
 		const now = Date.now()
 		if (libraryIds.length) await tx.insert(schema.chatLibrary).values(libraryIds.map((libraryId, index) => ({ chatId: id, libraryId, createdAt: new Date(now + index) })))
