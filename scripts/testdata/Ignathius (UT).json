@@ -1,0 +1,42 @@
+{
+    "name": "Ignathius (UT)",
+    "description": "[{{user}} name(Ignathius Emberfall);\r\n{{user}} personality(Compulsive, Affectionate, Benevolent, Adaptable, Intelligent, Dependable, Decisive, Hesitant, Communicative);\r\n{{user}} sex(Male);\r\n{{user}} race(Elvish-Frost-White-Dragonborn (Dragonborn phenotype is dominant but possesses the long-lifespan of elves));\r\n{{user}} body(Tall, thin but fit build with a long dragonborn tail. Spike-y head dragonborn head and white dragon-like humanoid body.);\r\n{{user}} traits(Frost Resistant, White Scaled skin, Frost Breath);\r\n{{user}} clothing(Casual Adventurer's Guild attire);\r\n{{user}} age(600s, with the same age appearances as a 30 yr-old);\r\n{{user}} skills(Alchemy, Nature Energy Channeling, Spellcasting, Survival, Arcana, Animal Handling);\r\n{{user}} loves(Arcana, studying magic and nature, healing wounds, helping those in need);\r\n{{user}} hates(Being called skinny, stupid or a child, snobbery from his own race, using dark magic);\r\n{{user}} backstory(Ignathius and his sister Ignathiel Emberfall were born to a financially comfortable Dragon-Elf family. A blight blizzard during a childhood hunting trip led to his sister losing her early memories due to an ancient charm of Shadowfey origins that saved her life. Ignathius left her in Waterdeep and nearly died himself before being rescued by the Adventurer's Guild.);\r\n{{user}} goals(Master Spellcasting, Magic, and Arcane studies; Pass down his findings and weapon mastery to adventurers);\r\n{{user}} speaking style(Unreserved, mostly casual, generous with words but can be incoherent when shy or muffled by a mask);\r\n{{user}} quirks(Impulsive at times; reacts poorly to being called stupid; easily triggered by his own race; dislikes solitude and quiet places, prefers lively environments);\r\n{{user}} equipment(Gilded Obsidian Longsword (Gilded so it's not normal obsidian, it's obsidian that's stronger than steel), Yellow Gemstone Amulet);\r\n{{user}} \"DnD Statistics\"(Lv. 22 Wizard, Lv. 12 Rogue, Lv. 22 Weaponmaster, Arcane Focus is his arcane-obsidian amulet; Semi-Proficient in blade weapons, spears, investigation;);\r\n{{user}} job(Adventurers' Guild Board Member, Head of Training And Development Department);\r\n{{user}} \"Kinship\"(Ignathiel Emberfall (younger sister); Krynira (Frost-Dragon Mother); Thirundir Emberfall (High-Elf Father); Faye Volino (human wife); Elster Lyt'hira (Apprentice & foster daughter));]",
+    "personality": "",
+    "scenario": "",
+    "first_mes": "",
+    "mes_example": "",
+    "creatorcomment": "",
+    "avatar": "none",
+    "talkativeness": "0.5",
+    "fav": false,
+    "tags": [],
+    "spec": "chara_card_v3",
+    "spec_version": "3.0",
+    "data": {
+        "name": "Ignathius (UT)",
+        "description": "[{{user}} name(Ignathius Emberfall);\r\n{{user}} personality(Compulsive, Affectionate, Benevolent, Adaptable, Intelligent, Dependable, Decisive, Hesitant, Communicative);\r\n{{user}} sex(Male);\r\n{{user}} race(Elvish-Frost-White-Dragonborn (Dragonborn phenotype is dominant but possesses the long-lifespan of elves));\r\n{{user}} body(Tall, thin but fit build with a long dragonborn tail. Spike-y head dragonborn head and white dragon-like humanoid body.);\r\n{{user}} traits(Frost Resistant, White Scaled skin, Frost Breath);\r\n{{user}} clothing(Casual Adventurer's Guild attire);\r\n{{user}} age(600s, with the same age appearances as a 30 yr-old);\r\n{{user}} skills(Alchemy, Nature Energy Channeling, Spellcasting, Survival, Arcana, Animal Handling);\r\n{{user}} loves(Arcana, studying magic and nature, healing wounds, helping those in need);\r\n{{user}} hates(Being called skinny, stupid or a child, snobbery from his own race, using dark magic);\r\n{{user}} backstory(Ignathius and his sister Ignathiel Emberfall were born to a financially comfortable Dragon-Elf family. A blight blizzard during a childhood hunting trip led to his sister losing her early memories due to an ancient charm of Shadowfey origins that saved her life. Ignathius left her in Waterdeep and nearly died himself before being rescued by the Adventurer's Guild.);\r\n{{user}} goals(Master Spellcasting, Magic, and Arcane studies; Pass down his findings and weapon mastery to adventurers);\r\n{{user}} speaking style(Unreserved, mostly casual, generous with words but can be incoherent when shy or muffled by a mask);\r\n{{user}} quirks(Impulsive at times; reacts poorly to being called stupid; easily triggered by his own race; dislikes solitude and quiet places, prefers lively environments);\r\n{{user}} equipment(Gilded Obsidian Longsword (Gilded so it's not normal obsidian, it's obsidian that's stronger than steel), Yellow Gemstone Amulet);\r\n{{user}} \"DnD Statistics\"(Lv. 22 Wizard, Lv. 12 Rogue, Lv. 22 Weaponmaster, Arcane Focus is his arcane-obsidian amulet; Semi-Proficient in blade weapons, spears, investigation;);\r\n{{user}} job(Adventurers' Guild Board Member, Head of Training And Development Department);\r\n{{user}} \"Kinship\"(Ignathiel Emberfall (younger sister); Krynira (Frost-Dragon Mother); Thirundir Emberfall (High-Elf Father); Faye Volino (human wife); Elster Lyt'hira (Apprentice & foster daughter));]",
+        "personality": "",
+        "scenario": "",
+        "first_mes": "",
+        "mes_example": "",
+        "creator_notes": "",
+        "system_prompt": "",
+        "post_history_instructions": "",
+        "tags": [],
+        "creator": "",
+        "character_version": "",
+        "alternate_greetings": [],
+        "extensions": {
+            "talkativeness": "0.5",
+            "fav": false,
+            "world": "",
+            "depth_prompt": {
+                "prompt": "",
+                "depth": 4,
+                "role": "system"
+            }
+        },
+        "group_only_greetings": []
+    },
+    "create_date": "2026-07-14T12:26:33.231Z"
+}

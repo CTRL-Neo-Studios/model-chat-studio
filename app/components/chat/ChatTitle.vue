@@ -7,18 +7,12 @@ const props = defineProps<{
 	isOwner: boolean
 }>()
 
-const emit = defineEmits<{
-	'update:title': [title: string]
-}>()
-
 const { renameChat, deleteChat } = useChatActions()
 
 const displayTitle = computed(() => props.title || 'Untitled')
 
-async function rename() {
-	const newTitle = await renameChat(props.chatId, props.title)
-	if (newTitle) emit('update:title', newTitle)
-}
+// Renaming updates the cached chat and list, which the page reads its title from.
+const rename = () => renameChat(props.chatId, props.title)
 
 const items: DropdownMenuItem[][] = [[
 	{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: rename },

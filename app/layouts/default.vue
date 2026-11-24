@@ -1,52 +1,49 @@
 <script setup lang="ts">
-import type { DropdownMenuItem } from '@nuxt/ui'
-
 const { loggedIn } = useUserSession()
-const { renameChat, deleteChat } = useChatActions()
 const siteName = useRuntimeConfig().public.siteName as string || 'Chat'
 
 const sidebarOpen = ref(false)
 const searchOpen = ref(false)
 
 // Guests only ever see a chat shared by link, so they have no list.
-const { data: chats, refresh: refreshChats } = await useFetch('/api/v1/chats', {
-	key: 'chats',
-	immediate: loggedIn.value,
-	default: () => [],
-	transform: data => data.map(chat => ({
-		id: chat.id,
-		label: chat.title || 'Untitled',
-		to: `/chat/${chat.id}`,
-		icon: 'i-lucide-message-circle',
-		createdAt: chat.createdAt,
-	})),
-})
+const { data: chatList } = useQuery(() => ({ ...chatsQuery, enabled: import.meta.client && loggedIn.value }))
+const chats = computed(() => loggedIn.value ? (chatList.value ?? []).map(toUIChat) : [])
 
-watch(loggedIn, (value) => {
-	if (value) refreshChats()
-	else chats.value = []
+const prefetch = usePrefetch()
+
+watch(loggedIn, () => {
 	sidebarOpen.value = false
 })
+// The model picker and the profiles appear on most pages; load them once signed in. What the menus lead to loads
+// once the first page is up and the browser idle, so a click there shows its data without a skeleton.
+if (import.meta.client) {
+	watch(loggedIn, (value) => {
+		if (value) prefetch(modelsQuery, modelProfilesQuery)
+	}, { immediate: true })
+	onNuxtReady(() => watch(loggedIn, (value) => {
+		if (value) prefetch(librariesQuery, charactersQuery, structureProfilesQuery, sharedChatsQuery, meQuery, usageQuery)
+	}, { immediate: true }))
+}
 
+// Search covers every chat, in folders or not.
 const { groups } = useChats(chats)
 
-const items = computed(() => groups.value.flatMap(group => [
-	{ label: group.label, type: 'label' as const },
-	...group.items.map(item => ({
-		...item,
-		slot: 'chat' as const,
-		icon: undefined,
-		class: item.label === 'Untitled' ? 'text-muted' : '',
-	})),
-]))
-
-function getChatActions(item: { id: string, label: string }): DropdownMenuItem[][] {
-	return [[
-		{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => renameChat(item.id, item.label === 'Untitled' ? '' : item.label) },
-	], [
-		{ label: 'Delete', icon: 'i-lucide-trash', color: 'error', onSelect: () => deleteChat(item.id) },
-	]]
-}
+// A temporary chat starts with the sidebar collapsed; leaving it restores the sidebar as it was. The state before
+// is kept in a cookie, since the sidebar saves its own state and a reload of the temporary chat would otherwise
+// take the forced collapse for the member's choice. Applied after mount, once the sidebar has read its state.
+const route = useRoute()
+const sidebarCollapsed = ref(false)
+const collapsedBefore = useCookie<boolean | null>('sidebar-before-temporary', { default: () => null, sameSite: 'lax' })
+onMounted(() => watch(() => route.path === '/temporary', (temporary) => {
+	if (temporary) {
+		collapsedBefore.value ??= sidebarCollapsed.value
+		sidebarCollapsed.value = true
+	}
+	else if (collapsedBefore.value !== null) {
+		sidebarCollapsed.value = collapsedBefore.value
+		collapsedBefore.value = null
+	}
+}, { immediate: true }))
 
 defineShortcuts({
 	meta_o: () => navigateTo('/'),
@@ -58,6 +55,7 @@ defineShortcuts({
 		<UDashboardSidebar
 			id="default"
 			v-model:open="sidebarOpen"
+			v-model:collapsed="sidebarCollapsed"
 			:min-size="12"
 			collapsible
 			resizable
@@ -85,12 +83,24 @@ defineShortcuts({
 						kbds: ['meta', 'o'],
 						icon: 'i-lucide-circle-plus',
 					}, {
+						label: 'Temporary chat',
+						to: '/temporary',
+						icon: 'i-lucide-ghost',
+					}, {
+						label: 'Libraries',
+						to: '/libraries',
+						icon: 'i-lucide-library-big',
+					}, {
 						label: 'Search',
 						icon: 'i-lucide-search',
 						kbds: ['meta', 'k'],
 						onSelect: () => {
 							searchOpen = true
 						},
+					}, {
+						label: 'Shared with me',
+						to: '/shared',
+						icon: 'i-lucide-users',
 					}]"
 					:collapsed="collapsed"
 					orientation="vertical"
@@ -109,35 +119,7 @@ defineShortcuts({
 					</template>
 				</UNavigationMenu>
 
-				<UNavigationMenu
-					v-if="!collapsed"
-					:items="items"
-					:collapsed="collapsed"
-					orientation="vertical"
-					:ui="{
-						link: 'overflow-hidden pr-7.5',
-						linkTrailing: 'translate-x-full group-hover:translate-x-0 group-has-data-[state=open]:translate-x-0 transition-transform ms-0 absolute inset-e-px',
-					}"
-				>
-					<template #chat-trailing="{ item }">
-						<UDropdownMenu
-							:items="getChatActions(item as { id: string, label: string })"
-							:content="{ align: 'end' }"
-						>
-							<UButton
-								as="div"
-								icon="i-lucide-ellipsis"
-								color="neutral"
-								variant="link"
-								size="sm"
-								class="rounded-[5px] hover:bg-accented/50 focus-visible:bg-accented/50 data-[state=open]:bg-accented/50"
-								aria-label="Chat actions"
-								tabindex="-1"
-								@click.stop.prevent
-							/>
-						</UDropdownMenu>
-					</template>
-				</UNavigationMenu>
+				<SidebarChats v-if="loggedIn && !collapsed" :chats="chats" />
 			</template>
 
 			<template #footer="{ collapsed }">

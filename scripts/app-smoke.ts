@@ -3,66 +3,15 @@
 //
 //   SESSION=<value of the nuxt-auth-session cookie> [BASE_URL=http://localhost:3000] bun scripts/app-smoke.ts [--search]
 //
-// Per platform: a plain turn, an image and a PDF, a regenerate, dictation, the spend ledger, and deleting
-// the chat. `--search` adds a web search turn (on OpenRouter that costs about $0.02).
-// The test files come from `scripts/smoke-files.ts` (macOS makes them; elsewhere `--wav`, `--image`, `--pdf`).
+// Per platform: a plain turn, an image and a PDF, a regenerate, switching to the earlier version and a branch from
+// the first message, two models answering one message at once, a library
+// note found and read with the file tools, a group round in the order the message asks for, a chat started in a
+// folder whose defaults are a group (the second speaker reads the first one's chart), dictation, the spend
+// ledger, and deleting the chat. `--search` adds web search to the library question and a web search turn (on
+// OpenRouter each costs about $0.02). The test files come from `scripts/smoke-files.ts` (macOS makes them; elsewhere
+// `--wav`, `--image`, `--pdf`).
 import { IMAGE_WORD, makeSmokeFiles, PDF_WORD, SENTENCE } from './smoke-files'
-
-const BASE = (process.env.BASE_URL ?? 'http://localhost:3000').replace(/\/$/, '')
-if (!process.env.SESSION) {
-	console.error('Set SESSION to the value of the nuxt-auth-session cookie of an admin (browser dev tools, Application > Cookies).')
-	process.exit(1)
-}
-
-// Cookies: the session, plus whatever the first page sets (the CSRF secret).
-const cookies: Record<string, string> = { 'nuxt-auth-session': process.env.SESSION }
-const cookieHeader = () => Object.entries(cookies).map(([name, value]) => `${name}=${value}`).join('; ')
-const home = await fetch(`${BASE}/`, { headers: { cookie: cookieHeader() }, redirect: 'manual' })
-for (const line of home.headers.getSetCookie()) {
-	const [pair] = line.split(';')
-	const [name, ...value] = pair!.split('=')
-	cookies[name!.trim()] = value.join('=')
-}
-const csrf = /name="csrf-token" content="([^"]+)"/.exec(await home.text())?.[1]
-if (home.status !== 200 || !csrf) {
-	console.error(`The home page answered ${home.status} without a CSRF token: is SESSION an admin's current session?`)
-	process.exit(1)
-}
-
-async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
-	const response = await fetch(`${BASE}/api/v1${path}`, {
-		method,
-		headers: { 'cookie': cookieHeader(), 'csrf-token': csrf!, ...(body !== undefined && !(body instanceof FormData) && { 'content-type': 'application/json' }) },
-		body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body),
-	})
-	const text = await response.text()
-	if (!response.ok) throw new Error(`${method} ${path} answered ${response.status}: ${text.slice(0, 300)}`)
-	return text ? JSON.parse(text) : undefined as T
-}
-
-interface Turn { text: string, messageId?: string, metadata?: Record<string, unknown>, error?: string, sources: string[] }
-
-/** Sends a turn and reads the UI message stream the way the chat page does. */
-async function turn(chatId: string, body: unknown): Promise<Turn> {
-	const response = await fetch(`${BASE}/api/v1/chats/${chatId}`, {
-		method: 'POST',
-		headers: { 'cookie': cookieHeader(), 'csrf-token': csrf!, 'content-type': 'application/json' },
-		body: JSON.stringify(body),
-	})
-	if (!response.ok) throw new Error(`turn answered ${response.status}: ${(await response.text()).slice(0, 300)}`)
-	const result: Turn = { text: '', sources: [] }
-	for (const line of (await response.text()).split('\n')) {
-		if (!line.startsWith('data: ') || line === 'data: [DONE]') continue
-		const chunk = JSON.parse(line.slice(6))
-		if (chunk.type === 'start') result.messageId = chunk.messageId
-		if (chunk.type === 'text-delta') result.text += chunk.delta
-		if (chunk.type === 'source-url') result.sources.push(chunk.url)
-		if (chunk.type === 'error') result.error = chunk.errorText
-		if (chunk.messageMetadata) result.metadata = { ...result.metadata, ...chunk.messageMetadata }
-	}
-	if (result.error) throw new Error(`the turn failed: ${result.error}`)
-	return result
-}
+import { api, BASE, cookieHeader, turn, type Turn } from './smoke-client'
 
 let failures = 0
 async function step(name: string, run: () => Promise<string>) {
@@ -107,10 +56,12 @@ try {
 		const spentBefore = (await api<{ spentUsd: number }>('GET', '/me/usage')).spentUsd
 		const chatId = crypto.randomUUID()
 		let lastAnswer: Turn | undefined
+		let laneId = ''
 
 		await step('first turn', async () => {
-			await api('POST', '/chats', { id: chatId, params: { model: model.id }, message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'Reply with the single word: pong' }] } })
-			lastAnswer = await turn(chatId, { trigger: 'regenerate-message' })
+			await api('POST', '/chats', { id: chatId, models: [{ modelId: model.id }], message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'Reply with the single word: pong' }] } })
+			laneId = (await api<{ models: { id: string }[] }>('GET', `/chats/${chatId}`)).models[0]!.id
+			lastAnswer = await turn(chatId, laneId, { trigger: 'regenerate-message' })
 			if (!/pong/i.test(lastAnswer.text)) throw new Error(`expected pong, got ${summary(lastAnswer)}`)
 			return summary(lastAnswer)
 		})
@@ -134,7 +85,7 @@ try {
 			}
 			if (!words.length) return 'skipped: the model reads neither images nor PDFs'
 			parts.push({ type: 'text', text: 'Each attachment holds one secret word. Reply with just the secret words.' })
-			lastAnswer = await turn(chatId, { trigger: 'submit-message', message: { id: crypto.randomUUID(), role: 'user', parts } })
+			lastAnswer = await turn(chatId, laneId, { trigger: 'submit-message', message: { id: crypto.randomUUID(), role: 'user', parts } })
 			const missing = words.filter(word => !lastAnswer!.text.toLowerCase().includes(word))
 			if (missing.length) throw new Error(`missing ${missing.join(', ')} in ${summary(lastAnswer)}`)
 			return summary(lastAnswer)
@@ -142,17 +93,133 @@ try {
 
 		await step('regenerate', async () => {
 			const before = (await api<{ messages: unknown[] }>('GET', `/chats/${chatId}`)).messages.length
-			lastAnswer = await turn(chatId, { trigger: 'regenerate-message', messageId: lastAnswer?.messageId })
+			lastAnswer = await turn(chatId, laneId, { trigger: 'regenerate-message', messageId: lastAnswer?.messageId })
 			const after = (await api<{ messages: unknown[] }>('GET', `/chats/${chatId}`)).messages.length
 			if (after !== before) throw new Error(`the chat went from ${before} to ${after} messages`)
 			return summary(lastAnswer)
 		})
 
+		await step('versions and a branch', async () => {
+			type Thread = { messages: { id: string, role: string }[], versions: Record<string, string[]>, branches: Record<string, string[]> }
+			const before = await api<Thread>('GET', `/chats/${chatId}`)
+			// The regenerate above kept the earlier answer as version 1.
+			const answer = before.messages.findLast(entry => entry.role === 'assistant')
+			const versions = answer ? before.versions[answer.id] : undefined
+			if (!versions || versions.length < 2) throw new Error(`the last answer has ${versions?.length ?? 0} versions`)
+			await api('PATCH', `/chats/${chatId}/messages/${versions[0]}`, { active: true })
+			if (!(await api<Thread>('GET', `/chats/${chatId}`)).messages.some(entry => entry.id === versions[0])) throw new Error('version 1 is not shown after switching to it')
+			// "Save and resend" on the first message: the model answers the new text alone, and the earlier branch comes back whole.
+			const first = before.messages.find(entry => entry.role === 'user')!
+			const branch = await api<{ id: string }>('PATCH', `/chats/${chatId}/messages/${first.id}`, { text: 'Reply with the single word: ping', branch: true })
+			const answered = await turn(chatId, laneId, { trigger: 'regenerate-message', messageId: branch.id })
+			if (!/ping/i.test(answered.text)) throw new Error(`expected ping, got ${summary(answered)}`)
+			const onBranch = await api<Thread>('GET', `/chats/${chatId}`)
+			if (onBranch.messages.length !== 2 || onBranch.branches[branch.id]?.length !== 2) throw new Error(`the branch shows ${onBranch.messages.length} messages and ${onBranch.branches[branch.id]?.length ?? 0} branches`)
+			const back = await api<Thread>('PUT', `/chats/${chatId}/tip`, { messageId: first.id })
+			if (back.messages.length !== before.messages.length) throw new Error(`back on the earlier branch: ${back.messages.length} messages, ${before.messages.length} before`)
+			return `${versions.length} versions, version 1 shown; the branch ${summary(answered)}; back to ${back.messages.length} messages`
+		})
+
+		await step('two models', async () => {
+			// A second lane with its own system prompt, sending the same message as the first, at the same time.
+			const second = await api<{ id: string }>('POST', `/chats/${chatId}/models`, { modelId: model.id, name: 'Second', systemPrompt: 'Whatever you are asked, reply with the single word: second' })
+			const message = { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'Reply with the single word: pong' }] }
+			const [first, other] = await Promise.all([laneId, second.id].map(lane => turn(chatId, lane, { trigger: 'submit-message', message })))
+			await api('DELETE', `/chats/${chatId}/models/${second.id}`)
+			const { messages } = await api<{ messages: { id: string }[] }>('GET', `/chats/${chatId}`)
+			const saved = messages.filter(entry => entry.id === message.id).length
+			if (saved !== 1) throw new Error(`the message was saved ${saved} times`)
+			if (!/pong/i.test(first!.text) || !/second/i.test(other!.text)) throw new Error(`got ${summary(first!)} and ${summary(other!)}`)
+			return `${summary(first!)} and ${summary(other!)}`
+		})
+
+		await step('library tools', async () => {
+			// A note the model is not given: no tags, so auto-fetch (tags by default) leaves it to the file tools.
+			const codename = `KESTREL-${Math.floor(1000 + Math.random() * 9000)}`
+			const library = await api<{ id: string }>('POST', '/libraries', { name: `Smoke ${codename}` })
+			try {
+				await api('POST', `/libraries/${library.id}/entries`, { kind: 'note', name: 'project.md', content: ['# Project notes', '', 'Kick-off on Monday.', 'The team meets on Thursdays.', `Codename: ${codename}`].join('\n') })
+				await api('PUT', `/chats/${chatId}/libraries/${library.id}`)
+				// With --search, tools and web search in one answer.
+				const search = process.argv.includes('--search') && model.webSearch
+				if (search) await api('PATCH', `/chats/${chatId}`, { settings: { webSearch: true } })
+				const question = `Read the project note in this chat's library and tell me the codename on its last line.${search ? ' Also look up on the web what the latest Nuxt release is, and cite your source.' : ''}`
+				lastAnswer = await turn(chatId, laneId, { trigger: 'submit-message', message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: question }] } })
+				const tools = lastAnswer.tools.join(', ') || 'none'
+				if (!lastAnswer.tools.some(name => name === 'list_files' || name === 'search_files') || !lastAnswer.tools.includes('read_file')) throw new Error(`tools called: ${tools}; ${summary(lastAnswer)}`)
+				if (!lastAnswer.text.includes(codename)) throw new Error(`no ${codename} after ${tools}: ${summary(lastAnswer)}`)
+				if (search && !lastAnswer.sources.length) throw new Error(`no web sources after ${tools}: ${summary(lastAnswer)}`)
+				return `${tools}; ${summary(lastAnswer)}${search ? `, ${lastAnswer.sources.length} sources` : ''}`
+			}
+			finally {
+				await api('DELETE', `/libraries/${library.id}`)
+			}
+		})
+
+		await step('group round', async () => {
+			// Designer first in lane order: the order has to come from the message.
+			const groupId = crypto.randomUUID()
+			await api('POST', '/chats', { id: groupId, mode: 'group', models: [{ modelId: model.id, name: 'Designer' }, { modelId: model.id, name: 'Engineer' }], message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'Hello, both of you.' }] } })
+			try {
+				const lanes = (await api<{ models: { id: string, name: string | null }[] }>('GET', `/chats/${groupId}`)).models
+				const nameOf = (id: string) => lanes.find(lane => lane.id === id)?.name
+				const text = 'Engineer, solve this: what is 17 × 23? Designer, put the Engineer\'s result in one sentence afterwards.'
+				const order = await api<{ speakers: string[], by: string }>('POST', `/chats/${groupId}/speakers`, { text, mentions: [] })
+				if (order.speakers.map(nameOf).join(', ') !== 'Engineer, Designer') throw new Error(`order ${order.speakers.map(nameOf).join(', ')}, by ${order.by}`)
+				// One after another, as the chat page asks them.
+				const message = { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text }] }
+				const answers: Turn[] = []
+				for (const id of order.speakers) answers.push(await turn(groupId, id, { trigger: 'submit-message', message }))
+				const { messages } = await api<{ messages: { id: string, metadata?: { speakers?: string[] } | null }[] }>('GET', `/chats/${groupId}`)
+				const saved = messages.find(entry => entry.id === message.id)?.metadata?.speakers ?? []
+				if (saved.join() !== order.speakers.join()) throw new Error(`saved speakers ${saved.map(nameOf).join(', ') || 'none'}`)
+				const [engineer, designer] = answers
+				const { traces } = await api<{ traces: { messageId: string, blocks: { kind: string, role: string, messageId?: string }[] }[] }>('GET', `/chats/${groupId}/overview`)
+				const given = traces.find(trace => trace.messageId === designer!.messageId)?.blocks.some(block => block.kind === 'message' && block.role === 'user' && block.messageId === engineer!.messageId)
+				if (!given) throw new Error('the Designer was not given the Engineer\'s answer')
+				return `by ${order.by}: Engineer ${summary(engineer!)}, then Designer ${summary(designer!)}`
+			}
+			finally {
+				await api('DELETE', `/chats/${groupId}`)
+			}
+		})
+
+		await step('folder defaults and a shared chart', async () => {
+			// A folder whose defaults are a two-model group; a chat started there with nothing but the folder.
+			const folder = await api<{ id: string }>('POST', '/folders', { name: 'Smoke analysts', parentId: null })
+			try {
+				await api('PATCH', `/folders/${folder.id}`, { defaults: { libraryIds: [], structureProfileId: null, mode: 'group', models: [{ modelId: model.id, name: 'Analyst' }, { modelId: model.id, name: 'Reviewer' }] } })
+				const groupId = crypto.randomUUID()
+				await api('POST', '/chats', { id: groupId, folderId: folder.id, message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'Hello, both of you.' }] } })
+				type Part = { type: string, input?: { data?: Record<string, string | number>[], xKey?: string, series?: { key: string }[] } }
+				const read = () => api<{ folderId: string | null, mode: string, models: { id: string, name: string | null }[], messages: { id: string, role: string, parts: Part[] }[] }>('GET', `/chats/${groupId}`)
+				const chat = await read()
+				const names = chat.models.map(lane => lane.name).join(', ')
+				if (chat.folderId !== folder.id || chat.mode !== 'group' || names !== 'Analyst, Reviewer') throw new Error(`started in ${chat.folderId}, ${chat.mode}, with ${names}`)
+				// The Reviewer can only answer from the Analyst's chart: the numbers are made up there.
+				const message = { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'Analyst: draw a bar chart of made-up monthly sales for four months with the chart tool, and write one short sentence without any numbers. Reviewer: name the month with the highest sales in the Analyst\'s chart, and its value.' }] }
+				const [analystLane, reviewerLane] = chat.models
+				const analyst = await turn(groupId, analystLane!.id, { trigger: 'submit-message', message })
+				if (!analyst.tools.includes('chart')) throw new Error(`the Analyst called ${analyst.tools.join(', ') || 'no tool'}: ${summary(analyst)}`)
+				const reviewer = await turn(groupId, reviewerLane!.id, { trigger: 'submit-message', message })
+				const input = (await read()).messages.find(entry => entry.id === analyst.messageId)?.parts.find(part => part.type === 'tool-chart')?.input
+				const key = input?.series?.[0]?.key ?? ''
+				const top = (input?.data ?? []).reduce<Record<string, string | number> | undefined>((best, point) => Number(point[key]) > Number(best?.[key] ?? -Infinity) ? point : best, undefined)
+				const value = String(top?.[key] ?? '?')
+				if (!reviewer.text.replace(/[,\s]/g, '').includes(value.replace(/[,\s]/g, ''))) throw new Error(`the chart's top is ${top?.[input?.xKey ?? '']} at ${value}; the Reviewer said ${summary(reviewer)}`)
+				return `in the folder as Analyst and Reviewer; chart top ${top?.[input?.xKey ?? '']} ${value}; Reviewer ${summary(reviewer)}`
+			}
+			finally {
+				for (const { id } of (await api<{ id: string, folderId: string | null }[]>('GET', '/chats')).filter(entry => entry.folderId === folder.id)) await api('DELETE', `/chats/${id}`)
+				await api('DELETE', `/folders/${folder.id}`)
+			}
+		})
+
 		if (process.argv.includes('--search')) {
 			await step('web search', async () => {
 				if (!model.webSearch) return 'skipped: no web search for this model'
-				await api('PATCH', `/chats/${chatId}`, { params: { model: model.id, webSearch: true } })
-				lastAnswer = await turn(chatId, { trigger: 'submit-message', message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'What is the latest Nuxt release? One sentence, with a source.' }] } })
+				await api('PATCH', `/chats/${chatId}`, { settings: { webSearch: true } })
+				lastAnswer = await turn(chatId, laneId, { trigger: 'submit-message', message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'What is the latest Nuxt release? One sentence, with a source.' }] } })
 				return `${summary(lastAnswer)}, ${lastAnswer.sources.length} sources`
 			})
 		}

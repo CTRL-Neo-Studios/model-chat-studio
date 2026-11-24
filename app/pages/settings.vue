@@ -2,9 +2,11 @@
 useHead({ title: 'Settings' })
 
 const act = useApiAction()
+const queryCache = useQueryCache()
 const { platform } = useModels()
-const { data: me, refresh: refreshMe } = await useFetch('/api/v1/users/me')
-const { data: usage } = await useFetch('/api/v1/me/usage')
+// Both load at once; the cards fill in as they arrive.
+const { data: me, refetch: refreshMe } = useQuery(meQuery)
+const { data: usage } = useQuery(usageQuery)
 
 const platforms = [
 	{ id: 'openrouter' as const, name: 'OpenRouter', keys: 'https://openrouter.ai/settings/keys' },
@@ -31,6 +33,33 @@ async function saveKey(id: 'openrouter' | 'deepseek') {
 async function removeKey(id: 'openrouter' | 'deepseek') {
 	if (await act(`/api/v1/me/api-key?platform=${id}`, { method: 'DELETE', success: 'Key removed' })) await refreshMe()
 }
+
+const stoppedRegenerateItems = [
+	{ label: 'Keep the previous answer', value: 'keep-previous', description: 'Stopping a regenerated answer cancels it.' },
+	{ label: 'Keep what was generated', value: 'keep-partial', description: 'The unfinished answer replaces the previous one.' },
+]
+
+// Shown at once; the previous choice comes back if the server refuses.
+async function setStoppedRegenerate(value: string) {
+	const before = me.value
+	if (!before) return
+	queryCache.setQueryData(meQuery.key, { ...before, preferences: { ...before.preferences, stoppedRegenerate: value as typeof before.preferences.stoppedRegenerate } })
+	if (!await act('/api/v1/me/preferences', { method: 'PATCH', body: { stoppedRegenerate: value }, success: 'Saved' })) queryCache.setQueryData(meQuery.key, before)
+}
+
+const { data: characterList } = useQuery(charactersQuery)
+const NONE = 'none'
+const characterItems = computed(() => [
+	{ label: 'Yourself', value: NONE },
+	...(characterList.value ?? []).map(character => ({ label: character.ownerId === null ? `${character.name} (instance)` : character.name, value: character.id })),
+])
+async function setCharacter(value: string) {
+	const before = me.value
+	if (!before) return
+	const characterId = value === NONE ? null : value
+	queryCache.setQueryData(meQuery.key, { ...before, preferences: { ...before.preferences, characterId } })
+	if (!await act('/api/v1/me/preferences', { method: 'PATCH', body: { characterId }, success: 'Saved' })) queryCache.setQueryData(meQuery.key, before)
+}
 </script>
 
 <template>
@@ -56,6 +85,7 @@ async function removeKey(id: 'openrouter' | 'deepseek') {
 							You have used this month's budget. Add your own key below to keep chatting.
 						</p>
 					</div>
+					<USkeleton v-else class="h-5 w-48" />
 				</UPageCard>
 
 				<UPageCard title="Your API keys" description="With your own key for the active platform, your chats are billed to your account and do not count against your budget. Keys are stored encrypted and never shown again." variant="subtle">
@@ -81,6 +111,24 @@ async function removeKey(id: 'openrouter' | 'deepseek') {
 							</div>
 						</div>
 					</div>
+				</UPageCard>
+
+				<UPageCard title="Chat" description="When you stop an answer that is being regenerated." variant="subtle">
+					<URadioGroup
+						v-if="me"
+						:model-value="me.preferences.stoppedRegenerate"
+						:items="stoppedRegenerateItems"
+						@update:model-value="setStoppedRegenerate"
+					/>
+					<div v-else class="flex flex-col gap-3">
+						<USkeleton class="h-5 w-56" />
+						<USkeleton class="h-5 w-56" />
+					</div>
+				</UPageCard>
+
+				<UPageCard title="You in new chats" description="The Character you are in new chats; each chat can pick another. Its name stands for {{user}} and its instructions tell the models about you." variant="subtle">
+					<USelect v-if="me" :model-value="me.preferences.characterId ?? NONE" :items="characterItems" class="w-full sm:w-72" @update:model-value="setCharacter" />
+					<USkeleton v-else class="h-8 w-72" />
 				</UPageCard>
 			</div>
 		</template>

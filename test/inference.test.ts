@@ -53,6 +53,14 @@ describe('OpenRouter', () => {
 		expect(bodies[1]!.reasoning).toEqual({ enabled: false })
 	})
 
+	test('sends sampling settings where OpenRouter reads them, and the ranking and retention choices with or without chosen providers', async () => {
+		const bodies = captureFetch(openrouterChunks())
+		await run(turn({ model: 'a/b', topK: 40, minP: 0.05, topA: 0.1, frequencyPenalty: 0.2, presencePenalty: -0.1, repetitionPenalty: 1.1, providerSort: 'price', zdr: true }))
+		await run(turn({ model: 'a/b', providers: ['x/fp8'], providerSort: 'latency' }))
+		expect(bodies[0]).toMatchObject({ top_k: 40, min_p: 0.05, top_a: 0.1, frequency_penalty: 0.2, presence_penalty: -0.1, repetition_penalty: 1.1, provider: { sort: 'price', zdr: true } })
+		expect(bodies[1]!.provider).toEqual({ only: ['x/fp8'], order: ['x/fp8'], allow_fallbacks: true, sort: 'latency' })
+	})
+
 	test('reads cost, serving provider and tokens; citations become sources', async () => {
 		captureFetch(openrouterChunks())
 		const { parts, steps } = await run(turn({ model: 'deepseek/deepseek-chat' }))
@@ -66,6 +74,22 @@ describe('OpenRouter', () => {
 		captureFetch(openrouterChunks(null))
 		const { steps } = await run(turn({ model: 'a/b' }))
 		expect(openrouterPlatform.usage({ model: 'a/b', steps }).costUsd).toBeNull()
+	})
+
+	test('a call on a provider key stored at OpenRouter (BYOK) also counts that provider\'s charge', async () => {
+		const chunks = openrouterChunks(0.0001)
+		const byok = (upstream: number | null, isByok: boolean) => chunks.map(chunk => typeof chunk === 'object' && 'usage' in chunk && chunk.usage
+			? { ...chunk, usage: { ...chunk.usage, is_byok: isByok, cost_details: { upstream_inference_cost: upstream } } }
+			: chunk)
+		const cost = async (body: unknown[]) => {
+			globalThis.fetch = (async () => sseResponse(body)) as typeof fetch
+			const { steps } = await run(turn({ model: 'a/b' }))
+			return openrouterPlatform.usage({ model: 'a/b', steps }).costUsd
+		}
+		expect(await cost(byok(0.0042, true))).toBeCloseTo(0.0043, 10)
+		expect(await cost(byok(null, true))).toBeCloseTo(0.0001, 10)
+		// Without BYOK the upstream charge is already part of `cost`.
+		expect(await cost(byok(0.0042, false))).toBeCloseTo(0.0001, 10)
 	})
 
 	test('normalizes catalog entries', () => {
@@ -111,6 +135,17 @@ describe('DeepSeek', () => {
 		expect(pro!.tools).toBeUndefined()
 		expect(pro!.thinking).toEqual({ type: 'disabled' })
 		expect(pro!.reasoning_effort).toBeUndefined()
+	})
+
+	test('leaves the app\'s tools out only where DeepSeek refuses them: web tools with thinking off', () => {
+		const appTools = (input: Partial<TurnInput>) => deepseekPlatform.prepare(turn({ model: 'deepseek-flash', ...input })).appTools
+		expect(appTools({ webSearch: true, reasoningLevel: 'none' })).toBe(false)
+		// Thinking is on by default.
+		expect(appTools({ webSearch: true })).toBeUndefined()
+		expect(appTools({ webSearch: true, reasoningLevel: 'high' })).toBeUndefined()
+		expect(appTools({ reasoningLevel: 'none' })).toBeUndefined()
+		// No web tools on a model without them.
+		expect(appTools({ model: 'deepseek-v4-pro', webSearch: true, reasoningLevel: 'none' })).toBeUndefined()
 	})
 
 	test('turns the last chunk into sources and a title, and maps cache hits', async () => {

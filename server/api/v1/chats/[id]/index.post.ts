@@ -1,34 +1,30 @@
-import { createError, defineEventHandler, getRouterParam, readValidatedBody } from 'nuxt/server'
+import { createError, defineEventHandler, readValidatedBody } from 'nuxt/server'
 import { convertToModelMessages, createUIMessageStreamResponse, generateId, generateText, isStepCount, smoothStream, streamText, toUIMessageStream, type TextStreamPart, type ToolSet, type UIMessage } from 'ai'
 import { db, schema } from 'hub:db'
 import { and, eq, isNull } from 'drizzle-orm'
-import { chatAbilities } from '#shared/abilities/chatAbilities'
 import type { MessageMetadata } from '#shared/utils/chat'
 import { chartTool } from '#shared/utils/tools/chart'
-import { authorize } from '#server/utils/core/authorize'
-import { getSetting } from '#server/utils/core/settings'
+import { userPreferencesSchema } from '#shared/utils/preferences'
+import { getInstanceSettings } from '#server/utils/core/settings'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { assertRateLimit } from '#server/utils/core/rateLimit'
-import { applyTurnTrigger, assertWithinBudget, findChat, listChatMessages, turnRequestSchema } from '#server/utils/chat/turns'
-import { deleteStoredFiles, resolveAttachments } from '#server/utils/chat/files'
+import { requireChat } from '#server/utils/chat/access'
+import { answerAttempt, applyTurnTrigger, assertWithinBudget, fallbackTitle, listChatMessages, monthlyBudgetStatus, saveAnswer, turnRequestSchema } from '#server/utils/chat/turns'
+import { listChatModels } from '#server/utils/chat/lanes'
+import { resolveAttachments } from '#server/utils/chat/files'
 import { getCatalog, getEndpoints, getPriceOverride, useInference } from '#server/utils/inference'
+import { buildContext } from '#server/utils/chat/context'
+import { expandReferences } from '#server/utils/library/references'
+import { autoFetch } from '#server/utils/library/autoFetch'
+import { fileTools } from '#server/utils/library/fileTools'
+import { chatLibraries, listSpace } from '#server/utils/library/libraries'
+import { spaceResolver } from '#shared/utils/librarySpace'
+import { findStructureProfile } from '#server/utils/chat/structureProfiles'
+import { charactersById, laneLibraries } from '#server/utils/chat/characters'
+import { fillPlaceholders, laneIdentity } from '#shared/utils/character'
+import { groupInstructions, groupThread } from '#server/utils/chat/group'
+import { shownThread, threadTo } from '#server/utils/chat/thread'
 import type { FinishedStep, Pricing } from '#server/utils/inference/types'
-
-const INSTRUCTIONS = `You are a knowledgeable and helpful AI assistant. Give clear, accurate, well-structured answers.
-
-Formatting:
-- Never use Markdown headings (#, ##, ...) or underlined headings (=== or ---). Use **bold text** for section labels.
-- Start with the content, never with a heading.
-
-Quality:
-- Be concise yet complete, with examples when they help.
-- Break complex topics into digestible parts.`
-
-// Added only while web search is on. Without it, DeepSeek sometimes answered that it had no web
-// access and did not search (live runs, plan section 10).
-const WEB_SEARCH_INSTRUCTIONS = `Web search is on in this chat: you can search the web and read pages.
-- Search for recent events and for facts you are not sure of; otherwise answer from what you know.
-- Cite the pages you used.`
 
 const TITLE_INSTRUCTIONS = `Write a title for a chat that starts with the user's message below.
 - Under 30 characters, summarizing the message
@@ -36,30 +32,39 @@ const TITLE_INSTRUCTIONS = `Write a title for a chat that starts with the user's
 
 const REFUSAL = 'This answer was withheld by the content safety check.'
 
-/** The start of the first user message, for when no title was generated. */
-function fallbackTitle(text: string): string {
-	const clean = text.replace(/\s+/g, ' ').trim()
-	return clean.length > 60 ? `${clean.slice(0, 59)}…` : clean || 'New chat'
-}
-
-/** Streams one answer. The client sends only the new message (or the regenerate target), never the history. */
+/**
+ * Streams one lane's answer. The client sends only the new message (or the regenerate target) and the lane,
+ * never the history. A lane sees its own thread; in a group chat, the shared thread, and its answer joins the round's
+ * `speakers`. The client asks a group's speakers one after another, so each reads the answers before it.
+ */
 export default defineEventHandler(async (event) => {
+	// Reads run in a few parallel groups, each one database round trip, before the model is called.
+	const [chat, { values: settings }] = await Promise.all([requireChat(event, 'manageChat'), getInstanceSettings(db)])
 	const user = await useServerAuth().requireUser(event)
-	const chat = await findChat(db, getRouterParam(event, 'id', { decode: true }))
-	await authorize(event, chatAbilities().manageChat, chat)
 	const request = await readValidatedBody(event, turnRequestSchema)
 	// Each answer costs money; a stuck client or script should not be able to run up the bill.
 	assertRateLimit(`turn:${user.id}`, 20, 60_000, 'messages')
-	const chatId = chat!.id
+	const chatId = chat.id
+	const group = chat.mode === 'group'
 
-	const inference = await useInference(db, user.id)
+	const startedAt = Date.now()
+	const [inference, lanes, budget] = await Promise.all([useInference(db, user.id), listChatModels(db, chatId), monthlyBudgetStatus(db, user)])
 	if (!inference) throw createError({ status: 503, statusText: 'No model platform is configured yet. An admin can set one up in the settings.' })
 	const { platform, apiKey, byok, config } = inference
 
+	const lane = lanes.find(lane => lane.id === request.chatModelId)
+	if (!lane) throw createError({ status: 404, statusText: 'Model not found in this chat' })
+	if (!lane.enabled) throw createError({ status: 400, statusText: 'This model is turned off in this chat' })
+	// A limit lowered after the lanes were turned on: only the first ones answer.
+	const { maxChatModels, maxRegenerations, maxRetries, safetyCheck } = settings
+	if (lanes.filter(entry => entry.enabled).findIndex(entry => entry.id === lane.id) >= maxChatModels) {
+		throw createError({ status: 400, statusText: `Only the first ${maxChatModels} models in a chat answer. Turn one off first.` })
+	}
+
 	// Policy checks: the allowlist, the provider list and the budget.
-	const params = chat!.params ?? {}
+	const params = lane.params
 	const catalog = await getCatalog(db, inference)
-	const chosen = catalog.find(model => model.id === params.model)
+	const chosen = lane.platform === platform.id ? catalog.find(model => model.id === lane.modelId) : undefined
 	// A model that is no longer offered (or another platform's) falls back to the default, without its model-specific settings.
 	const model = chosen ?? catalog.find(model => model.id === config.defaultModel)
 	if (!model) throw createError({ status: 400, statusText: 'This chat\'s model is not available. Pick another model.' })
@@ -72,16 +77,26 @@ export default defineEventHandler(async (event) => {
 	const levels = model.reasoning ? [...model.reasoningLevels, 'none', 'on'] : []
 	const reasoningLevel = chosen && params.reasoningLevel && levels.includes(params.reasoningLevel) ? params.reasoningLevel : undefined
 
-	await assertWithinBudget(db, user, byok)
+	assertWithinBudget(budget, byok)
 
-	const { parentId, removedFileIds } = await applyTurnTrigger(db, chatId, request)
-	// Attachments of the messages an edit or regenerate dropped.
-	await deleteStoredFiles(db, removedFileIds, inference)
-	const history = await listChatMessages(db, chatId) as UIMessage<MessageMetadata>[]
-	const firstText = history.find(message => message.role === 'user')?.parts.map(part => part.type === 'text' ? part.text : '').join(' ') ?? ''
+	const parentId = await applyTurnTrigger(db, chatId, request)
+	const [previousAttempt, thread] = await Promise.all([
+		answerAttempt(db, lane.id, parentId),
+		// Every branch: the one read is picked below. A group speaker reads every lane's answers; a separate lane only its own.
+		listChatMessages(db, chatId, group ? undefined : lane.id) as Promise<(UIMessage<MessageMetadata> & { parentId: string | null, chatModelId: string | null })[]>,
+	])
+	// Each regenerate is one more attempt at the lane's answer to this message; past the admin's cap it is refused.
+	const attempt = previousAttempt + 1
+	if (attempt > maxRegenerations + 1) {
+		throw createError({ status: 429, statusText: `This answer was regenerated ${maxRegenerations === 1 ? 'once' : `${maxRegenerations} times`}, the most allowed.` })
+	}
+	// The branch up to the message being answered: a regenerated answer does not see what came after, on any branch.
+	const upTo = threadTo(thread, parentId)
+	const firstText = upTo.find(message => message.role === 'user')?.parts.map(part => part.type === 'text' ? part.text : '').join(' ') ?? ''
 
-	const safetyCheck = await getSetting(db, 'safetyCheck')
-	const firstTurn = !chat!.title
+	// The first enabled lane names the chat, so a chat answered by several lanes is named once.
+	// A temporary chat gets no title; "Keep this chat" names it from its first message.
+	const firstTurn = !chat.temporary && !chat.title && lanes.find(lane => lane.enabled)?.id === lane.id
 	/** Appends one row to the spend ledger and returns the usage. */
 	const recordUsage = async (kind: 'chat' | 'title', modelId: string, steps: FinishedStep[], price: Pricing | null = null) => {
 		const usage = platform.usage({ model: modelId, steps, price })
@@ -107,14 +122,67 @@ export default defineEventHandler(async (event) => {
 			})
 		: Promise.resolve(undefined)
 
-	const webSearch = !!params.webSearch && model.webSearch
+	const webSearch = !!chat.settings.webSearch && model.webSearch
 	const prepared = platform.prepare({
 		...params, apiKey, model: model.id, providers, reasoningLevel, webSearch,
 		userId: user.id, firstTurn, safetyCheck,
 	})
-	const tools: ToolSet = { ...prepared.tools, chart: chartTool }
+	// Who the lane is (its Character, else its own name and prompt) and who the user is, with `{{char}}` and `{{user}}` filled.
+	// A group speaker is also told who else answers in the chat.
+	const answering = lanes.filter(entry => entry.enabled).slice(0, maxChatModels)
+	const characters = await charactersById(db, [...(group ? answering : [lane]).map(entry => entry.characterId), chat.userCharacterId])
+	const userName = user.name ?? user.username
+	const userCharacter = chat.userCharacterId ? characters[chat.userCharacterId] : undefined
+	const identityOf = (entry: typeof lane, modelName: string) => laneIdentity({ lane: entry, character: entry.characterId ? characters[entry.characterId] : undefined, userCharacter, modelName, userName })
+	const identity = identityOf(lane, model.name)
+	const character = lane.characterId ? characters[lane.characterId] : undefined
+	const modelNameOf = (entry: typeof lane) => ((entry.platform === platform.id ? catalog.find(item => item.id === entry.modelId) : undefined) ?? catalog.find(item => item.id === config.defaultModel))?.name ?? 'Model'
+	const others = group ? answering.filter(entry => entry.id !== lane.id).map(entry => identityOf(entry, modelNameOf(entry)).names.char) : []
+	// A group speaker reads the shared thread, the others' answers under their names; otherwise the lane's own thread.
+	const history = group ? groupThread(shownThread(thread, parentId), { laneId: lane.id, questionId: parentId, userName: identity.names.user }) : upTo
+	// The chat's libraries, then its Character's (those the chat's owner may read): this lane only.
+	const libraries = await laneLibraries(db, user, (await chatLibraries(db, chatId)).map(({ id, name }) => ({ id, name })), character?.libraryIds ?? [])
+	// The file tools: with libraries, unless turned off, for models that take tools, where the platform allows app tools.
+	const withFileTools = libraries.length > 0 && chat.settings.fileTools !== false && model.supportedParameters.includes('tools') && prepared.appTools !== false
+	// The chat's structure profile wraps the thread in its blocks; its `files` paths are looked up in the libraries.
+	const profile = await findStructureProfile(db, chat.structureProfileId)
+	const profileBlocks = profile?.blocks.map(block => block.kind === 'message' ? { ...block, text: fillPlaceholders(block.text, identity.names) } : block)
+	const find = libraries.length && profile?.blocks.some(block => block.kind === 'files') ? spaceResolver(libraries, await listSpace(db, libraries)) : undefined
+	const resolvePath = find && ((path: string) => {
+		const entry = find(path)
+		return entry && { entryId: entry.id, kind: entry.kind }
+	})
+	const built = buildContext({
+		thread: history, systemPrompt: identity.systemPrompt, promptLabel: identity.promptLabel, examples: identity.examples, closingNote: identity.closingNote, aboutUser: identity.aboutUser,
+		group: group ? groupInstructions({ speaker: identity.names.char, others, user: identity.names.user }) : undefined,
+		webSearch, memoryLength: chat.settings.memoryLength ?? null, fileTools: withFileTools, profile: profileBlocks, resolvePath,
+	})
+	// "@" references (and the profile's files) become the libraries' files and notes, read now, where they stand.
+	const referenced = { ...built, ...await expandReferences(db, libraries, built.messages, built.blocks) }
+	// Auto-fetch adds the libraries' matching files and notes as one message, not stored: where the profile puts it,
+	// else after the conversation. Its `system` scan covers the profile's system blocks too.
+	const fetched = libraries.length
+		? await autoFetch(db, {
+				libraries,
+				settings: chat.settings.autoFetch,
+				thread: history,
+				systemPrompt: [identity.systemPrompt, ...(profileBlocks ?? []).flatMap(block => block.kind === 'message' && block.role === 'system' ? [block.text] : [])].filter(Boolean).join('\n\n') || null,
+				exclude: referenced.blocks.flatMap(block => block.entryId ? [block.entryId] : []),
+			})
+		: undefined
+	const placeholder = referenced.blocks.findIndex(block => block.kind === 'autoFetch' && !block.messageId)
+	const context = fetched
+		? {
+				...referenced,
+				messages: referenced.messages.toSpliced(built.autoFetchAt ?? referenced.messages.length, 0, fetched.message),
+				blocks: placeholder === -1 ? [...referenced.blocks, ...fetched.blocks] : referenced.blocks.toSpliced(placeholder, 1, ...fetched.blocks),
+			}
+		: referenced
+	const tools: ToolSet = prepared.appTools === false
+		? prepared.tools
+		: { ...prepared.tools, chart: chartTool, ...(withFileTools && fileTools(db, libraries)) }
 	const price = await getPriceOverride(db, platform.id, model.id)
-	const modelHistory = await resolveAttachments({ db, inference, model, userId: user.id, chatId }, history).catch((error) => {
+	const modelHistory = await resolveAttachments({ db, inference, model, userId: user.id, chatId, libraryIds: libraries.map(library => library.id) }, context.messages).catch((error) => {
 		console.error('[chat] attachment failed', error)
 		throw createError({ status: 502, statusText: `${platform.id} did not accept an attachment. Try again, or remove it.` })
 	})
@@ -122,9 +190,11 @@ export default defineEventHandler(async (event) => {
 	const result = streamText({
 		...prepared,
 		tools,
-		instructions: [INSTRUCTIONS, webSearch && WEB_SEARCH_INSTRUCTIONS, chat!.systemPrompt].filter(Boolean).join('\n\n'),
+		instructions: context.instructions,
 		messages: await convertToModelMessages(modelHistory, { tools }),
 		stopWhen: isStepCount(5),
+		// Retries rate limits and server errors until the stream starts.
+		maxRetries,
 		abortSignal: event.req.signal,
 		experimental_transform: smoothStream(),
 	})
@@ -137,9 +207,15 @@ export default defineEventHandler(async (event) => {
 			controller.enqueue(part)
 		},
 	}))
+	// The lane as it is now, so the answer keeps its label after the lane is renamed or deleted.
+	const laneLabel = { name: identity.names.char, color: identity.color }
 	const metadata = (finishReason?: string): MessageMetadata => {
 		const { title: _, ...usage } = platform.usage({ model: model.id, steps, price })
-		return { platform: platform.id, model: model.id, ...usage, ...(finishReason === 'content-filter' && { refused: true }) }
+		return {
+			platform: platform.id, model: model.id, lane: laneLabel, attempt, ...usage, durationMs: Date.now() - startedAt,
+			...(finishReason === 'content-filter' && { refused: true }),
+			...(fetched?.fetched.length && { fetched: fetched.fetched }),
+		}
 	}
 
 	return createUIMessageStreamResponse({
@@ -149,21 +225,24 @@ export default defineEventHandler(async (event) => {
 			sendSources: true,
 			generateMessageId: generateId,
 			messageMetadata: ({ part }) => part.type === 'start'
-				? { platform: platform.id, model: model.id }
+				? { platform: platform.id, model: model.id, lane: laneLabel }
 				: part.type === 'finish' ? metadata(part.finishReason) : undefined,
 			onError: (error) => {
 				console.error('[chat] turn failed', error)
 				return 'The model could not answer. Try again.'
 			},
 			// Runs before the response closes, so a client that refreshes on finish sees the title.
-			onEnd: async ({ responseMessage, finishReason }) => {
+			onEnd: async ({ responseMessage, finishReason, isAborted }) => {
 				try {
 					const usage = await recordUsage('chat', model.id, steps, price)
 					const stored = metadata(finishReason)
 					const parts = stored.refused ? [{ type: 'text' as const, text: REFUSAL }] : responseMessage.parts
-					if (parts.length) {
-						await db.insert(schema.message).values({ id: responseMessage.id, chatId, parentId, role: 'assistant', parts, metadata: stored })
-					}
+					// A stopped answer becomes the shown version unless the member chose to keep the earlier one.
+					const keepPrevious = isAborted && userPreferencesSchema.parse(user.preferences).stoppedRegenerate === 'keep-previous'
+					const saved = parts.length > 0
+						&& await saveAnswer(db, { id: responseMessage.id, chatId, parentId, chatModelId: lane.id, parts, metadata: stored }, keepPrevious, group)
+					// What the answer was given, for the conversation overview.
+					if (saved) await db.insert(schema.turnTrace).values({ messageId: responseMessage.id, blocks: context.blocks })
 					if (firstTurn) {
 						const title = (await titlePromise) ?? usage.title ?? fallbackTitle(firstText)
 						await db.update(schema.chat).set({ title }).where(and(eq(schema.chat.id, chatId), isNull(schema.chat.title)))

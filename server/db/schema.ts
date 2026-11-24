@@ -2,6 +2,7 @@ import {
 	type AnyPgColumn,
 	bigint,
 	boolean,
+	customType,
 	index,
 	integer,
 	jsonb,
@@ -10,11 +11,18 @@ import {
 	primaryKey,
 	text,
 	timestamp,
+	unique,
+	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
-import {relations} from "drizzle-orm";
+import {relations, sql} from "drizzle-orm";
 import type {UIMessage} from "ai";
-import type {ChatParams, MessageMetadata} from "../../shared/utils/chat";
+import {type ChatSettings, type ContextBlock, LANE_COLORS, type MessageMetadata, type ModelParams} from "../../shared/utils/chat";
+import type {UserPreferences} from "../../shared/utils/preferences";
+import type {ProfileBlock} from "../../shared/utils/structureProfile";
+import type {FolderDefaults} from "../../shared/utils/folderDefaults";
+
+const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' })
 
 const createdAt = timestamp({ withTimezone: true }).defaultNow().notNull()
 
@@ -48,6 +56,8 @@ export const user = pgTable("user", {
 	banExpires: timestamp({ withTimezone: true }),
 	/** `null` falls back to the instance default. */
 	monthlyBudgetUsd: usd(),
+	/** Read through `userPreferencesSchema`, which fills in defaults. */
+	preferences: jsonb().$type<Partial<UserPreferences>>().notNull().default({}),
 
 	...createdUpdatedAtColumns
 });
@@ -96,18 +106,89 @@ export const userApiKey = pgTable("userApiKey", {
 	primaryKey({ columns: [t.userId, t.platform] }),
 ]);
 
+/** A member's folder of chats. Folders nest; their order is by name, so there is no position. */
+export const chatFolder = pgTable("chatFolder", {
+	id: uuid().primaryKey().defaultRandom(),
+	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	/** `null` is the top level. Deleting a folder moves its content up first; `set null` is a backstop. */
+	parentId: uuid().references((): AnyPgColumn => chatFolder.id, { onDelete: "set null" }),
+	name: text().notNull(),
+	/** What a new chat started in it (or in a folder inside it without its own) begins with; `null`: none. */
+	defaults: jsonb().$type<FolderDefaults>(),
+
+	...createdUpdatedAtColumns
+}, (t) => [
+	index().on(t.userId),
+]);
+
 export const chat = pgTable("chat", {
 	id: uuid().primaryKey().defaultRandom(),
 	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
 	title: text(),
 	/** Link access: `public` means anyone with the link can read. */
 	visibility: text({ enum: ["private", "public"] }).notNull().default("private"),
-	systemPrompt: text(),
-	params: jsonb().$type<ChatParams>(),
+	/** Settings shared by every lane; each lane's model settings live in `chatModel`. */
+	settings: jsonb().$type<ChatSettings>().notNull().default({}),
+	/** `null` is no folder. */
+	folderId: uuid().references(() => chatFolder.id, { onDelete: "set null" }),
+	/** Hidden from the chat list and deleted when its page is left; swept after 24 h. "Keep this chat" clears it. */
+	temporary: boolean().notNull().default(false),
+	/** The chat's structure profile: blocks sent around its thread. `null` sends the thread as it is. */
+	structureProfileId: uuid().references((): AnyPgColumn => structureProfile.id, { onDelete: "set null" }),
+	/** Who the user is in this chat: its name stands for `{{user}}`, its instructions tell the models about them. */
+	userCharacterId: uuid().references((): AnyPgColumn => character.id, { onDelete: "set null" }),
+	/** `separate`: each lane answers alone and sees only its own answers. `group`: one shared thread, lanes answer in turn. Set at creation. */
+	mode: text({ enum: ["separate", "group"] }).notNull().default("separate"),
+	/** The tip of the branch shown: its last user message. `null` reads as the newest user message. */
+	leafId: text().references((): AnyPgColumn => message.id, { onDelete: "set null" }),
 
 	...createdUpdatedAtColumns
 }, (t) => [
 	index().on(t.userId, t.createdAt),
+]);
+
+/** A model with its settings, used to start lanes. `ownerId` `null` is an instance profile, published by an admin. */
+export const modelProfile = pgTable("modelProfile", {
+	id: uuid().primaryKey().defaultRandom(),
+	ownerId: uuid().references(() => user.id, { onDelete: "cascade" }),
+	name: text().notNull(),
+	color: text({ enum: LANE_COLORS }),
+	/** The platform `modelId` belongs to: the active one when the model was chosen. */
+	platform: text({ enum: inferencePlatforms }).notNull(),
+	modelId: text().notNull(),
+	/** `null` uses the default instructions. */
+	systemPrompt: text(),
+	params: jsonb().$type<ModelParams>().notNull().default({}),
+	/** The Character lanes started from this profile begin with. */
+	characterId: uuid().references((): AnyPgColumn => character.id, { onDelete: "set null" }),
+
+	...createdUpdatedAtColumns
+}, (t) => [
+	index().on(t.ownerId),
+]);
+
+/** A lane: one model answering in a chat, with its own settings and its own thread of answers. */
+export const chatModel = pgTable("chatModel", {
+	id: uuid().primaryKey().defaultRandom(),
+	chatId: uuid().notNull().references(() => chat.id, { onDelete: "cascade" }),
+	/** The profile the lane was started from; changing the lane does not change the profile. */
+	profileId: uuid().references(() => modelProfile.id, { onDelete: "set null" }),
+	position: integer().notNull(),
+	enabled: boolean().notNull().default(true),
+	/** `null` shows the model's name. */
+	name: text(),
+	color: text({ enum: LANE_COLORS }),
+	/** The platform `modelId` belongs to; set together with it. */
+	platform: text({ enum: inferencePlatforms }),
+	/** `null` is the active platform's default model. */
+	modelId: text(),
+	systemPrompt: text(),
+	params: jsonb().$type<ModelParams>().notNull().default({}),
+	/** Who the lane is; its instructions replace `systemPrompt` while it is set. Edits to the Character apply at once. */
+	characterId: uuid().references((): AnyPgColumn => character.id, { onDelete: "set null" }),
+	createdAt,
+}, (t) => [
+	index().on(t.chatId, t.position),
 ]);
 
 export const chatShare = pgTable("chatShare", {
@@ -124,14 +205,30 @@ export const message = pgTable("message", {
 	/** Insertion order. `createdAt` is not precise enough to order messages. */
 	seq: integer().generatedAlwaysAsIdentity(),
 	chatId: uuid().notNull().references(() => chat.id, { onDelete: "cascade" }),
+	/**
+	 * An answer's user message. A user message's or summary's: the user message before it on its branch (none for the
+	 * first); user messages with the same parent are the branches at that point.
+	 */
 	parentId: text().references((): AnyPgColumn => message.id, { onDelete: "set null" }),
 	role: text({ enum: ["user", "assistant", "system"] }).notNull(),
 	parts: jsonb().$type<UIMessage['parts']>().notNull(),
 	metadata: jsonb().$type<MessageMetadata>(),
+	/** The lane that wrote an answer; `null` on user messages and on answers of a deleted lane. */
+	chatModelId: uuid().references(() => chatModel.id, { onDelete: "set null" }),
+	/** On answers, the version shown: a lane's other answers to the same message are its earlier versions. */
+	active: boolean().notNull().default(true),
 	createdAt,
 }, (t) => [
 	index().on(t.chatId, t.seq),
+	uniqueIndex("message_active_answer").on(t.parentId, t.chatModelId).where(sql`${t.role} = 'assistant' and ${t.active}`),
 ]);
+
+/** What one answer was given: its context blocks in the order sent. Messages and files are referenced, not copied. */
+export const turnTrace = pgTable("turnTrace", {
+	messageId: text().primaryKey().references(() => message.id, { onDelete: "cascade" }),
+	blocks: jsonb().$type<ContextBlock[]>().notNull(),
+	createdAt,
+});
 
 export const vote = pgTable("vote", {
 	chatId: uuid().notNull().references(() => chat.id, { onDelete: "cascade" }),
@@ -157,6 +254,122 @@ export const file = pgTable("file", {
 	index().on(t.chatId),
 ]);
 
+/** A context library: files and notes a chat can read, shared with people in `libraryMember`. */
+export const library = pgTable("library", {
+	id: uuid().primaryKey().defaultRandom(),
+	ownerId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	name: text().notNull(),
+	description: text(),
+
+	...createdUpdatedAtColumns
+}, (t) => [
+	index().on(t.ownerId),
+]);
+
+export const libraryRoles = ["viewer", "editor"] as const
+
+/** Someone a library is shared with: reads it and attaches it (`viewer`), also changes its files (`editor`). */
+export const libraryMember = pgTable("libraryMember", {
+	libraryId: uuid().notNull().references(() => library.id, { onDelete: "cascade" }),
+	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	role: text({ enum: libraryRoles }).notNull(),
+	createdAt,
+}, (t) => [
+	primaryKey({ columns: [t.libraryId, t.userId] }),
+	index().on(t.userId),
+]);
+
+/** A library attached to a chat: every lane of the chat reads it. Attach order is `createdAt`. */
+export const chatLibrary = pgTable("chatLibrary", {
+	chatId: uuid().notNull().references(() => chat.id, { onDelete: "cascade" }),
+	libraryId: uuid().notNull().references(() => library.id, { onDelete: "cascade" }),
+	createdAt,
+}, (t) => [
+	primaryKey({ columns: [t.chatId, t.libraryId] }),
+	index().on(t.libraryId),
+]);
+
+/** Blocks of conversation data sent around a chat's thread. `ownerId` `null` is an instance profile, published by an admin. */
+export const structureProfile = pgTable("structureProfile", {
+	id: uuid().primaryKey().defaultRandom(),
+	ownerId: uuid().references(() => user.id, { onDelete: "cascade" }),
+	name: text().notNull(),
+	blocks: jsonb().$type<ProfileBlock[]>().notNull(),
+
+	...createdUpdatedAtColumns
+}, (t) => [
+	index().on(t.ownerId),
+]);
+
+/**
+ * A Character: who a lane is in a chat (an Engineer, a Designer, a persona), or who the user is. Its instructions take
+ * the place of the lane's system prompt. `ownerId` `null` is an instance Character, published by an admin.
+ */
+export const character = pgTable("character", {
+	id: uuid().primaryKey().defaultRandom(),
+	ownerId: uuid().references(() => user.id, { onDelete: "cascade" }),
+	name: text().notNull(),
+	color: text({ enum: LANE_COLORS }),
+	instructions: text().notNull().default(""),
+	/** An image `file` row without a chat; it goes with the Character. */
+	avatarFileId: uuid().references((): AnyPgColumn => file.id, { onDelete: "set null" }),
+	/** Opening answers of a chat with this Character, the first shown first (milestone 9). */
+	greetings: jsonb().$type<string[]>().notNull().default([]),
+	/** Example dialogue, sent after the instructions. */
+	examples: text().notNull().default(""),
+	/** The closing note, sent after the conversation on every turn (a card's `post_history_instructions`). */
+	note: text().notNull().default(""),
+	/** Shown on the Characters page; never sent to a model. */
+	creatorNotes: text().notNull().default(""),
+	tags: jsonb().$type<string[]>().notNull().default([]),
+	/** An imported card's fields that have no place here, written back on export; `null` for Characters made here. */
+	card: jsonb().$type<Record<string, unknown>>(),
+
+	...createdUpdatedAtColumns
+}, (t) => [
+	index().on(t.ownerId),
+]);
+
+/** A library a Character reads, in every chat it joins, for its own lane only. Attach order is `createdAt`. */
+export const characterLibrary = pgTable("characterLibrary", {
+	characterId: uuid().notNull().references(() => character.id, { onDelete: "cascade" }),
+	libraryId: uuid().notNull().references(() => library.id, { onDelete: "cascade" }),
+	createdAt,
+}, (t) => [
+	primaryKey({ columns: [t.characterId, t.libraryId] }),
+	index().on(t.libraryId),
+]);
+
+/** One node of a library: a folder, an uploaded file or a Markdown note. */
+export const libraryEntry = pgTable("libraryEntry", {
+	id: uuid().primaryKey().defaultRandom(),
+	libraryId: uuid().notNull().references(() => library.id, { onDelete: "cascade" }),
+	/** `null` is the top level. Deleting a folder deletes everything in it. */
+	parentId: uuid().references((): AnyPgColumn => libraryEntry.id, { onDelete: "cascade" }),
+	kind: text({ enum: ["folder", "file", "note"] }).notNull(),
+	name: text().notNull(),
+	tags: text().array().notNull().default(sql`'{}'::text[]`),
+	/** The upload, for a file. Its blob is deleted with the entry. */
+	fileId: uuid().references(() => file.id, { onDelete: "cascade" }),
+	/** Markdown, for a note. */
+	content: text(),
+	/**
+	 * The name and text of a note or text file, with words split by the app (`Intl.Segmenter`, so Chinese words are
+	 * separate) for full-text search. `null` until filled: search fills what is missing, and a change of name or text
+	 * clears it.
+	 */
+	searchText: text(),
+	searchVector: tsvector().generatedAlwaysAs(sql`to_tsvector('english', coalesce("searchText", ''))`),
+	createdBy: uuid().references(() => user.id, { onDelete: "set null" }),
+
+	...createdUpdatedAtColumns
+}, (t) => [
+	// Names are unique within a folder, the top level included.
+	unique().on(t.libraryId, t.parentId, t.name).nullsNotDistinct(),
+	index().on(t.fileId),
+	index().using('gin', t.searchVector),
+]);
+
 /** A file uploaded to a platform (DeepSeek PDFs), cached per account key. */
 export const providerFile = pgTable("providerFile", {
 	fileId: uuid().notNull().references(() => file.id, { onDelete: "cascade" }),
@@ -175,7 +388,7 @@ export const usageEvent = pgTable("usageEvent", {
 	id: uuid().primaryKey().defaultRandom(),
 	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
 	chatId: uuid().references(() => chat.id, { onDelete: "set null" }),
-	kind: text({ enum: ["chat", "title", "stt", "parse"] }).notNull(),
+	kind: text({ enum: ["chat", "title", "stt", "parse", "compact", "decision"] }).notNull(),
 	platform: text({ enum: inferencePlatforms }).notNull(),
 	model: text(),
 	provider: text(),
@@ -192,6 +405,21 @@ export const usageEvent = pgTable("usageEvent", {
 	index().on(t.userId, t.createdAt),
 ]);
 
+export const pinKinds = ["chat", "chatFolder", "modelProfile", "library", "structureProfile", "character"] as const
+
+/**
+ * What a member pinned to the top of a list. Per member, since instance profiles and shared libraries
+ * are pinned by each person on their own. No foreign key to the pinned row: a pin left by a deletion is ignored.
+ */
+export const pin = pgTable("pin", {
+	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	kind: text({ enum: pinKinds }).notNull(),
+	targetId: uuid().notNull(),
+	createdAt,
+}, (t) => [
+	primaryKey({ columns: [t.userId, t.kind, t.targetId] }),
+]);
+
 // Relations
 
 export const userRelations = relations(user, ({ many }) => ({
@@ -201,9 +429,20 @@ export const userRelations = relations(user, ({ many }) => ({
 
 export const chatRelations = relations(chat, ({ one, many }) => ({
 	user: one(user, { fields: [chat.userId], references: [user.id] }),
+	folder: one(chatFolder, { fields: [chat.folderId], references: [chatFolder.id] }),
 	messages: many(message),
+	models: many(chatModel),
 	shares: many(chatShare),
 	votes: many(vote),
+}))
+
+export const chatModelRelations = relations(chatModel, ({ one }) => ({
+	chat: one(chat, { fields: [chatModel.chatId], references: [chat.id] }),
+	profile: one(modelProfile, { fields: [chatModel.profileId], references: [modelProfile.id] }),
+}))
+
+export const modelProfileRelations = relations(modelProfile, ({ one }) => ({
+	owner: one(user, { fields: [modelProfile.ownerId], references: [user.id] }),
 }))
 
 export const chatShareRelations = relations(chatShare, ({ one }) => ({

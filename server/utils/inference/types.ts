@@ -1,6 +1,6 @@
 import type { SharedV4ProviderOptions } from '@ai-sdk/provider'
 import type { LanguageModel, LanguageModelUsage, ProviderMetadata, ToolSet } from 'ai'
-import type { ChatParams } from '../../../shared/utils/chat'
+import type { ChatSettings, ModelParams } from '../../../shared/utils/chat'
 import type { InferencePlatformId } from '../core/settings'
 
 /** USD per 1M tokens. */
@@ -18,6 +18,8 @@ export interface CatalogModel {
 	maxOutputTokens: number | null
 	/** Subset of `text`, `image`, `file`. `file` means PDFs are accepted. */
 	inputModalities: string[]
+	/** What the model can produce, e.g. `text`, `image`. */
+	outputModalities: string[]
 	/** Whether the web search toggle applies to this model. */
 	webSearch: boolean
 	supportedParameters: string[]
@@ -26,6 +28,8 @@ export interface CatalogModel {
 	reasoningLevels: string[]
 	defaultReasoningLevel: string | null
 	pricing: Pricing | null
+	/** Speech-to-text models only: USD per minute of audio. */
+	pricePerMinute?: number | null
 }
 
 /** An upstream provider serving one OpenRouter model. */
@@ -44,7 +48,7 @@ export interface CatalogEndpoint {
 	pricing: Pricing | null
 }
 
-export interface TurnInput extends Omit<ChatParams, 'model'> {
+export interface TurnInput extends ModelParams, ChatSettings {
 	apiKey: string
 	model: string
 	userId: string
@@ -58,9 +62,14 @@ export interface TurnInput extends Omit<ChatParams, 'model'> {
 export interface PreparedTurn {
 	model: LanguageModel
 	tools: ToolSet
+	/** `false` when the platform refuses the app's own tools (chart, file tools) in this turn. */
+	appTools?: false
 	providerOptions: SharedV4ProviderOptions
 	temperature?: number
 	topP?: number
+	topK?: number
+	frequencyPenalty?: number
+	presencePenalty?: number
 	maxOutputTokens?: number
 }
 
@@ -93,10 +102,16 @@ export interface InferencePlatform {
 		nativeTitle: boolean
 		/** Speech to text needs a model chosen in the settings (`sttModel`). */
 		sttModel: boolean
+		/** Decisions models can pick a group round's speakers (`decisionModel`). */
+		decisions: boolean
 	}
 	/** Resolves false for a key the platform rejects; throws when the platform cannot be reached. */
 	checkKey(apiKey: string): Promise<boolean>
 	listModels(apiKey: string): Promise<CatalogModel[]>
+	/** Speech-to-text models, for platforms where one is chosen (`capabilities.sttModel`). */
+	listSttModels?(apiKey: string): Promise<CatalogModel[]>
+	/** Decisions models (`capabilities.decisions`), for the `decisionModel` setting. */
+	listDecisionModels?(apiKey: string): Promise<CatalogModel[]>
 	listEndpoints?(apiKey: string, modelId: string): Promise<CatalogEndpoint[]>
 	prepare(input: TurnInput): PreparedTurn
 	/** `price` is an admin override for platforms that report no cost. */

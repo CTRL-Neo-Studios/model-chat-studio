@@ -8,6 +8,10 @@ import {satisfies} from "#shared/utils/roles";
 
 const userIdSchema = z.uuid()
 
+// One lookup per request: `requireUser`, `getUser` and `authorize()` share it. Keyed by the request's
+// context, which the route handler and the `request` hook share; their event objects differ.
+const sessionUsers = new WeakMap<object, Promise<User | undefined>>()
+
 export function useServerAuth() {
 
 	/** Loads a user by id. Ids that are not UUIDs (old cookies, bad route params) find nobody. */
@@ -19,8 +23,12 @@ export function useServerAuth() {
 	}
 
 	async function getDbUserFromSession(event: RequestEvent): Promise<User | undefined> {
-		const session = await getUserSession(event)
-		return await getDbUserFromId(session.user?.id)
+		let user = sessionUsers.get(event.context)
+		if (!user) {
+			user = getUserSession(event).then(session => getDbUserFromId(session.user?.id))
+			sessionUsers.set(event.context, user)
+		}
+		return await user
 	}
 
 	/**

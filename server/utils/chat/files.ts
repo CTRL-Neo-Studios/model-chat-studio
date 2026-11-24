@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto'
 import { blob } from 'hub:blob'
 import { schema } from 'hub:db'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, or } from 'drizzle-orm'
 import type { UIMessage } from 'ai'
-import { FILE_UPLOAD, FILE_URL_PATTERN } from '#shared/utils/file'
+import { createError, type RequestEvent } from 'nuxt/server'
+import { FILE_UPLOAD, FILE_UPLOAD_TYPES, FILE_URL_PATTERN } from '#shared/utils/file'
 import type { Db } from '#server/utils/core/settings'
-import type { ActiveInference } from '#server/utils/inference'
+import { type ActiveInference, useInference } from '#server/utils/inference'
 import type { CatalogModel } from '#server/utils/inference/types'
 
 /** Provider-side copies are tied to the account of the key that made them; only a hash of it is stored. */
@@ -13,15 +14,35 @@ function hashApiKey(apiKey: string) {
 	return createHash('sha256').update(apiKey).digest('hex')
 }
 
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+
+// Browsers often send no type, or a spreadsheet type for CSV, for these.
+const typesByExtension: Record<string, string> = { csv: 'text/csv', md: 'text/markdown', txt: 'text/plain' }
+
+/** Reads an upload form; its `file` field must be a type a model can take, at most 8 MB. */
+export async function readUpload(event: RequestEvent) {
+	const form = await event.req.formData()
+	const upload = form.get('file')
+	if (!(upload instanceof File)) throw createError({ status: 400, statusText: 'Send the file in the `file` field' })
+	const extension = /\.([a-z0-9]{1,8})$/i.exec(upload.name)?.[1]?.toLowerCase() ?? ''
+	const mediaType = typesByExtension[extension] ?? upload.type
+	if (!FILE_UPLOAD_TYPES.includes(mediaType)) throw createError({ status: 400, statusText: 'Images, PDFs and text files (CSV, Markdown, plain text) only' })
+	if (upload.size > MAX_UPLOAD_BYTES) throw createError({ status: 413, statusText: 'Files can be at most 8 MB' })
+	return { form, upload, mediaType, extension }
+}
+
 /**
  * Deletes files: rows first, then each blob (one at a time: the S3 driver's batch delete omits the
- * `Content-MD5` AWS requires), then the platform copies made with the current key. Copies made with
- * another key cannot be deleted here; DeepSeek drops them after 30 days.
+ * `Content-MD5` AWS requires), then the platform copies made with the member's current key. Copies made
+ * with another key cannot be deleted here; DeepSeek drops them after 30 days.
  */
-export async function deleteStoredFiles(db: Db, ids: string[], inference: ActiveInference | null) {
+export async function deleteStoredFiles(db: Db, ids: string[], userId: string) {
 	if (!ids.length) return
-	const rows = await db.select({ blobPath: schema.file.blobPath }).from(schema.file).where(inArray(schema.file.id, ids))
-	const remote = await db.select().from(schema.providerFile).where(inArray(schema.providerFile.fileId, ids))
+	const [rows, remote, inference] = await Promise.all([
+		db.select({ blobPath: schema.file.blobPath }).from(schema.file).where(inArray(schema.file.id, ids)),
+		db.select().from(schema.providerFile).where(inArray(schema.providerFile.fileId, ids)),
+		useInference(db, userId),
+	])
 	await db.delete(schema.file).where(inArray(schema.file.id, ids))
 
 	for (const row of rows) {
@@ -41,6 +62,8 @@ interface AttachmentContext {
 	model: CatalogModel
 	userId: string
 	chatId: string
+	/** The chat's libraries, whose files "@" references bring in. */
+	libraryIds: string[]
 }
 
 /** The platform's id for an uploaded PDF, uploading it the first time (DeepSeek bills parsing per upload). */
@@ -75,15 +98,24 @@ const textTypes: readonly string[] = FILE_UPLOAD.textTypes
 export async function resolveAttachments(context: AttachmentContext, messages: UIMessage[]): Promise<UIMessage[]> {
 	const ids = messages.flatMap(message => message.parts.flatMap(part => part.type === 'file' ? [FILE_URL_PATTERN.exec(part.url)?.[1] ?? ''] : []))
 	if (!ids.length) return messages
-	const rows = await context.db.select().from(schema.file)
-		.where(and(inArray(schema.file.id, ids.filter(Boolean)), eq(schema.file.chatId, context.chatId)))
+	// The chat's own uploads, and the files of its libraries (named with "@").
+	const rows = await context.db.select().from(schema.file).where(and(
+		inArray(schema.file.id, ids.filter(Boolean)),
+		or(
+			eq(schema.file.chatId, context.chatId),
+			context.libraryIds.length
+				? inArray(schema.file.id, context.db.select({ id: schema.libraryEntry.fileId }).from(schema.libraryEntry).where(inArray(schema.libraryEntry.libraryId, context.libraryIds)))
+				: undefined,
+		),
+	))
 	const byId = Object.fromEntries(rows.map(row => [row.id, row]))
 	const accepts = (modality: string) => context.model.inputModalities.includes(modality)
 
 	async function resolve(part: UIMessage['parts'][number]): Promise<UIMessage['parts'][number]> {
 		if (part.type !== 'file') return part
 		const row = byId[FILE_URL_PATTERN.exec(part.url)?.[1] ?? '']
-		const name = row?.fileName ?? part.filename ?? 'file'
+		// A reference names the file by its path in the library.
+		const name = part.filename ?? row?.fileName ?? 'file'
 		const note = (reason: string) => ({ type: 'text' as const, text: `[Attachment "${name}" left out: ${reason}]` })
 		if (!row) return note('it was deleted.')
 

@@ -22,7 +22,9 @@ export default defineNuxtConfig({
 		'@nuxthub/core',
 		'@vueuse/nuxt',
 		'nuxt-security',
-		'motion-v/nuxt'
+		'motion-v/nuxt',
+		'@pinia/nuxt',
+		'@pinia/colada-nuxt'
 	],
 
 	experimental: {

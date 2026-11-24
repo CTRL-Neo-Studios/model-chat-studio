@@ -4,10 +4,12 @@ import type { UIMessage } from 'ai'
 const props = defineProps<{
 	message: UIMessage
 	text: string
+	/** Offers "Save and resend": a new branch at the message's place, answered again; the earlier branch stays. */
+	resend?: boolean
 }>()
 
 const emit = defineEmits<{
-	save: [message: UIMessage, text: string]
+	save: [message: UIMessage, text: string, resend: boolean]
 	cancel: []
 }>()
 
@@ -26,13 +28,24 @@ const editingText = ref(props.text)
 			:ui="{ base: 'p-0' }"
 		/>
 
-		<div class="flex gap-1.5 justify-end">
+		<div class="flex items-center gap-1.5 justify-end">
+			<p v-if="resend" class="me-auto text-xs text-muted">
+				“Save and resend” starts a new branch from here; the earlier one is kept.
+			</p>
 			<UButton size="sm" variant="soft" color="neutral" label="Cancel" @click="emit('cancel')" />
 			<UButton
 				size="sm"
+				:variant="resend ? 'soft' : 'solid'"
 				label="Save"
 				:disabled="!editingText.trim() || editingText === text"
-				@click="emit('save', message, editingText)"
+				@click="emit('save', message, editingText, false)"
+			/>
+			<UButton
+				v-if="resend"
+				size="sm"
+				label="Save and resend"
+				:disabled="!editingText.trim()"
+				@click="emit('save', message, editingText, true)"
 			/>
 		</div>
 	</div>

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 const props = defineProps<{
 	modelId: string
+	/** Renders as a full-width form control instead of the prompt's compact button. */
+	field?: boolean
 }>()
 
 /** Endpoint tags in the order they were picked; empty or unset means automatic routing. */
@@ -10,19 +12,9 @@ const allowFallbacks = defineModel<boolean | undefined>('allowFallbacks')
 
 const open = ref(false)
 
-// Loaded when the picker first opens (or at once, to name chosen providers), and again after the model changes.
-const { data: endpoints, status, execute, clear } = useFetch('/api/v1/models/endpoints', {
-	query: computed(() => ({ id: props.modelId })),
-	immediate: !!providers.value?.length,
-	server: false,
-	watch: false,
-})
-const loading = computed(() => status.value === 'pending')
-
-watch(() => props.modelId, () => clear())
-watch(open, (value) => {
-	if (value && !endpoints.value) execute()
-})
+// Loaded when the picker opens, or at once to name chosen providers; each model has its own entry.
+const { data: endpoints, asyncStatus } = useQuery(() => ({ ...endpointsQuery(props.modelId), enabled: import.meta.client && (open.value || !!providers.value?.length) }))
+const loading = computed(() => asyncStatus.value === 'loading' && !endpoints.value)
 
 const chosen = computed(() => providers.value ?? [])
 
@@ -44,8 +36,20 @@ function percent(value: number | null) {
 </script>
 
 <template>
-	<UPopover v-model:open="open" :content="{ side: 'top', align: 'end' }">
+	<UPopover v-model:open="open" :content="{ side: field ? 'bottom' : 'top', align: field ? 'start' : 'end' }">
 		<UButton
+			v-if="field"
+			icon="i-lucide-server"
+			:label="chosen.length ? label : 'Automatic routing'"
+			color="neutral"
+			variant="outline"
+			trailing-icon="i-lucide-chevron-down"
+			class="w-full"
+			:ui="{ label: 'truncate', trailingIcon: 'ms-auto text-dimmed' }"
+			aria-label="Choose providers"
+		/>
+		<UButton
+			v-else
 			icon="i-lucide-server"
 			:label="label"
 			size="sm"

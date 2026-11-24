@@ -8,7 +8,7 @@ export function useApiAction() {
 	const toast = useToast()
 	const { csrf, headerName } = useCsrf()
 
-	return async function act<T>(url: string, options: { method: Method, body?: Record<string, unknown>, success?: string }): Promise<T | undefined> {
+	return async function act<T>(url: string, options: { method: Method, body?: Record<string, unknown> | FormData, success?: string }): Promise<T | undefined> {
 		try {
 			const result = await $fetch<T>(url, { method: options.method, body: options.body, headers: { [headerName]: csrf } })
 			if (options.success) toast.add({ title: options.success, icon: 'i-lucide-check', color: 'success' })

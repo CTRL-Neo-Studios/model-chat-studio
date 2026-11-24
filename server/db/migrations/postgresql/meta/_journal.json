@@ -15,6 +15,139 @@
       "when": 1795205927178,
       "tag": "0001_allowlist_off_by_default",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795276626043,
+      "tag": "0002_chat_lanes",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795281441133,
+      "tag": "0003_user_preferences",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795283610432,
+      "tag": "0004_model_profiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795302970303,
+      "tag": "0005_chat_folders",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795303367729,
+      "tag": "0006_temporary_chats",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795303804998,
+      "tag": "0007_turn_trace",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795310017157,
+      "tag": "0008_projects",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795311934033,
+      "tag": "0009_pins",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795312598730,
+      "tag": "0010_project_chats",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795314109253,
+      "tag": "0011_project_search",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1795315793693,
+      "tag": "0012_context_profiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1795317037056,
+      "tag": "0013_project_sharing",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1795321670791,
+      "tag": "0014_libraries",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1795326774302,
+      "tag": "0015_folder_defaults",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1795369042662,
+      "tag": "0016_characters",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1795383718053,
+      "tag": "0017_group_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1795402069626,
+      "tag": "0018_answer_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1795409717637,
+      "tag": "0019_conversation_tree",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1795451570534,
+      "tag": "0020_character_cards",
+      "breakpoints": true
     }
   ]
 }

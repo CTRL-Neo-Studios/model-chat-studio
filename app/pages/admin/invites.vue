@@ -5,7 +5,8 @@ definePageMeta({ minRole: 'admin' })
 useHead({ title: 'Invites' })
 
 const act = useApiAction()
-const { data: invites, refresh } = await useFetch('/api/v1/admin/invites', { default: () => [] })
+const { data, isPending, refetch: refresh } = useQuery(invitesQuery)
+const invites = computed(() => data.value ?? [])
 type Row = (typeof invites.value)[number]
 
 const form = reactive({ maxUses: 1, expiresInDays: '7' })
@@ -76,7 +77,7 @@ const columns: TableColumn<Row>[] = [
 			/>
 		</UPageCard>
 
-		<UTable :data="invites" :columns="columns">
+		<UTable :data="invites" :columns="columns" :loading="isPending">
 			<template #status-cell="{ row }">
 				<UBadge :label="status(row.original).label" :color="status(row.original).color" variant="subtle" />
 			</template>

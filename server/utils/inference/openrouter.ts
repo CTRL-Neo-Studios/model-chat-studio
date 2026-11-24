@@ -1,5 +1,6 @@
 import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import type { ToolSet } from 'ai'
+import { z } from 'zod'
 import type { CatalogEndpoint, CatalogModel, InferencePlatform, Pricing } from './types'
 import { sumTokens } from './usage'
 
@@ -55,6 +56,7 @@ export function toOpenRouterModel(model: OpenRouterModel): CatalogModel {
 		maxOutputTokens: model.top_provider.max_completion_tokens,
 		// `file` (PDFs) for every model: OpenRouter's file-parser plugin turns PDFs into text when the model cannot read them.
 		inputModalities: [...model.architecture.input_modalities.filter(m => m === 'text' || m === 'image'), 'file'],
+		outputModalities: model.architecture.output_modalities,
 		// The `openrouter:web_search` server tool goes through tool calling.
 		webSearch: model.supported_parameters.includes('tools'),
 		supportedParameters: model.supported_parameters,
@@ -96,12 +98,29 @@ function reasoningOption(level: string | undefined) {
 
 interface OpenRouterMetadata {
 	provider?: string
-	usage?: { cost?: number }
+}
+
+// OpenRouter's usage object, as it arrives in `usage.raw` and in the transcription response.
+const usageCostSchema = z.object({
+	cost: z.number(),
+	is_byok: z.boolean().optional(),
+	cost_details: z.object({ upstream_inference_cost: z.number().nullish() }).nullish(),
+})
+
+/**
+ * What a call cost. `cost` is what OpenRouter charged; when the call ran on a provider key stored in the
+ * OpenRouter account (BYOK), that provider's own charge comes on top, in `upstream_inference_cost`.
+ * `null` when no cost was reported.
+ */
+function openrouterCost(raw: unknown): number | null {
+	const usage = usageCostSchema.safeParse(raw).data
+	if (!usage) return null
+	return usage.cost + (usage.is_byok ? usage.cost_details?.upstream_inference_cost ?? 0 : 0)
 }
 
 export const openrouterPlatform: InferencePlatform = {
 	id: 'openrouter',
-	capabilities: { providerRouting: true, safetyCheck: false, nativeTitle: false, sttModel: true },
+	capabilities: { providerRouting: true, safetyCheck: false, nativeTitle: false, sttModel: true, decisions: true },
 
 	async checkKey(apiKey) {
 		const response = await fetch(`${BASE_URL}/key`, { headers: { Authorization: `Bearer ${apiKey}` } })
@@ -115,6 +134,23 @@ export const openrouterPlatform: InferencePlatform = {
 		return data.filter(m => m.architecture.output_modalities.includes('text')).map(toOpenRouterModel)
 	},
 
+	async listSttModels(apiKey) {
+		const { data } = await get<{ data: OpenRouterModel[] }>('/models?output_modalities=transcription', apiKey)
+		// OpenRouter prices transcription per second of audio, in `pricing.prompt`.
+		return data.map(model => ({
+			...toOpenRouterModel(model),
+			inputModalities: ['audio'],
+			outputModalities: ['text'],
+			pricing: null,
+			pricePerMinute: model.pricing.prompt ? Number(model.pricing.prompt) * 60 : null,
+		}))
+	},
+
+	async listDecisionModels(apiKey) {
+		const { data } = await get<{ data: OpenRouterModel[] }>('/models?output_modalities=decisions', apiKey)
+		return data.map(toOpenRouterModel)
+	},
+
 	async listEndpoints(apiKey, modelId) {
 		const { data } = await get<{ data: { endpoints: OpenRouterEndpoint[] } }>(`/models/${modelId}/endpoints`, apiKey)
 		return data.endpoints.map(toOpenRouterEndpoint)
@@ -123,6 +159,12 @@ export const openrouterPlatform: InferencePlatform = {
 	prepare(input) {
 		const openrouter = createOpenRouter({ apiKey: input.apiKey })
 		const providers = input.providers?.length ? input.providers : undefined
+		// Endpoint tags in the user's order, the ranking for automatic routing, and zero data retention.
+		const provider = {
+			...(providers && { only: providers, order: providers, allow_fallbacks: input.allowFallbacks ?? true }),
+			...(input.providerSort && { sort: input.providerSort }),
+			...(input.zdr && { zdr: true }),
+		}
 		// Options must stay unset: the helper flattens them, while OpenRouter expects them under `parameters`.
 		const tools: ToolSet = input.webSearch ? { web_search: openrouter.tools.webSearch({}) } : {}
 		return {
@@ -131,14 +173,20 @@ export const openrouterPlatform: InferencePlatform = {
 			tools,
 			providerOptions: {
 				openrouter: {
-					// Endpoint tags, in the user's order.
-					...(providers && { provider: { only: providers, order: providers, allow_fallbacks: input.allowFallbacks ?? true } }),
+					...(Object.keys(provider).length && { provider }),
 					...(input.reasoningLevel !== undefined && { reasoning: reasoningOption(input.reasoningLevel) }),
+					// Not AI SDK settings; the provider spreads these into the request body as they are.
+					...(input.minP !== undefined && { min_p: input.minP }),
+					...(input.topA !== undefined && { top_a: input.topA }),
+					...(input.repetitionPenalty !== undefined && { repetition_penalty: input.repetitionPenalty }),
 					user: input.userId,
 				},
 			},
 			temperature: input.temperature,
 			topP: input.topP,
+			topK: input.topK,
+			frequencyPenalty: input.frequencyPenalty,
+			presencePenalty: input.presencePenalty,
 			maxOutputTokens: input.maxOutputTokens,
 		}
 	},
@@ -147,10 +195,9 @@ export const openrouterPlatform: InferencePlatform = {
 		let costUsd: number | null = 0
 		let provider: string | undefined
 		for (const step of steps) {
-			const metadata = step.providerMetadata?.openrouter as OpenRouterMetadata | undefined
-			const cost = metadata?.usage?.cost
-			costUsd = costUsd === null || typeof cost !== 'number' ? null : costUsd + cost
-			provider = metadata?.provider ?? provider
+			const cost = openrouterCost(step.usage.raw)
+			costUsd = costUsd === null || cost === null ? null : costUsd + cost
+			provider = (step.providerMetadata?.openrouter as OpenRouterMetadata | undefined)?.provider ?? provider
 		}
 		return { provider, costUsd, ...sumTokens(steps) }
 	},
@@ -163,7 +210,7 @@ export const openrouterPlatform: InferencePlatform = {
 			body: JSON.stringify({ model, input_audio: { data: Buffer.from(wav).toString('base64'), format: 'wav' } }),
 		})
 		if (!response.ok) throw new Error(`OpenRouter transcription answered ${response.status}: ${await response.text()}`)
-		const { text, usage } = await response.json() as { text: string, usage?: { cost?: number } }
-		return { text, costUsd: typeof usage?.cost === 'number' ? usage.cost : null }
+		const { text, usage } = await response.json() as { text: string, usage?: unknown }
+		return { text, costUsd: openrouterCost(usage) }
 	},
 }

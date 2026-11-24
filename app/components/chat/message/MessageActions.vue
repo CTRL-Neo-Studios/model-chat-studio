@@ -2,15 +2,20 @@
 import type { UIMessage } from 'ai'
 import { getTextFromMessage } from '@nuxt/ui/utils/ai'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
 	message: UIMessage & { createdAt?: string | Date }
 	streaming: boolean
 	editing: boolean
 	vote: boolean | null
-}>()
+	/** Off for answers of a model that was removed from the chat. */
+	regenerable?: boolean
+}>(), { regenerable: true })
 
 const emit = defineEmits<{
 	edit: [message: UIMessage]
+	delete: [message: UIMessage]
+	/** A user message with everything after it on its branch. */
+	deleteBranch: [message: UIMessage]
 	regenerate: [message: UIMessage]
 	vote: [message: UIMessage, isUpvoted: boolean]
 }>()
@@ -29,7 +34,7 @@ const { copy, copied } = useClipboard({ copiedDuring: 2000 })
 </script>
 
 <template>
-	<template v-if="message.role === 'assistant' && !streaming">
+	<template v-if="message.role === 'assistant' && !streaming && !editing">
 		<UTooltip text="Copy response">
 			<UButton
 				size="sm"
@@ -63,7 +68,7 @@ const { copy, copied } = useClipboard({ copiedDuring: 2000 })
 			/>
 		</UTooltip>
 
-		<UTooltip text="Regenerate response">
+		<UTooltip v-if="regenerable" text="Regenerate: write this answer again from what came before it. The rest of the chat stays, and the earlier answer is kept as a version.">
 			<UButton
 				size="sm"
 				color="neutral"
@@ -71,6 +76,28 @@ const { copy, copied } = useClipboard({ copiedDuring: 2000 })
 				icon="i-lucide-rotate-cw"
 				aria-label="Regenerate response"
 				@click="emit('regenerate', message)"
+			/>
+		</UTooltip>
+
+		<UTooltip text="Edit response">
+			<UButton
+				size="sm"
+				color="neutral"
+				variant="ghost"
+				icon="i-lucide-pencil"
+				aria-label="Edit response"
+				@click="emit('edit', message)"
+			/>
+		</UTooltip>
+
+		<UTooltip text="Delete response">
+			<UButton
+				size="sm"
+				color="neutral"
+				variant="ghost"
+				icon="i-lucide-trash"
+				aria-label="Delete response"
+				@click="emit('delete', message)"
 			/>
 		</UTooltip>
 	</template>
@@ -82,8 +109,8 @@ const { copy, copied } = useClipboard({ copiedDuring: 2000 })
 			</time>
 		</UTooltip>
 
-		<!-- The editor only edits text; a message with attachments is regenerated instead. -->
-		<UTooltip v-if="!message.parts.some(part => part.type === 'file')" text="Edit message">
+		<!-- The editor edits the text; attachments, "@" references and mentions stay. -->
+		<UTooltip v-if="message.parts.some(part => part.type === 'text')" text="Edit message">
 			<UButton
 				size="sm"
 				color="neutral"
@@ -93,5 +120,15 @@ const { copy, copied } = useClipboard({ copiedDuring: 2000 })
 				@click="emit('edit', message)"
 			/>
 		</UTooltip>
+
+		<UDropdownMenu
+			:items="[
+				{ label: 'Delete this message', description: 'With its answers; what follows stays', icon: 'i-lucide-trash', onSelect: () => emit('delete', message) },
+				{ label: 'Delete this branch', description: 'This message and everything after it', icon: 'i-lucide-git-branch', color: 'error', onSelect: () => emit('deleteBranch', message) },
+			]"
+			:content="{ align: 'end' }"
+		>
+			<UButton size="sm" color="neutral" variant="ghost" icon="i-lucide-trash" aria-label="Delete" />
+		</UDropdownMenu>
 	</template>
 </template>

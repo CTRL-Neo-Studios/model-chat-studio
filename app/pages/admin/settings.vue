@@ -5,31 +5,60 @@ useHead({ title: 'Admin settings' })
 type PlatformId = 'openrouter' | 'deepseek'
 
 const act = useApiAction()
-const { data: settings } = await useFetch('/api/v1/admin/settings')
-// Model ids of the active platform, as suggestions for the model fields.
-const { data: catalog, refresh: refreshCatalog } = await useLazyFetch('/api/v1/admin/models', { server: false })
+const queryCache = useQueryCache()
+const { data: settings } = useQuery(adminSettingsQuery)
 
 const platformNames: Record<PlatformId, string> = { openrouter: 'OpenRouter', deepseek: 'DeepSeek' }
 const platformIds: PlatformId[] = ['openrouter', 'deepseek']
 
+type CatalogKind = 'chat' | 'stt' | 'decisions'
+// Each platform's catalog with its own key, active or not. Loaded in the browser: catalogs are large.
+function useAdminCatalog(platform: PlatformId, kind: CatalogKind) {
+	return useQuery(() => ({
+		...adminCatalogQuery({ platform, kind }),
+		enabled: import.meta.client && !!settings.value?.platforms[platform].hasKey
+			&& (kind === 'chat' || (kind === 'stt' ? settings.value.capabilities[platform].sttModel : settings.value.capabilities[platform].decisions)),
+	}))
+}
+const catalogs = Object.fromEntries(platformIds.map(id => [id, { chat: useAdminCatalog(id, 'chat'), stt: useAdminCatalog(id, 'stt'), decisions: useAdminCatalog(id, 'decisions') }])) as Record<PlatformId, Record<CatalogKind, ReturnType<typeof useAdminCatalog>>>
+
+/** Props for a `ModelField` choosing from one platform's catalog. */
+function picker(id: PlatformId, kind: CatalogKind) {
+	const { data, status, asyncStatus, error } = catalogs[id][kind]
+	return {
+		models: data.value?.models ?? [],
+		// A retry after an error is loading again.
+		status: asyncStatus.value === 'loading' ? 'pending' as const : status.value,
+		error: error.value ? serverMessage(error.value) ?? error.value.message : undefined,
+		disabledReason: settings.value?.platforms[id].hasKey ? undefined : 'Add a key first',
+	}
+}
+
 // Form state, filled from the server and refilled from each save's response.
 const general = reactive({ signupMode: 'invite' as 'invite' | 'open' | 'closed', defaultMonthlyBudgetUsd: null as number | null })
 const active = ref<PlatformId | 'none'>('none')
-const platformForms = reactive(Object.fromEntries(platformIds.map(id => [id, { apiKey: '', defaultModel: '', titleModel: '', sttModel: '' }])) as Record<PlatformId, { apiKey: string, defaultModel: string, titleModel: string, sttModel: string }>)
+type PlatformForm = { apiKey: string, defaultModel: string, titleModel: string, sttModel: string, decisionModel: string }
+const platformForms = reactive(Object.fromEntries(platformIds.map(id => [id, { apiKey: '', defaultModel: '', titleModel: '', sttModel: '', decisionModel: '' }])) as Record<PlatformId, PlatformForm>)
 const safetyCheck = ref(false)
+const limits = reactive({ maxChatModels: 4, maxRegenerations: 50, maxRetries: 5 })
 
 function fill(view: NonNullable<typeof settings.value>) {
-	settings.value = view
 	general.signupMode = view.signupMode
 	general.defaultMonthlyBudgetUsd = view.defaultMonthlyBudgetUsd
+	Object.assign(limits, { maxChatModels: view.maxChatModels, maxRegenerations: view.maxRegenerations, maxRetries: view.maxRetries })
 	active.value = view.inferencePlatform ?? 'none'
 	safetyCheck.value = view.safetyCheck
 	for (const id of platformIds) {
 		const config = view.platforms[id]
-		Object.assign(platformForms[id], { apiKey: '', defaultModel: config.defaultModel ?? '', titleModel: config.titleModel ?? '', sttModel: config.sttModel ?? '' })
+		Object.assign(platformForms[id], { apiKey: '', defaultModel: config.defaultModel ?? '', titleModel: config.titleModel ?? '', sttModel: config.sttModel ?? '', decisionModel: config.decisionModel ?? '' })
 	}
 }
-if (settings.value) fill(settings.value)
+// The form fills in once the settings arrive (the page shows skeletons until then); later refreshes leave edits alone.
+const stopFilling = watch(settings, (view) => {
+	if (!view) return
+	fill(view)
+	queueMicrotask(() => stopFilling())
+}, { immediate: true })
 
 const saving = ref<string | null>(null)
 async function save(section: string, body: Record<string, unknown>) {
@@ -37,9 +66,10 @@ async function save(section: string, body: Record<string, unknown>) {
 	const view = await act<NonNullable<typeof settings.value>>('/api/v1/admin/settings', { method: 'PATCH', body, success: 'Settings saved' })
 	saving.value = null
 	if (view) {
+		queryCache.setQueryData(adminSettingsQuery.key, view)
 		fill(view)
-		// The model picker and the home page notice follow the active platform.
-		await Promise.all([refreshCatalog(), refreshNuxtData('models')])
+		// The pickers follow the keys (a failed catalog shows in its picker); members' model picker and the home page notice follow the active platform.
+		await Promise.all([queryCache.invalidateQueries({ key: ['admin', 'catalog'] }), queryCache.invalidateQueries({ key: modelsQuery.key })]).catch(() => {})
 	}
 }
 
@@ -53,6 +83,7 @@ function savePlatform(id: PlatformId) {
 				defaultModel: form.defaultModel.trim() || null,
 				...(!capabilities.nativeTitle && { titleModel: form.titleModel.trim() || null }),
 				...(capabilities.sttModel && { sttModel: form.sttModel.trim() || null }),
+				...(capabilities.decisions && { decisionModel: form.decisionModel.trim() || null }),
 			},
 		},
 		...(capabilities.safetyCheck && { safetyCheck: safetyCheck.value }),
@@ -73,8 +104,6 @@ const platformChoices = computed(() => [
 		description: settings.value?.platforms[id].hasKey ? 'Instance key set.' : 'No instance key: only members with their own key can chat.',
 	})),
 ])
-
-const suggestions = (id: PlatformId) => catalog.value?.platform === id ? catalog.value.models.map(model => model.id) : []
 </script>
 
 <template>
@@ -89,6 +118,21 @@ const suggestions = (id: PlatformId) => catalog.value?.platform === id ? catalog
 				</UFormField>
 				<div>
 					<UButton label="Save" :loading="saving === 'general'" @click="save('general', { ...general })" />
+				</div>
+			</UPageCard>
+
+			<UPageCard title="Limits" variant="subtle">
+				<UFormField label="Models per chat" description="How many models can answer each message in one chat. Each answer is billed separately.">
+					<UInputNumber v-model="limits.maxChatModels" :min="1" :max="12" class="w-32" />
+				</UFormField>
+				<UFormField label="Regenerations per answer" description="After this many, the answer can no longer be regenerated.">
+					<UInputNumber v-model="limits.maxRegenerations" :min="1" :max="1000" class="w-32" />
+				</UFormField>
+				<UFormField label="Automatic retries" description="How often a call the platform refused or failed (rate limits, server errors) is retried before the member sees an error.">
+					<UInputNumber v-model="limits.maxRetries" :min="0" :max="10" class="w-32" />
+				</UFormField>
+				<div>
+					<UButton label="Save" :loading="saving === 'limits'" @click="save('limits', { ...limits })" />
 				</div>
 			</UPageCard>
 
@@ -121,15 +165,51 @@ const suggestions = (id: PlatformId) => catalog.value?.platform === id ? catalog
 				</UFormField>
 
 				<UFormField label="Default model" description="For new chats, and for chats whose model is no longer offered.">
-					<UInputMenu v-model="platformForms[id].defaultModel" mode="autocomplete" :items="suggestions(id)" placeholder="Model id" class="w-full" />
+					<ModelField
+						v-bind="picker(id, 'chat')"
+						:model-value="platformForms[id].defaultModel || null"
+						placeholder="Choose the default model"
+						clearable
+						@update:model-value="platformForms[id].defaultModel = $event ?? ''"
+						@retry="catalogs[id].chat.refetch()"
+					/>
 				</UFormField>
 
 				<UFormField v-if="!settings.capabilities[id].nativeTitle" label="Title model" description="Names new chats with a short call; empty uses the start of the first message.">
-					<UInputMenu v-model="platformForms[id].titleModel" mode="autocomplete" :items="suggestions(id)" placeholder="Model id" class="w-full" />
+					<ModelField
+						v-bind="picker(id, 'chat')"
+						:model-value="platformForms[id].titleModel || null"
+						placeholder="None: the start of the first message"
+						clearable
+						@update:model-value="platformForms[id].titleModel = $event ?? ''"
+						@retry="catalogs[id].chat.refetch()"
+					/>
 				</UFormField>
 
-				<UFormField v-if="settings.capabilities[id].sttModel" label="Speech-to-text model" description="Dictation is off until one is set, e.g. openai/whisper-1.">
-					<UInput v-model="platformForms[id].sttModel" placeholder="openai/whisper-1" class="w-full" />
+				<UFormField v-if="settings.capabilities[id].sttModel" label="Speech-to-text model" description="Dictation is off until one is set.">
+					<ModelField
+						v-bind="picker(id, 'stt')"
+						:model-value="platformForms[id].sttModel || null"
+						placeholder="None: dictation is off"
+						clearable
+						@update:model-value="platformForms[id].sttModel = $event ?? ''"
+						@retry="catalogs[id].stt.refetch()"
+					/>
+				</UFormField>
+
+				<UFormField
+					v-if="settings.capabilities[id].decisions"
+					label="Decision model"
+					description="Picks who answers in group chats when a message names nobody with “@”. Used whenever an OpenRouter key is stored, even while another platform answers. Suggested: TypeSafe Jev (typesafe/jev-1.14)."
+				>
+					<ModelField
+						v-bind="picker(id, 'decisions')"
+						:model-value="platformForms[id].decisionModel || null"
+						placeholder="None: names in the message decide"
+						clearable
+						@update:model-value="platformForms[id].decisionModel = $event ?? ''"
+						@retry="catalogs[id].decisions.refetch()"
+					/>
 				</UFormField>
 
 				<template v-if="settings.capabilities[id].safetyCheck">
@@ -158,5 +238,8 @@ const suggestions = (id: PlatformId) => catalog.value?.platform === id ? catalog
 				</div>
 			</UPageCard>
 		</template>
+		<div v-else class="flex flex-col gap-4" aria-busy="true" aria-label="Loading the settings">
+			<USkeleton v-for="n in 4" :key="n" class="h-40 w-full" />
+		</div>
 	</AdminPanel>
 </template>

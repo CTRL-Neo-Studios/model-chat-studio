@@ -6,6 +6,13 @@ export interface UIChat {
 	to: string
 	icon: string
 	createdAt: string
+	/** `null` is no folder. */
+	folderId: string | null
+}
+
+/** A chat of `GET /chats` as the lists show it. */
+export function toUIChat(chat: { id: string, title: string | null, createdAt: string, folderId: string | null }): UIChat {
+	return { id: chat.id, label: chat.title || 'Untitled', to: `/chat/${chat.id}`, icon: 'i-lucide-message-circle', createdAt: chat.createdAt, folderId: chat.folderId }
 }
 
 interface ChatGroup {

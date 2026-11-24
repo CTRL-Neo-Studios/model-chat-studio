@@ -20,6 +20,18 @@ const items = computed<DropdownMenuItem[][]>(() => ([[{
 		alt: user.value?.name || user.value?.username,
 	},
 }], [{
+	label: 'Model profiles',
+	icon: 'i-lucide-bot',
+	to: '/model-profiles',
+}, {
+	label: 'Characters',
+	icon: 'i-lucide-drama',
+	to: '/characters',
+}, {
+	label: 'Structure profiles',
+	icon: 'i-lucide-layers',
+	to: '/structure-profiles',
+}, {
 	label: 'Settings',
 	icon: 'i-lucide-user-cog',
 	to: '/settings',
@@ -90,9 +102,16 @@ const items = computed<DropdownMenuItem[][]>(() => ([[{
 	icon: 'i-lucide-log-out',
 	async onSelect() {
 		await clear()
-		await navigateTo('/signin')
+		// A fresh app: nothing cached for this member stays for whoever signs in next in this browser.
+		reloadNuxtApp({ path: '/signin' })
 	},
 }]]))
+
+// The Admin entry opens the users list; it loads as the menu opens, so the page shows it at once.
+const prefetch = usePrefetch()
+function onOpen(open: boolean) {
+	if (open && getRoleLevel(user.value?.role) >= getRoleLevel('moderator')) prefetch(usersQuery)
+}
 </script>
 
 <template>
@@ -100,6 +119,7 @@ const items = computed<DropdownMenuItem[][]>(() => ([[{
 		:items="items"
 		:content="{ align: 'center', collisionPadding: 12 }"
 		:ui="{ content: collapsed ? 'w-48' : 'w-(--reka-dropdown-menu-trigger-width)' }"
+		@update:open="onOpen"
 	>
 		<UButton
 			v-bind="{

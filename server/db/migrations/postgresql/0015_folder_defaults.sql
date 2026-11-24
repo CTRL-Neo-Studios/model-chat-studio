@@ -1,0 +1,1 @@
+ALTER TABLE "chatFolder" ADD COLUMN "defaults" jsonb;

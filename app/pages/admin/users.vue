@@ -8,7 +8,8 @@ useHead({ title: 'Users' })
 const act = useApiAction()
 const overlay = useOverlay()
 const { user: me } = useUserSession()
-const { data: users, refresh } = await useFetch('/api/v1/users', { default: () => [] })
+const { data, isPending, refetch: refresh } = useQuery(usersQuery)
+const users = computed(() => data.value ?? [])
 type Row = (typeof users.value)[number]
 
 const isAdmin = computed(() => me.value?.role === 'admin')
@@ -103,7 +104,7 @@ const roleColors = { admin: 'primary', moderator: 'info', user: 'neutral' } as c
 	<AdminPanel title="Users">
 		<UInput v-model="search" icon="i-lucide-search" placeholder="Search by name or username" class="max-w-xs" />
 
-		<UTable :data="rows" :columns="columns">
+		<UTable :data="rows" :columns="columns" :loading="isPending">
 			<template #user-cell="{ row }">
 				<div class="flex items-center gap-3">
 					<UAvatar :src="row.original.avatarUrl || undefined" :alt="row.original.username" size="sm" />

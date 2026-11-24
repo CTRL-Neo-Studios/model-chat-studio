@@ -1,6 +1,6 @@
 # Milestone 1: chat template frontend on an extended backend
 
-Status: phases P (preparation) and 0–3 (groundwork, data and conventions, auth and access control, inference adapter) are done (2026-11-20), except the live checks in section 10, which wait for API keys. Phase 4 is next. Evidence for every "verified" claim below is in `plans/preparation-findings.md`.
+Status: built, phases P and 0–9 (2026-11-20), the live checks in section 10 and phase 9's smoke runs included; `scripts/app-smoke.ts` passed again on both platforms on 2026-11-22 (`plans/live-checks.md`). Evidence for every "verified" claim below is in `plans/preparation-findings.md`.
 
 Goal: the Nuxt UI chat template's frontend (`../chat`, upstream `nuxt-ui-templates/chat` at `f00f2a6`) running in this repo on PostgreSQL and S3, with invite-gated GitHub signup, a platform-agnostic inference layer (OpenRouter or DeepSeek), model and upstream-provider selection, sampling parameters, usage accounting and quotas.
 
@@ -422,7 +422,7 @@ Phase P is done. Phases 2 and 3 are independent once phase 1 is done, and phases
 
 | # | Phase | Work | Done when |
 |---|---|---|---|
-| P | Preparation | Done. See `plans/preparation-findings.md`. | The live checks in section 10 still wait for credentials |
+| P | Preparation | Done. See `plans/preparation-findings.md`. | The live checks in section 10 ran with both keys (2026-11-20) |
 | 0 | Groundwork | Done. Dependencies and scripts (below), the four baseline typecheck errors, ESLint, CSRF, the production database driver guard, `.env.example`, README. | `bun run lint` and `bun run typecheck` pass |
 | 1 | Data and conventions | Done. New schema, regenerated migration `0000_init`, `applyMigrationsDuringDev: true`, handlers and utils on `nuxt/server` and `hub:db`, the authorization wrapper and its test, the resolver returning `null` for guests, Logto removed, user lookups by non-UUID ids find nobody | migration applied on PGlite and on a throwaway Postgres 16; user routes answer as before; a throwing ability answers 500 |
 | 2 | Auth and access control | Done. GitHub handler, invite flow and admin invites API, first-user admin, global auth middleware, role rules from section 6, removals from section 7, sign-in page and a signed-in placeholder home | signup, invite and role-rule tests pass; one admin out of 20 simultaneous first signups on Postgres; sign-in, error, sign-out and redirects checked in the browser |
