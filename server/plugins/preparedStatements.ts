@@ -1,3 +1,4 @@
+import { definePlugin } from 'nitro'
 import { db } from 'hub:db'
 import type { Sql, TransactionSql } from 'postgres'
 
@@ -16,7 +17,7 @@ function prepareQueries(client: Sql | TransactionSql) {
 // A pooler in transaction mode cannot keep statements: `hub.db.connection.prepare: false` leaves this off.
 // ponytail: statements live per connection until postgres-js recycles it (30 to 60 min); a schema change under a
 // running server can fail a prepared query once, so restart after migrating by hand.
-export default defineNitroPlugin(() => {
+export default definePlugin(() => {
 	const client = db.$client
 	// The local database (PGlite) has a different client and no such cost.
 	if (typeof client?.unsafe !== 'function' || client.options?.prepare === false) return

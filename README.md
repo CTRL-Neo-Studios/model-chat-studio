@@ -51,6 +51,19 @@ bun run build        # reads .env.prod
 bun run preview      # serves the build locally
 ```
 
+Or as a container, with `.env.prod` passed in at build time and again at run time:
+
+```bash
+# Bun installs and builds, Node runs the server
+docker build --secret id=env,src=.env.prod -t model-chat-studio .
+# Bun does everything (Nitro's `bun` preset)
+docker build -f Dockerfile.bun --secret id=env,src=.env.prod -t model-chat-studio:bun .
+
+docker run -p 3000:3000 --env-file .env.prod model-chat-studio
+```
+
+The image holds only `.output/`, so run migrations from a checkout (below).
+
 Two things to know before deploying:
 
 - **The build output contains secrets.** The storage driver and its credentials are fixed when the app is built, and a `DATABASE_URL` present at build time is written into the bundle too. Treat `.output/` as secret and do not publish it or an image built from it.

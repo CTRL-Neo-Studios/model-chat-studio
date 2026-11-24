@@ -1,0 +1,22 @@
+# syntax=docker/dockerfile:1
+# Bun installs, builds and runs the server.
+#   docker build -f Dockerfile.bun --secret id=env,src=.env.prod -t model-chat-studio:bun .
+#   docker run -p 3000:3000 --env-file .env.prod model-chat-studio:bun
+
+FROM oven/bun:1.4.5 AS build
+WORKDIR /app
+COPY package.json bun.lock ./
+# `postinstall` runs `nuxt prepare`, which needs the sources; `nuxt build` prepares anyway.
+RUN bun install --frozen-lockfile --ignore-scripts
+COPY . .
+# The database and storage drivers are fixed at build time. The env file is mounted for this step only,
+# so it stays out of the image layers (the build output still contains what it baked in).
+RUN --mount=type=secret,id=env,target=/app/.env.prod,required=true NITRO_PRESET=bun bun --bun run build
+
+FROM oven/bun:1.4.5-slim
+WORKDIR /app
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000
+COPY --from=build --chown=bun:bun /app/.output .output
+USER bun
+EXPOSE 3000
+CMD ["bun", ".output/server/index.mjs"]
