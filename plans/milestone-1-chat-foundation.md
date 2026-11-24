@@ -64,7 +64,7 @@ A handler may return a `Response` or a `ReadableStream`, which is how the chat s
 
 Documented exceptions, because `nuxt/server` does not cover them:
 
-- `server/plugins/authorization-resolver.ts` stays a Nitro plugin (`defineNitroPlugin` and the `request` hook are Nitro-only).
+- Server plugins (`server/plugins/privatePages.ts`, `preparedStatements.ts`) use `definePlugin` from `nitro`. Since the Nitro v3 upgrade, the nuxt-authorization resolver is the middleware `server/middleware/authorization.ts`, because Nitro v3's `request` hook gets an event without `context`.
 - Caching does not use `defineCachedFunction`. The catalog cache is a module-level `Map` with a TTL.
 - Secrets use `deriveSecret(purpose)` from `nuxt/server`, so `NUXT_APP_SECRET` is the only secret to configure.
 

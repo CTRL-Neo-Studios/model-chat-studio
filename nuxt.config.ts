@@ -1,5 +1,7 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
+	nitroLegacy: false,
+
 	modules: [
 		// A real build without DATABASE_URL would otherwise fall back to PGlite silently.
 		// `nuxt prepare` and `nuxt typecheck` are skipped: they also run as "production" and
@@ -30,6 +32,8 @@ export default defineNuxtConfig({
 	experimental: {
 		// The prompt morphs from the home page into the chat page.
 		viewTransition: true,
+		// As on Nuxt 5: server code imports what it uses (from `nuxt/server`, `nitro`, the modules).
+		nitroAutoImports: false,
 	},
 
 	devtools: {
@@ -57,8 +61,9 @@ export default defineNuxtConfig({
 	css: ['~/assets/css/main.css'],
 
 	routeRules: {
-		// nuxt-auth-utils clears the session with a DELETE that carries no CSRF token.
-		'/api/_auth/session': { csurf: false },
+		// nuxt-auth-utils clears the session with a DELETE that carries no CSRF token. Not `csurf: false`:
+		// Nitro v3 reads a `false` rule as "no rule here", so nuxt-csurf would never see it.
+		'/api/_auth/session': { csurf: { enabled: false } },
 	},
 
 	security: {
@@ -132,3 +137,10 @@ export default defineNuxtConfig({
 
 	compatibilityDate: '2026-06-05',
 })
+
+// nuxt-csurf declares its `csurf` route rule for Nitro v2 only.
+declare module '@nuxt/schema' {
+	interface RouteRuleConfigExtensions {
+		csurf?: { enabled?: boolean }
+	}
+}

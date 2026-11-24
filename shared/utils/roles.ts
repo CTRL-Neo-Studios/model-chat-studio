@@ -1,3 +1,4 @@
+import { createRoleChecker } from "#nuxt-cs-utils";
 import type {User, UserRole} from "#shared/types/db";
 
 export const { getRoleLevel, hasMinRole, hasRole, satisfies, isAuthenticated } = createRoleChecker<User, UserRole>({

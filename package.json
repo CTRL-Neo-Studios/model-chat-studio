@@ -44,7 +44,8 @@
     "drizzle-orm": "^0.45.4",
     "fuse.js": "^7.5.0",
     "motion-v": "^2.13.0",
-    "nuxt": "^4.6.4",
+    "nitro": "^3.0.261103-rc",
+    "nuxt": "^4.7.0",
     "nuxt-auth-utils": "^0.6.2",
     "nuxt-authorization": "^0.3.5",
     "nuxt-security": "2.7.0",
@@ -56,6 +57,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@nuxt/devtools": "^4.2.0",
     "@nuxt/eslint": "^1.17.0",
     "@pinia/colada-devtools": "^2.1.0",
     "@types/node": "^26.6.6",

@@ -1,10 +1,9 @@
 // `bun test` runs outside Nuxt. This file stands in for what Nuxt would provide.
 import { createHash } from 'node:crypto'
 import { mock } from 'bun:test'
-import { createRoleChecker } from '@type32/nuxt-cs-utils/runtime'
 
-// Auto-imports that shared code relies on.
-Object.assign(globalThis, { createRoleChecker })
+// Nuxt aliases `#nuxt-cs-utils` to the module's runtime, which Node reaches as `/runtime`.
+mock.module('#nuxt-cs-utils', () => import('@type32/nuxt-cs-utils/runtime'))
 
 // `nuxt/server` only loads inside a Nuxt server build.
 mock.module('nuxt/server', () => ({
