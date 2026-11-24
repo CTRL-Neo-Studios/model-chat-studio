@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { blob } from 'hub:blob'
+import { blob } from '#server/utils/core/blob'
 import { schema } from 'hub:db'
 import { eq } from 'drizzle-orm'
 import type { Db } from '#server/utils/core/settings'

@@ -3,13 +3,16 @@ export default defineNuxtConfig({
 	nitroLegacy: false,
 
 	modules: [
-		// A real build without DATABASE_URL would otherwise fall back to PGlite silently.
-		// `nuxt prepare` and `nuxt typecheck` are skipped: they also run as "production" and
-		// would switch the driver under a running dev server. Must stay above '@nuxthub/core'.
+		// A production build connects with the `DATABASE_URL` the server starts with: left to itself, NuxtHub
+		// writes the build-time URL into the build output, or falls back to PGlite silently when it is unset.
+		// `nuxt prepare` and `nuxt typecheck` are skipped: they also run as "production" and would switch the
+		// driver under a running dev server, and `nuxt db migrate` reads the URL from `nuxt prepare`'s config.
+		// Must stay above '@nuxthub/core'.
 		(_options, nuxt) => {
 			const hub = nuxt.options.hub
 			if (!nuxt.options.dev && !nuxt.options._prepare && hub && typeof hub.db === 'object') {
 				hub.db.driver = 'postgres-js'
+				hub.db.connection = { ...hub.db.connection, url: '' }
 			}
 		},
 		'@nuxt/eslint',
@@ -55,7 +58,9 @@ export default defineNuxtConfig({
 			applyMigrationsDuringBuild: false,
 			applyMigrationsDuringDev: true,
 		},
-		blob: true,
+		// Off: NuxtHub would write the S3 credentials into the build output. `server/utils/core/blob.ts`
+		// creates the storage from the environment when the server starts.
+		blob: false,
 	},
 
 	css: ['~/assets/css/main.css'],

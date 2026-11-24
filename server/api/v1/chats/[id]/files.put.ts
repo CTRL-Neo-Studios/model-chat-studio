@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { createError, defineEventHandler, getRouterParam } from 'nuxt/server'
-import { blob } from 'hub:blob'
+import { blob } from '#server/utils/core/blob'
 import { db, schema } from 'hub:db'
 import { z } from 'zod'
 import { chatAbilities } from '#shared/abilities/chatAbilities'

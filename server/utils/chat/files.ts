@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { blob } from 'hub:blob'
+import { blob } from '#server/utils/core/blob'
 import { schema } from 'hub:db'
 import { and, eq, inArray, or } from 'drizzle-orm'
 import type { UIMessage } from 'ai'

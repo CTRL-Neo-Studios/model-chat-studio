@@ -47,27 +47,30 @@ bun run db:migrate:prod  # apply pending migrations to the production database, 
 Copy `.env.example` to `.env.prod`, then:
 
 ```bash
-bun run build        # reads .env.prod
-bun run preview      # serves the build locally
+bun run build        # needs no environment
+bun run preview      # serves the build locally, reads .env.prod
 ```
 
-Or as a container, with `.env.prod` passed in at build time and again at run time:
+Or as a container. The build needs no environment and the image holds no secrets, so it can be published; the running container gets the variables:
 
 ```bash
 # Bun installs and builds, Node runs the server
-docker build --secret id=env,src=.env.prod -t model-chat-studio .
+docker build -t model-chat-studio .
 # Bun does everything (Nitro's `bun` preset)
-docker build -f Dockerfile.bun --secret id=env,src=.env.prod -t model-chat-studio:bun .
+docker build -f Dockerfile.bun -t model-chat-studio:bun .
 
 docker run -p 3000:3000 --env-file .env.prod model-chat-studio
 ```
 
 The image holds only `.output/`, so run migrations from a checkout (below).
 
-Two things to know before deploying:
+On [Dokploy](https://dokploy.com), create an Application from this repository:
 
-- **The build output contains secrets.** The storage driver and its credentials are fixed when the app is built, and a `DATABASE_URL` present at build time is written into the bundle too. Treat `.output/` as secret and do not publish it or an image built from it.
-- **Migrations do not run on their own.** Apply them with `DATABASE_URL=… bunx nuxt db migrate` before starting a new version.
+- **Build Type:** Dockerfile. **Dockerfile Path:** `Dockerfile` (or `Dockerfile.bun`). **Docker Context Path:** `.`
+- **Environment:** the variables from `.env.example`. Dokploy passes them to the running container; the build does not use them.
+- **Domains:** container port `3000`, with HTTPS.
+
+Before deploying a new version, apply its migrations from a checkout: `bun run db:migrate:prod` (or `DATABASE_URL=… bunx nuxt db migrate`). They do not run on their own.
 
 The session cookie is `Secure`, so anything other than `localhost` needs HTTPS.
 
