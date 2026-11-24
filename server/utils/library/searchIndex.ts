@@ -1,4 +1,4 @@
-import { blob } from 'hub:blob'
+import { blob } from '#server/utils/core/blob'
 import { schema } from 'hub:db'
 import { and, eq, inArray, isNull, or } from 'drizzle-orm'
 import { FILE_UPLOAD } from '#shared/utils/file'

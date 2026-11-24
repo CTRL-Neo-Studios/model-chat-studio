@@ -1,5 +1,5 @@
 import { createError, defineEventHandler, getRouterParam } from 'nuxt/server'
-import { blob } from 'hub:blob'
+import { blob } from '#server/utils/core/blob'
 import { db, schema } from 'hub:db'
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'

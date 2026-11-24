@@ -22,7 +22,7 @@ Goal: the Nuxt UI chat template's frontend (`../chat`, upstream `nuxt-ui-templat
 | Quota | Monthly USD budget per user: instance default, per-user override, `null` means unlimited. Requests on a user's own key are exempt. |
 | Multi-model | Schema-ready only (`message.parentId`, model and provider per message). The UI stays single-model. |
 | Dictation | Record, then transcribe. Neither platform streams recognition, so the template's live preview is dropped. |
-| Storage | NuxtHub's own blob drivers, chosen at build time from the environment: S3 (`S3_*`), Vercel Blob as an optional backend, local files otherwise. The bucket is private. |
+| Storage | NuxtHub's blob drivers, created when the server starts (`server/utils/core/blob.ts`): S3 (`S3_*`), local files otherwise. The bucket is private. |
 | Database | Migration `0000` is regenerated; nothing is deployed. Migrations apply automatically in dev from phase 1 on. |
 | DeepSeek safety check | An admin setting, off by default, with a warning that explains what it does. |
 | DeepSeek PDFs | In this milestone, through DeepSeek's file parsing flow (upload, then reference by `file_id`). |
@@ -452,18 +452,17 @@ NUXT_PUBLIC_SITE_URL=
 NUXT_PUBLIC_SITE_NAME=
 NUXT_OAUTH_GITHUB_CLIENT_ID=
 NUXT_OAUTH_GITHUB_CLIENT_SECRET=
-S3_ACCESS_KEY_ID=                 # storage variables must be set at build time
+S3_ACCESS_KEY_ID=                 # read when the server starts, like everything here
 S3_SECRET_ACCESS_KEY=
 S3_BUCKET=
 S3_REGION=                        # required for AWS
 S3_ENDPOINT=                      # for S3-compatible stores (path-style URLs)
-BLOB_READ_WRITE_TOKEN=            # Vercel Blob instead of S3; also needs @vercel/blob
 ```
 
 - **App secret.** `NUXT_APP_SECRET` seals sessions and derives the key that encrypts stored API keys, both the instance keys and personal ones. `NUXT_SESSION_PASSWORD` is not used. Rotating the secret logs everyone out and makes every stored key unreadable. Set it in `.env.dev` as well; otherwise deleting `.nuxt` orphans encrypted keys in the dev database.
-- **Database.** If `DATABASE_URL` is present while building, NuxtHub writes it into the bundle. A build without it would silently use PGlite, so an inline module in `nuxt.config.ts` forces the `postgres-js` driver for real builds; the URL is then read at runtime. `nuxt prepare` and `nuxt typecheck` are left alone, because they would otherwise switch the driver under a running dev server.
+- **Database.** The inline module in `nuxt.config.ts` forces the `postgres-js` driver and an empty connection URL for real builds, so the server reads `DATABASE_URL` when it starts. Left alone, NuxtHub writes a build-time URL into the bundle, and a build without one silently uses PGlite. `nuxt prepare` and `nuxt typecheck` are left alone, because they would otherwise switch the driver under a running dev server; `nuxt db migrate` reads the URL from `nuxt prepare`'s config.
 - **Migrations.** In dev they apply at boot. On a server, run `DATABASE_URL=… npx nuxt db migrate` before starting the new version. There is no runtime migration, and statements run without a transaction.
-- **Storage.** The repo uses NuxtHub's auto-detected blob driver with its own variable names. The driver and its credentials are fixed at build time and written into the bundle; runtime env is not read. So the build needs the storage variables, and `.output/` must be treated as secret and never published. Building the storage at runtime instead would keep credentials out of the build, at the cost of the Vercel Blob option; that is the upgrade path if images are ever distributed.
+- **Storage.** `hub.blob` is off, because NuxtHub writes the driver and its credentials into the bundle. `server/utils/core/blob.ts` creates the same storage from the environment when the server starts, choosing S3 the way NuxtHub does. The build needs no environment and `.output/` holds no secrets, so images can be published. Vercel Blob is no longer an option.
 - **Cookies.** The session cookie is `Secure` in production, so anything other than localhost needs HTTPS. Dev turns off `Secure`, HSTS and `upgrade-insecure-requests` (`$development` in `nuxt.config.ts`), because Safari otherwise drops the session and upgrades asset requests to https on plain http.
 - **OAuth callback.** Only the GitHub client id and secret are needed. The callback URL is built from the request, and GitHub rejects one that does not match the OAuth app. `NUXT_OAUTH_GITHUB_REDIRECT_URL` exists for a proxy that does not pass the public host and protocol through.
 
