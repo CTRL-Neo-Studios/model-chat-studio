@@ -5,6 +5,15 @@ useHead({ title: 'Shared with me' })
 
 const { data, isPending } = useQuery(sharedChatsQuery)
 const chats = computed(() => data.value ?? [])
+
+// "Leave": the chat is no longer shared with the member; shown at once, back if the server refuses.
+const act = useApiAction()
+const queryCache = useQueryCache()
+async function leave(chatId: string) {
+	const before = chats.value
+	queryCache.setQueryData(sharedChatsQuery.key, chats.value.filter(chat => chat.id !== chatId))
+	if (!await act(`/api/v1/chats/${chatId}/shares/me`, { method: 'DELETE', success: 'You left the chat' })) queryCache.setQueryData(sharedChatsQuery.key, before)
+}
 </script>
 
 <template>
@@ -40,6 +49,8 @@ const chats = computed(() => data.value ?? [])
 							</p>
 						</div>
 						<UBadge :label="chat.role === 'editor' ? 'Editor' : 'Viewer'" color="neutral" variant="subtle" />
+						<!-- Above the row's link, which covers the row. -->
+						<UButton label="Leave" icon="i-lucide-log-out" size="xs" color="neutral" variant="ghost" class="relative" :aria-label="`Leave ${chat.title || 'Untitled'}`" @click="leave(chat.id)" />
 					</li>
 				</ul>
 			</div>

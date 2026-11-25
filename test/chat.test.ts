@@ -451,3 +451,14 @@ test('a group answer joins the round\'s speakers once, in the order answered; a 
 	expect((await branchMessage(db, chatId, 'u1', 'again', userId)).metadata).toBeNull()
 	expect(await speakers()).toEqual([laneB, laneA])
 })
+
+test('a message names the tip it follows: after an older one it is refused, and another lane joining it is not', async () => {
+	const after = (id: string, tip: string | null, lane = laneA): TurnRequest => ({ ...say(id, id, lane), after: tip } as TurnRequest)
+	expect(await applyTurnTrigger(db, chatId, after('u1', null), userId)).toBe('u1')
+	expect(await applyTurnTrigger(db, chatId, after('u2', 'u1'), userId)).toBe('u2')
+	// Someone else wrote u2 meanwhile: a message written after u1 is refused, and nothing is saved.
+	await expect(applyTurnTrigger(db, chatId, after('u3', 'u1'), userId)).rejects.toMatchObject({ status: 409 })
+	expect(await ids()).toEqual(['u1', 'u2'])
+	// The other lane's request for u2, written after u1 too, joins it.
+	expect(await applyTurnTrigger(db, chatId, after('u2', 'u1', laneB), userId)).toBe('u2')
+})

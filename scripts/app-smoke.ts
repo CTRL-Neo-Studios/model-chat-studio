@@ -1,4 +1,4 @@
-// Milestone 10 smoke run: drives a running instance through its own API, as the browser does, on each platform
+// Milestone 11 smoke run: drives a running instance through its own API, as the browser does, on each platform
 // that has an instance key. Run it as an admin: it switches the active platform and switches it back.
 //
 //   SESSION=<value of the nuxt-auth-session cookie> [BASE_URL=http://localhost:3000] bun scripts/app-smoke.ts [--search]
@@ -7,11 +7,11 @@
 // the first message, two models answering one message at once, a library note found and read with the file tools,
 // a lorebook note that reaches only its Character's lane once an answer names its keyword (and the Character's card
 // exported and imported again), a group round in the order the message asks for, a chat started in a folder whose
-// defaults are a group (the second speaker reads the first one's chart), dictation, a piece read aloud in the
-// platform's default voice, an image drawn by the model's tool call and one by `/image` (each about $0.01, once an
-// image model is set), the spend ledger, and deleting the chat. `--search` adds web search to the library question
-// and a web search turn (on OpenRouter each costs about $0.02). The test files come from `scripts/smoke-files.ts`
-// (macOS makes them; elsewhere `--wav`, `--image`, `--pdf`).
+// defaults are a group (the second speaker reads the first one's chart), a message refused after an older tip and
+// answered after the tip, dictation, a piece read aloud in the platform's default voice, an image drawn by the
+// model's tool call and one by `/image` (each about $0.01, once an image model is set), the spend ledger, and deleting
+// the chat. `--search` adds web search to the library question and a web search turn (on OpenRouter each costs about
+// $0.02). The test files come from `scripts/smoke-files.ts` (macOS makes them; elsewhere `--wav`, `--image`, `--pdf`).
 import { IMAGE_WORD, makeSmokeFiles, PDF_WORD, SENTENCE } from './smoke-files'
 import { api, BASE, cookieHeader, csrf, turn, type Turn } from './smoke-client'
 
@@ -282,6 +282,18 @@ try {
 				return `${summary(lastAnswer)}, ${lastAnswer.sources.length} sources`
 			})
 		}
+
+		await step('the tip check', async () => {
+			// A message names the tip it was written after; after an older one (someone else wrote since) it is refused.
+			const asked = (await api<{ messages: { id: string, role: string }[] }>('GET', `/chats/${chatId}`)).messages.filter(message => message.role === 'user')
+			const [stale, tip] = [asked[0]!.id, asked.at(-1)!.id]
+			const message = { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'Reply with the single word: pong' }] }
+			const refused = await turn(chatId, laneId, { trigger: 'submit-message', message, after: stale }).then(() => 'answered', (error: Error) => error.message)
+			if (!refused.includes('409')) throw new Error(`a message after an older tip was ${refused.slice(0, 120)}`)
+			lastAnswer = await turn(chatId, laneId, { trigger: 'submit-message', message, after: tip })
+			if (!/pong/i.test(lastAnswer.text)) throw new Error(`expected pong, got ${summary(lastAnswer)}`)
+			return `refused after an older tip (409), then after the tip ${summary(lastAnswer)}`
+		})
 
 		await step('dictation', async () => {
 			const form = new FormData()

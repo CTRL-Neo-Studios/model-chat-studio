@@ -58,10 +58,12 @@ export async function attachFiles(db: Db, chatId: string, messageId: string, par
 
 /**
  * The body of `POST /chats/:id`: one answer from one lane (`chatModelId`). The client sends only the new
- * message or what to answer again, never the history. Edits and deletions are message routes.
+ * message or what to answer again, never the history. Edits and deletions are message routes. A new message names
+ * the tip it was written after (`after`, `null` before any message); when the chat has moved on since, it is
+ * refused (milestone 11). Without `after`, it follows whatever the tip is.
  */
 export const turnRequestSchema = z.discriminatedUnion('trigger', [
-	z.object({ trigger: z.literal('submit-message'), message: userMessageSchema, chatModelId: z.uuid() }),
+	z.object({ trigger: z.literal('submit-message'), message: userMessageSchema, chatModelId: z.uuid(), after: z.string().min(1).max(64).nullable().optional() }),
 	z.object({ trigger: z.literal('regenerate-message'), messageId: z.string().min(1).optional(), chatModelId: z.uuid() }),
 ])
 export type TurnRequest = z.infer<typeof turnRequestSchema>
@@ -171,7 +173,7 @@ export async function chatTip(db: Db, chatId: string, lock = false) {
  * turn keeps the earlier one.
  * - `submit-message` saves a new message after the chat's tip, as the new tip, sent by `senderId`, or joins one that
  *   another lane saved for the same send (`joinsMessage`). Any other existing id is refused; edits are
- *   `PATCH /chats/:id/messages/:id`.
+ *   `PATCH /chats/:id/messages/:id`. A message written after another tip than the chat's is refused with 409.
  * - `regenerate-message` answers the target answer's question again, or the target user message, or
  *   without a target the tip.
  */
@@ -181,6 +183,10 @@ export async function applyTurnTrigger(db: Db, chatId: string, request: TurnRequ
 		const saved = await db.transaction(async (tx) => {
 			// One send at a time per chat, so the message follows the tip it read and becomes the tip.
 			const parentId = await chatTip(tx, chatId, true)
+			// Someone else wrote since the page last read the chat (another lane's request for this same message joins it).
+			if (request.after !== undefined && parentId !== request.after && parentId !== id) {
+				throw createError({ status: 409, statusText: 'The chat has moved on: someone else wrote in it meanwhile' })
+			}
 			const [saved] = await tx.insert(tables.message)
 				.values({ id, chatId, role: 'user', parts, parentId, userId: senderId })
 				.onConflictDoNothing()

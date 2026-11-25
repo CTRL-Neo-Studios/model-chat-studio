@@ -131,6 +131,7 @@ const answers = useLaneAnswers(chatId, messages, {
 		const { [previousId]: list, ...rest } = versions.value
 		versions.value = { ...rest, [id]: [...(list ?? [previousId]), id] }
 	},
+	onMovedOn: question => handBack(question),
 })
 
 // The memory slider's range: the longest lane thread after its latest summary, in messages that count. A group
@@ -284,7 +285,8 @@ function handleSubmit(e: Event) {
 	clearFiles()
 	const parts = [...(text.trim() ? [{ type: 'text' as const, text }] : []), ...files, ...partsFor(references.value), ...participants.partsFor(references.value)]
 	references.value = []
-	answers.send({ id: crypto.randomUUID(), role: 'user', parts }, roundOrder(parts))
+	// Written after the last message shown: if someone else wrote since, the server refuses it (`handBack`).
+	answers.send({ id: crypto.randomUUID(), role: 'user', parts }, roundOrder(parts), messages.value.findLast(message => message.role === 'user')?.id ?? null)
 }
 
 /** Who answers a group round, in order, as the server chooses; nobody when it cannot be asked. */
@@ -341,6 +343,31 @@ function setThread(thread: { messages: unknown[], versions: Record<string, strin
 	versions.value = thread.versions
 	branches.value = thread.branches
 	authors.value = thread.authors
+}
+
+/**
+ * Keeping in step (milestone 11): while others may write here, the page takes in the server's thread when nothing
+ * is being written, drawn, compacted or edited on it, every 10 s while it is visible and when the window gets
+ * focus. Where the two differ, the server's wins.
+ */
+const othersWrite = computed(() => isOwner.value ? sharedWith.value.some(person => person.role === 'editor') : !!data.value?.hasEditors)
+const pageVisibility = useDocumentVisibility()
+const idle = () => !answers.busy.value && !drawing.value && !compacting.value && !editingMessageId.value
+async function takeIn(force = false) {
+	if (!force && (!othersWrite.value || pageVisibility.value === 'hidden' || !idle())) return
+	const fresh = await $fetch(`/api/v1/chats/${chatId}`).catch(() => undefined)
+	if (!fresh || !idle()) return
+	if (JSON.stringify(fresh.messages) !== JSON.stringify(messages.value)) setThread(fresh)
+}
+useIntervalFn(() => takeIn(), 10_000)
+useEventListener('focus', () => takeIn())
+
+/** Someone else wrote first: the message comes back to the prompt and the page takes in what is new. */
+function handBack(question: ChatMessage) {
+	const text = question.parts.map(part => part.type === 'text' ? part.text : '').join('')
+	if (!input.value.trim()) input.value = text
+	toast.add({ title: 'The chat moved on', description: 'Someone else wrote in it meanwhile. Your message is back in the prompt to send again.', icon: 'i-lucide-git-merge', color: 'warning' })
+	takeIn(true)
 }
 
 const deleteModal = useOverlay().create(LazyModalConfirm)

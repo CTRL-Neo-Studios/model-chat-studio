@@ -26,6 +26,17 @@ function describeError(error: unknown): string {
 	}
 }
 
+/** Whether a send was refused because the chat moved on since the page read it (409, milestone 11). */
+function movedOn(error: unknown): boolean {
+	try {
+		const body = JSON.parse(error instanceof Error ? error.message : String(error))
+		return (body.status ?? body.statusCode) === 409
+	}
+	catch {
+		return false
+	}
+}
+
 /**
  * Streams answers lane by lane into one message list. Each lane's answer is its own request; several run at
  * once. An answer is shown in place of that lane's earlier answer to the same question, which the server keeps as
@@ -41,6 +52,8 @@ export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, opt
 	inTurn?: () => boolean
 	/** A lane's answer was written again: `id` is the newest version of the answer `previousId` was. */
 	onVersion?: (previousId: string, id: string) => void
+	/** A message was refused because someone else wrote first; it is taken out again, for the page to offer back. */
+	onMovedOn?: (question: ChatMessage) => void
 }) {
 	const { csrf, headerName } = useCsrf()
 	// The server keeps the history: send only the new message, or what to answer again, and the lane.
@@ -49,12 +62,14 @@ export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, opt
 		headers: { [headerName]: csrf },
 		prepareSendMessagesRequest: ({ messages: sent, trigger, messageId, body }) => ({
 			body: trigger === 'submit-message'
-				? { trigger, message: sent.at(-1), chatModelId: body?.chatModelId }
+				? { trigger, message: sent.at(-1), chatModelId: body?.chatModelId, after: body?.after }
 				: { trigger, messageId, chatModelId: body?.chatModelId },
 		}),
 	})
 
 	const pending = ref<Record<string, PendingAnswer>>({})
+	/** The tip each message sent from this page was written after, by message id. */
+	const afters: Record<string, string | null> = {}
 	// While a group chat asks who answers the round.
 	const deciding = ref(false)
 	const busy = computed(() => deciding.value || Object.values(pending.value).some(entry => entry.status !== 'error'))
@@ -94,7 +109,7 @@ export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, opt
 				messageId: trigger === 'regenerate-message' ? question.id : undefined,
 				messages: [question],
 				abortSignal: controller.signal,
-				body: { chatModelId: laneId },
+				body: { chatModelId: laneId, ...(trigger === 'submit-message' && question.id in afters && { after: afters[question.id] }) },
 			})
 			for await (const message of readUIMessageStream<UIMessage<MessageMetadata>>({ stream: chunks, terminateOnError: true })) {
 				place({ ...message, chatModelId: laneId, parentId: question.id }, question.id, replacing)
@@ -107,6 +122,16 @@ export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, opt
 		}
 		catch (error) {
 			if (!controller.signal.aborted) {
+				if (trigger === 'submit-message' && movedOn(error)) {
+					// Every lane's request is refused alike: the first takes the message out and hands it back.
+					const { [key]: _, ...rest } = pending.value
+					pending.value = rest
+					if (messages.value.some(message => message.id === question.id)) {
+						messages.value = messages.value.filter(message => message.id !== question.id)
+						options.onMovedOn?.(question)
+					}
+					return false
+				}
 				pending.value = { ...pending.value, [key]: { status: 'error', error: describeError(error), controller } }
 				return false
 			}
@@ -151,8 +176,12 @@ export function useLaneAnswers(chatId: string, messages: Ref<ChatMessage[]>, opt
 		clearQueued(question.id)
 	}
 
-	/** Adds a user message and asks each lane to answer it; in a group chat, the lanes chosen for the round, in order. */
-	function send(question: ChatMessage, laneIds: string[] | Promise<string[]>) {
+	/**
+	 * Adds a user message, written after the tip `after` (the last user message the page shows), and asks each lane
+	 * to answer it; in a group chat, the lanes chosen for the round, in order.
+	 */
+	function send(question: ChatMessage, laneIds: string[] | Promise<string[]>, after: string | null) {
+		afters[question.id] = after
 		messages.value = [...messages.value, question]
 		return ask(laneIds, question, 'submit-message')
 	}

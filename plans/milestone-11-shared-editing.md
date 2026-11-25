@@ -1,6 +1,6 @@
 # Milestone 11: edit access for people a chat is shared with
 
-Status: 11.1 and 11.2 built (2026-11-25); 11.3 next. Part of `roadmap-milestones-7-14.md`. One migration (`0022_shared_editing`, both columns, written in 11.1). Needs 8.2 (the chat's tip).
+Status: complete (2026-11-25): 11.1 to 11.3 and the live run on both platforms. Part of `roadmap-milestones-7-14.md`. One migration (`0022_shared_editing`, both columns, written in 11.1). Needs 8.2 (the chat's tip).
 
 Goal: someone a chat is shared with can take part in it, not only read it.
 
@@ -88,6 +88,26 @@ Fixture check (DeepSeek faked; the admin as owner, one throwaway editor):
 - In Chromium the owner saw the chips, Wilson with his avatar and mc-editor with the letter avatar; an older chat of the owner's alone showed none.
 - The chats, the editor and the usage rows were deleted.
 
+Built (11.3):
+- The tip check. A new message carries `after`, the last user message the page shows (`null` before any). `applyTurnTrigger` refuses it with 409, "The chat has moved on", when the chat's tip is another, inside the transaction that locks the tip. Another lane's request for the same message still joins it. `after` is optional in the API: a client that leaves it out follows whatever the tip is, as before (the smoke client, scripts).
+- On the page, `useLaneAnswers` sends `after` with every lane's request for a new message. On a 409 it takes the message out again and hands it to the page (`onMovedOn`). The page puts its text back in the prompt (when the prompt is empty), says "The chat moved on", and takes in the thread.
+- Taking in new messages. While a chat has editors (`hasEditors` from `GET /chats/:id`; for the owner, an editor among the people), the page asks for the chat every 10 s while it is visible and when the window gets focus. It does so only when nothing is being written, drawn, compacted or edited. Where the server's messages differ from the page's, the server's thread wins.
+- Leaving: `DELETE /chats/:id/shares/me`, 404 for anyone the chat is not shared with. "Shared with me" has a Leave button on each chat.
+- Smoke step "the tip check": a message written after the first message is refused with 409, then the same message after the tip is answered.
+- Test: a message after an older tip is refused and nothing saved; another lane joining it is not refused.
+
+Fixture check (DeepSeek faked; the admin as owner in Chromium, a throwaway editor through the API):
+- With the owner's chat open and idle, the editor sent a message: the owner's page showed it and its answer 8.6 s later, without a reload.
+- The owner typed, then the editor sent, then the owner pressed Enter. The page's request named the old tip and was refused (409). "The chat moved on" showed, the owner's text was back in the prompt, and the editor's message and answer were on the page. Two requests sent at once through the API, after the same tip: 200 and 409.
+- Keys pressed through Puppeteer raise a window focus, which takes in the thread first, so the page's race had to be pressed from inside the page. Two earlier tries with Puppeteer's Enter sent after the right tip and were answered, as they should be.
+- The editor left: reading, writing and leaving again each answered 404. A viewer pressed Leave on "Shared with me": "You left the chat", the list empty, the chat 404 for them, and no one left in the owner's list.
+- The chat, the members and the usage rows were deleted.
+
+Live run (`scripts/app-smoke.ts`, 2026-11-25). With the OpenRouter speech and image models unset, the images step was skipped on both platforms and read aloud on OpenRouter:
+- OpenRouter (`deepseek/deepseek-v4.1-flash-1017`): every step passed. The tip check: 409, then "pong". $0.0033 for the run.
+- DeepSeek (`deepseek-flash`): every step passed but "image and PDF", which answered "pineapple" without "mango". The tip check: 409, then "pong". Read aloud: WAV in Stella. $0.0043 for the run.
+- The failed step was repeated three times on DeepSeek: "pineapple mango" once; once the model noted that the PDF's text read "mango" but gave only "pineapple"; once it said the PDF held no readable text. The PDF reaches the model; its reading varies from run to run. Nothing in this milestone touches that path, and the step passed on DeepSeek in milestone 10's live run.
+
 ## 7. Ceilings and things left out
 
 - No live typing, presence or streaming to the others; no notifications.
@@ -95,3 +115,4 @@ Fixture check (DeepSeek faked; the admin as owner, one throwaway editor):
 - No per-person `{{user}}`, and editors do not bring their own Character.
 - An editor cannot add models or libraries, and cannot share the chat on.
 - With several server instances the 10 s refresh still works (it reads the database); nothing here needs a shared store.
+- A message refused with 409 gets its text back in the prompt, not its attachments, "@" references or mentions. `/image` does not check the tip.

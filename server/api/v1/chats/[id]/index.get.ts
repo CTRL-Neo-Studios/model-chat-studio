@@ -11,7 +11,7 @@ import { chatLibraries } from '#server/utils/library/libraries'
  * `role` is the reader's: `owner`, `editor`, `viewer`, or `null` for someone reading by link. It names its libraries,
  * each with the reader's `role` in it: `null` for someone who may not open it. The messages are the branch shown
  * (ending at the chat's tip), each answer the version shown; those who may write also get `versions` and `branches`,
- * to switch between them (`chatThread`).
+ * to switch between them (`chatThread`). `hasEditors`: others may write here, so an open page keeps itself in step.
  */
 export default defineEventHandler(async (event) => {
 	const { userId, sharedWith: shared, editors, ...view } = await requireChat(event, 'readChat')
@@ -25,5 +25,5 @@ export default defineEventHandler(async (event) => {
 		chatLibraries(db, view.id),
 	])
 	const roleOf = (library: (typeof libraries)[number]) => !reader ? null : library.ownerId === reader ? 'owner' as const : library.members[reader] ?? null
-	return { ...view, role, sharedWith, models, ...thread, libraries: libraries.map(library => ({ id: library.id, name: library.name, role: roleOf(library) })) }
+	return { ...view, role, hasEditors: editors.length > 0, sharedWith, models, ...thread, libraries: libraries.map(library => ({ id: library.id, name: library.name, role: roleOf(library) })) }
 })
