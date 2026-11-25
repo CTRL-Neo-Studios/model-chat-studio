@@ -114,7 +114,8 @@ const actions = (library: Library): DropdownMenuItem[][] => library.role === 'ow
 						</p>
 						<div class="flex items-center gap-2 mt-auto">
 							<span class="text-xs text-dimmed">Created {{ formatDistanceToNow(new Date(library.createdAt), { addSuffix: true }) }}</span>
-							<UBadge v-if="library.role !== 'owner'" :label="`Shared · ${ROLE_LABELS[library.role]}`" color="neutral" variant="subtle" size="sm" class="ms-auto" />
+							<UBadge v-if="library.lorebook?.on" label="Lorebook" icon="i-lucide-book-open-text" color="neutral" variant="subtle" size="sm" class="ms-auto" />
+							<UBadge v-if="library.role !== 'owner'" :label="`Shared · ${ROLE_LABELS[library.role]}`" color="neutral" variant="subtle" size="sm" :class="!library.lorebook?.on && 'ms-auto'" />
 						</div>
 					</li>
 				</ul>

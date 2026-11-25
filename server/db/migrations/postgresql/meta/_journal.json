@@ -148,6 +148,13 @@
       "when": 1795451570534,
       "tag": "0020_character_cards",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1795618144923,
+      "tag": "0021_lorebooks",
+      "breakpoints": true
     }
   ]
 }

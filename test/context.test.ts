@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import type { UIMessage } from 'ai'
-import { buildContext } from '../server/utils/chat/context'
+import { buildContext, type LoreNoteSent } from '../server/utils/chat/context'
 import { DEFAULT_INSTRUCTIONS } from '../shared/utils/instructions'
 import type { ProfileBlock } from '../shared/utils/structureProfile'
 
@@ -131,4 +131,46 @@ test('example dialogue follows the instructions; the closing note follows the co
 	const placed = buildContext({ thread: thread.slice(-1), systemPrompt: null, closingNote: 'Stay in character.', webSearch: false, memoryLength: null, profile: [{ id: 'h', kind: 'history' }, { id: 'm', kind: 'message', role: 'user', text: 'Profile reminder' }, { id: 'f', kind: 'autoFetch' }] })
 	expect(shape(placed)).toEqual(['user:u4', 'user:closing-note', 'user:profile-m'])
 	expect(placed.autoFetchAt).toBe(3)
+})
+
+test('lorebook notes go where their position says, each a block in the trace, the ones without a position ahead of auto-fetched files', () => {
+	const note = (name: string, position: LoreNoteSent['position'], more: Partial<LoreNoteSent> = {}): LoreNoteSent => ({ entryId: `e-${name}`, name, text: `${name} text`, sticky: false, position, ...more })
+	const lore = {
+		heading: 'What Wren knows:',
+		notes: [
+			note('before', 'before'),
+			note('after', 'after'),
+			note('deep', 'depth', { depth: 2, role: 'system' }),
+			note('deeper', 'depth', { depth: 2, role: 'system', sticky: true }),
+			note('spoken', 'depth', { depth: 0, role: 'assistant' }),
+			note('here', null),
+		],
+	}
+	const context = buildContext({ thread: thread.slice(-3), systemPrompt: 'You are Wren.', examples: 'Ana: Hi', closingNote: 'Stay in character.', webSearch: false, memoryLength: null, lore })
+	expect(context.instructions).toBe('before text\n\nYou are Wren.\n\nExample dialogue:\nAna: Hi\n\nafter text')
+	// u3 a3 u4: two up from the end is before a3; depth 0 after u4. A system note goes as a user message.
+	expect(shape(context)).toEqual(['user:u3', 'user:lore-depth-2-system', 'assistant:a3', 'user:u4', 'assistant:lore-depth-0-assistant', 'user:lorebook', 'user:closing-note'])
+	expect(context.messages[1]!.parts.map(part => part.type === 'text' ? part.text : '').join('')).toBe('deep text\n\ndeeper text')
+	expect(context.messages[5]!.parts).toEqual([{ type: 'text', text: 'What Wren knows:\n\nhere text' }])
+	expect(context.autoFetchAt).toBe(6)
+	expect(context.blocks.map(block => `${block.kind}:${block.label}`)).toEqual([
+		'lore:Lorebook: before',
+		'instructions:System prompt + example dialogue + lorebook',
+		'lore:Lorebook: after',
+		'message:Message',
+		'lore:Lorebook: deep',
+		'lore:Lorebook: deeper (sticky)',
+		'message:Answer',
+		'message:Message',
+		'lore:Lorebook: spoken',
+		'lore:Lorebook: here',
+		'note:Closing note',
+	])
+	// The instructions' size leaves out the notes in them; each note carries its entry, and a sticky one says so.
+	expect(context.blocks[1]!.size).toBe(context.instructions.length - 'before text'.length - 'after text'.length)
+	expect(context.blocks.filter(block => block.kind === 'lore').map(block => [block.entryId, block.sticky ?? false])).toContainEqual(['e-deeper', true])
+	// Without a closing note or a profile's place: after the conversation, where auto-fetch is added after it.
+	const plain = buildContext({ thread: thread.slice(-1), systemPrompt: null, webSearch: false, memoryLength: null, lore: { heading: 'Background:', notes: [note('here', null)] } })
+	expect(shape(plain)).toEqual(['user:u4', 'user:lorebook'])
+	expect(plain.autoFetchAt).toBeNull()
 })

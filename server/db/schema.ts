@@ -18,6 +18,7 @@ import {
 import {relations, sql} from "drizzle-orm";
 import type {UIMessage} from "ai";
 import {type ChatSettings, type ContextBlock, LANE_COLORS, type MessageMetadata, type ModelParams} from "../../shared/utils/chat";
+import type {Lore, Lorebook} from "../../shared/utils/lorebook";
 import type {UserPreferences} from "../../shared/utils/preferences";
 import type {ProfileBlock} from "../../shared/utils/structureProfile";
 import type {FolderDefaults} from "../../shared/utils/folderDefaults";
@@ -260,6 +261,8 @@ export const library = pgTable("library", {
 	ownerId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
 	name: text().notNull(),
 	description: text(),
+	/** The lorebook switch and the book's options (milestone 9 plan, section 2b); `null` for an ordinary library. */
+	lorebook: jsonb().$type<Lorebook>(),
 
 	...createdUpdatedAtColumns
 }, (t) => [
@@ -353,6 +356,8 @@ export const libraryEntry = pgTable("libraryEntry", {
 	fileId: uuid().references(() => file.id, { onDelete: "cascade" }),
 	/** Markdown, for a note. */
 	content: text(),
+	/** A note's lorebook options (section 2b); `null` when it has none. Kept when the library's switch is off. */
+	lore: jsonb().$type<Lore>(),
 	/**
 	 * The name and text of a note or text file, with words split by the app (`Intl.Segmenter`, so Chinese words are
 	 * separate) for full-text search. `null` until filled: search fills what is missing, and a change of name or text

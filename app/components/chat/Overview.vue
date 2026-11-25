@@ -122,6 +122,7 @@ function split(turn: Turn) {
 		{ label: 'Earlier messages', size: size((block, index) => block.kind === 'message' && index < last), class: 'bg-info' },
 		{ label: 'New message', size: size((block, index) => block.kind === 'message' && index === last), class: 'bg-primary' },
 		{ label: 'Library files ("@" and auto-fetch)', size: size(block => block.kind === 'reference' || block.kind === 'autoFetch'), class: 'bg-success' },
+		{ label: 'Lorebook notes', size: size(block => block.kind === 'lore'), class: 'bg-success/50' },
 		{ label: 'Structure profile blocks', size: size(block => block.kind === 'profile'), class: 'bg-secondary' },
 	].filter(part => part.size > 0)
 }

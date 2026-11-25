@@ -140,9 +140,10 @@ export interface ContextBlock {
 	/**
 	 * `reference`: a library file or note, named with "@" in the message before it or fetched by `autoFetch`, the
 	 * added message of auto-fetched files (or where a structure profile puts them). `profile`: a structure profile's
-	 * message or files block. `note`: the lane's Character's closing note.
+	 * message or files block. `note`: the lane's Character's closing note. `lore`: a lorebook note, where its position
+	 * put it; the lane's later answers read these for sticky and cooldown.
 	 */
-	kind: 'instructions' | 'omitted' | 'summary' | 'message' | 'reference' | 'autoFetch' | 'profile' | 'note'
+	kind: 'instructions' | 'omitted' | 'summary' | 'message' | 'reference' | 'autoFetch' | 'profile' | 'note' | 'lore'
 	role: 'system' | 'user' | 'assistant'
 	label: string
 	/** Characters of text; attachments are not counted. */
@@ -150,8 +151,10 @@ export interface ContextBlock {
 	/** Instructions and summaries. */
 	text?: string
 	messageId?: string
-	/** `reference`: the library entry. */
+	/** `reference` and `lore`: the library entry. */
 	entryId?: string
+	/** `lore`: kept by its `sticky` option rather than matched. */
+	sticky?: boolean
 	/** `omitted`: how many earlier messages the memory setting left out. */
 	count?: number
 }

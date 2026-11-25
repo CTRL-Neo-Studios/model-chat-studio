@@ -39,9 +39,33 @@ interface ContextInput {
 	profile?: ProfileBlock[]
 	/** A structure profile's `files` paths, resolved in the chat's library. */
 	resolvePath?: (path: string) => { entryId: string, kind: 'folder' | 'file' | 'note' } | undefined
+	/** The lane's lorebook notes, filled and in the order they are sent, with what goes before the ones at auto-fetch's place. */
+	lore?: { heading: string, notes: LoreNoteSent[] }
+}
+
+/** A lorebook note to send, where its position puts it (milestone 9 plan, section 2b). */
+export interface LoreNoteSent {
+	entryId: string
+	name: string
+	text: string
+	sticky: boolean
+	position?: 'before' | 'after' | 'depth' | null
+	depth?: number
+	role?: 'system' | 'user' | 'assistant'
 }
 
 const textOf = (message: Pick<UIMessage, 'parts'>) => message.parts.map(part => part.type === 'text' ? part.text : '').join('')
+
+const loreBlock = (note: LoreNoteSent, role: ContextBlock['role'], messageId?: string): ContextBlock => ({
+	kind: 'lore',
+	role,
+	label: `Lorebook: ${note.name}${note.sticky ? ' (sticky)' : ''}`,
+	size: note.text.length,
+	text: note.text,
+	entryId: note.entryId,
+	...(note.sticky && { sticky: true }),
+	...(messageId && { messageId }),
+})
 
 /** An answer with nothing but reasoning carries nothing forward, so it does not count toward the memory length. */
 const counts = (message: UIMessage) => message.role !== 'assistant' || message.parts.some(part => part.type === 'text' || part.type === 'file')
@@ -67,8 +91,11 @@ const PROFILE_FILES_TEXT = 'Files from the library, as the structure profile inc
  *   out. Its `files` blocks name library entries as references, which `expandReferences` reads; a path the library
  *   does not have is left out and named in the trace. Its `autoFetch` block marks where auto-fetched files go:
  *   `autoFetchAt`, and a trace block that says so.
+ * - Lorebook notes (`lore`) go where their position says: `before` the instructions, `after` them (and the example
+ *   dialogue), at a `depth` in the conversation, or else as one user message under `lore.heading` where auto-fetched
+ *   files go, ahead of them. Each is a `lore` block in the trace, which sticky and cooldown read later.
  */
-export function buildContext({ thread, systemPrompt, promptLabel = 'System prompt', examples, closingNote, aboutUser, group, webSearch, memoryLength, fileTools = false, profile, resolvePath }: ContextInput) {
+export function buildContext({ thread, systemPrompt, promptLabel = 'System prompt', examples, closingNote, aboutUser, group, webSearch, memoryLength, fileTools = false, profile, resolvePath, lore }: ContextInput) {
 	const summaryIndex = thread.findLastIndex(message => message.role === 'system')
 	const summary = summaryIndex >= 0 ? thread[summaryIndex] : undefined
 	let kept = thread.slice(summaryIndex + 1)
@@ -101,6 +128,30 @@ export function buildContext({ thread, systemPrompt, promptLabel = 'System promp
 		],
 	}
 
+	// Lorebook notes at a depth: N messages up from the end of the conversation, those of one depth and role as one
+	// message. A system one goes as a user message, as summaries do.
+	const loreNotes = lore?.notes ?? []
+	const atDepth: Record<string, { index: number, message: UIMessage, blocks: ContextBlock[] }> = {}
+	for (const note of loreNotes.filter(note => note.position === 'depth')) {
+		const depth = note.depth ?? 4
+		const role = note.role === 'assistant' ? 'assistant' : 'user'
+		const id = `lore-depth-${depth}-${note.role ?? 'system'}`
+		const group = atDepth[id] ??= { index: Math.max(0, history.messages.length - depth), message: { id, role, parts: [] }, blocks: [] }
+		group.message.parts.push({ type: 'text', text: group.message.parts.length ? `\n\n${note.text}` : note.text })
+		group.blocks.push(loreBlock(note, role, id))
+	}
+	const groups = Object.values(atDepth)
+	if (groups.length) {
+		const original = history.messages
+		const at = (index: number) => groups.filter(group => group.index === index)
+		history.messages = [...original.flatMap((message, index) => [...at(index).map(group => group.message), message]), ...at(original.length).map(group => group.message)]
+		const indexOf: Record<string, number> = Object.fromEntries(original.map((message, index) => [message.id, index]))
+		history.blocks = [...history.blocks.flatMap((block) => {
+			const index = block.messageId === undefined ? undefined : indexOf[block.messageId]
+			return index === undefined ? [block] : [...at(index).flatMap(group => group.blocks), block]
+		}), ...at(original.length).flatMap(group => group.blocks)]
+	}
+
 	const blocks = profile ?? [{ id: 'history', kind: 'history' as const }]
 	// What the `userCharacter` and `participants` blocks place; without the block, its default place in the instructions.
 	const placed = { userCharacter: aboutUser?.trim() || null, participants: group?.trim() || null }
@@ -114,24 +165,47 @@ export function buildContext({ thread, systemPrompt, promptLabel = 'System promp
 	const groupText = has('participants') ? null : placed.participants
 	const inInstructions = (kind: keyof typeof placed) => !!placed[kind] && (!has(kind) || head.some(block => block.kind === kind))
 	const exampleText = examples && `Example dialogue:\n${examples}`
-	const instructions = [systemPrompt ?? (profileSystem.length ? null : DEFAULT_INSTRUCTIONS), exampleText, ...headTexts, userText, webSearch && WEB_SEARCH_INSTRUCTIONS, fileTools && FILE_TOOLS_INSTRUCTIONS, groupText].filter(Boolean).join('\n\n')
-	const instructionsLabel = [systemPrompt ? promptLabel : profileSystem.length ? '' : 'Default instructions', exampleText ? 'example dialogue' : '', profileSystem.length ? 'structure profile' : '', inInstructions('userCharacter') ? 'your Character' : '', inInstructions('participants') ? 'group chat' : ''].filter(Boolean).join(' + ')
+	const loreAt = (position: 'before' | 'after') => loreNotes.filter(note => note.position === position)
+	const loreText = (position: 'before' | 'after') => loreAt(position).map(note => note.text).join('\n\n')
+	const own = [systemPrompt ?? (profileSystem.length ? null : DEFAULT_INSTRUCTIONS), exampleText]
+	const rest = [...headTexts, userText, webSearch && WEB_SEARCH_INSTRUCTIONS, fileTools && FILE_TOOLS_INSTRUCTIONS, groupText]
+	const instructions = [loreText('before'), ...own, loreText('after'), ...rest].filter(Boolean).join('\n\n')
+	const loreChars = [...loreAt('before'), ...loreAt('after')].reduce((total, note) => total + note.text.length, 0)
+	const instructionsLabel = [systemPrompt ? promptLabel : profileSystem.length ? '' : 'Default instructions', exampleText ? 'example dialogue' : '', loreChars ? 'lorebook' : '', profileSystem.length ? 'structure profile' : '', inInstructions('userCharacter') ? 'your Character' : '', inInstructions('participants') ? 'group chat' : ''].filter(Boolean).join(' + ')
 
 	const sent: UIMessage[] = []
-	const trace: ContextBlock[] = [{ kind: 'instructions', role: 'system', label: instructionsLabel.charAt(0).toUpperCase() + instructionsLabel.slice(1), size: instructions.length, text: instructions }]
+	// The instructions' size leaves out their lorebook notes, which have blocks of their own.
+	const trace: ContextBlock[] = [
+		...loreAt('before').map(note => loreBlock(note, 'system')),
+		{ kind: 'instructions', role: 'system', label: instructionsLabel.charAt(0).toUpperCase() + instructionsLabel.slice(1), size: instructions.length - loreChars, text: instructions },
+		...loreAt('after').map(note => loreBlock(note, 'system')),
+	]
 	let autoFetchAt: number | null = null
+	// The notes without a position: one message where auto-fetched files go, ahead of them.
+	const here = lore ? loreNotes.filter(note => !note.position) : []
+	let placedHere = !here.length
+	const placeHere = () => {
+		if (placedHere || !lore) return
+		placedHere = true
+		sent.push({ id: 'lorebook', role: 'user', parts: [{ type: 'text', text: [lore.heading, ...here.map(note => note.text)].join('\n\n') }] })
+		trace.push(...here.map(note => loreBlock(note, 'user', 'lorebook')))
+	}
 	for (const block of blocks.slice(leading === -1 ? blocks.length : leading)) {
 		if (block.kind === 'history') {
 			sent.push(...history.messages)
 			trace.push(...history.blocks)
 			if (closingNote) {
 				// Auto-fetched files go before the note, unless the profile places them.
-				if (!blocks.some(entry => entry.kind === 'autoFetch')) autoFetchAt = sent.length
+				if (!blocks.some(entry => entry.kind === 'autoFetch')) {
+					placeHere()
+					autoFetchAt = sent.length
+				}
 				sent.push({ id: 'closing-note', role: 'user', parts: [{ type: 'text', text: closingNote }] })
 				trace.push({ kind: 'note', role: 'user', label: 'Closing note', size: closingNote.length, text: closingNote, messageId: 'closing-note' })
 			}
 		}
 		else if (block.kind === 'autoFetch') {
+			placeHere()
 			autoFetchAt = sent.length
 			trace.push({ kind: 'autoFetch', role: 'user', label: 'Auto-fetch: nothing matched', size: 0 })
 		}
@@ -165,5 +239,7 @@ export function buildContext({ thread, systemPrompt, promptLabel = 'System promp
 			})
 		}
 	}
+	// Without a closing note or a profile's place, after the conversation, where auto-fetched files are added after it.
+	placeHere()
 	return { instructions, messages: sent, blocks: trace, autoFetchAt }
 }

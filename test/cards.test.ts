@@ -49,8 +49,8 @@ const v2 = {
 	},
 }
 
-test('a V2 card: its texts become the Character, its other fields are kept, and the report says what changed', () => {
-	const { fields, card, report } = cardToCharacter(v2)
+test('a V2 card: its texts become the Character, its other fields are kept, its lorebook is handed over, and the report says what changed', () => {
+	const { fields, card, book, report } = cardToCharacter(v2)
 	expect(fields).toEqual({
 		name: 'Wren',
 		instructions: 'Stay in the story.\n\nA travel guide.\nShe knows the roads.\n\nPersonality: Warm, blunt\n\nScenario: A crossroads inn',
@@ -60,11 +60,11 @@ test('a V2 card: its texts become the Character, its other fields are kept, and 
 		creatorNotes: 'Made for testing.',
 		tags: ['guide'],
 	})
-	expect(card).toEqual({ spec: 'chara_card_v2', data: { creator: 'me', character_version: '1', extensions: v2.data.extensions, character_book: v2.data.character_book } })
+	expect(card).toEqual({ spec: 'chara_card_v2', data: { creator: 'me', character_version: '1', extensions: v2.data.extensions } })
+	expect(book).toEqual(v2.data.character_book)
 	expect(report).toEqual([
 		'Its personality and scenario were joined into the instructions.',
 		'Tags over 50 characters, repeated, or past the 50th were left out.',
-		'Its lorebook (1 entry) is kept with the card; it becomes a lorebook library in a later step of this milestone.',
 		'Its character\'s note (SillyTavern\'s depth prompt) is kept with the card, not sent.',
 	])
 })

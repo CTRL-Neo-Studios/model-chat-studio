@@ -89,8 +89,8 @@ const cardFieldsSchema = z.looseObject({
 	extensions: z.record(z.string(), z.unknown()).optional(),
 })
 
-/** Fields a Character holds itself; every other one of a card's `data` is kept in `card`, as it came. */
-const MAPPED = ['name', 'description', 'personality', 'scenario', 'first_mes', 'alternate_greetings', 'mes_example', 'system_prompt', 'post_history_instructions', 'creator_notes', 'tags']
+/** Fields a Character holds itself (the lorebook becomes a library); every other one of a card's `data` is kept in `card`, as it came. */
+const MAPPED = ['name', 'description', 'personality', 'scenario', 'first_mes', 'alternate_greetings', 'mes_example', 'system_prompt', 'post_history_instructions', 'creator_notes', 'tags', 'character_book']
 
 /** Line ends as LF, and V1's `<USER>` and `<BOT>` as `{{user}}` and `{{char}}`. */
 const clean = (value: string | undefined) => (value ?? '').replace(/\r\n?/g, '\n').replace(/<USER>/gi, '{{user}}').replace(/<BOT>/gi, '{{char}}').trim()
@@ -101,7 +101,8 @@ const isEmpty = (value: unknown) => value === undefined || value === null || val
  * A card as a Character (plan section 2): the system prompt, description, personality and scenario as one set of
  * instructions; the first message and alternate greetings as greetings; example dialogue, closing note, creator's
  * notes and tags. The card's other fields are kept as they came (`card`), and `report` says what was converted or
- * is not used here. V1 cards are their own `data`. A text over its limit refuses the import, naming the field.
+ * is not used here. `book` is the card's lorebook, for `cardBookToLorebook`. V1 cards are their own `data`. A text
+ * over its limit refuses the import, naming the field.
  */
 export function cardToCharacter(raw: unknown) {
 	const root = typeof raw === 'object' && raw !== null ? raw as Record<string, unknown> : {}
@@ -139,7 +140,6 @@ export function cardToCharacter(raw: unknown) {
 	if (personality || scenario) report.push('Its personality and scenario were joined into the instructions.')
 	if (v1Placeholders) report.push('Its old placeholders <USER> and <BOT> were written as {{user}} and {{char}}.')
 	if ((data.tags?.length ?? 0) > fields.tags.length) report.push('Tags over 50 characters, repeated, or past the 50th were left out.')
-	if (entries) report.push(`Its lorebook (${entries} ${entries === 1 ? 'entry' : 'entries'}) is kept with the card; it becomes a lorebook library in a later step of this milestone.`)
 	if (data.group_only_greetings?.length) report.push(`Its ${data.group_only_greetings.length} group-only greetings are kept with the card, not used: a group here opens with the first greeting.`)
 	if (data.assets?.length) report.push(`Its ${data.assets.length} assets (V3) are kept with the card and not fetched.`)
 	const depthPrompt = data.extensions?.depth_prompt
@@ -148,5 +148,5 @@ export function cardToCharacter(raw: unknown) {
 	}
 
 	const card = Object.fromEntries(Object.entries(data).filter(([key, value]) => !MAPPED.includes(key) && !isEmpty(value)))
-	return { fields, card: { spec, ...(Object.keys(card).length && { data: card }) }, report }
+	return { fields, card: { spec, ...(Object.keys(card).length && { data: card }) }, book: entries ? data.character_book : undefined, report }
 }
