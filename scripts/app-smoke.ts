@@ -4,9 +4,10 @@
 //   SESSION=<value of the nuxt-auth-session cookie> [BASE_URL=http://localhost:3000] bun scripts/app-smoke.ts [--search]
 //
 // Per platform: a plain turn, an image and a PDF, a regenerate, switching to the earlier version and a branch from
-// the first message, two models answering one message at once, a library
-// note found and read with the file tools, a group round in the order the message asks for, a chat started in a
-// folder whose defaults are a group (the second speaker reads the first one's chart), dictation, the spend
+// the first message, two models answering one message at once, a library note found and read with the file tools,
+// a lorebook note that reaches only its Character's lane once an answer names its keyword (and the Character's card
+// exported and imported again), a group round in the order the message asks for, a chat started in a folder whose
+// defaults are a group (the second speaker reads the first one's chart), dictation, the spend
 // ledger, and deleting the chat. `--search` adds web search to the library question and a web search turn (on
 // OpenRouter each costs about $0.02). The test files come from `scripts/smoke-files.ts` (macOS makes them; elsewhere
 // `--wav`, `--image`, `--pdf`).
@@ -153,6 +154,63 @@ try {
 			}
 			finally {
 				await api('DELETE', `/libraries/${library.id}`)
+			}
+		})
+
+		await step('lorebook and the card', async () => {
+			// A town only the lorebook knows. The user never writes its name: the first answer does, and the second
+			// question asks about "that town". The plain lane beside the Character's never gets the note.
+			const town = 'Quorvenna'
+			const library = await api<{ id: string }>('POST', '/libraries', { name: 'Smoke lore' })
+			const made: { characters: string[], libraries: string[], chats: string[] } = { characters: [], libraries: [library.id], chats: [] }
+			try {
+				await api('PATCH', `/libraries/${library.id}`, { lorebook: { on: true } })
+				const note = await api<{ id: string }>('POST', `/libraries/${library.id}/entries`, { kind: 'note', name: town, tags: [town], content: `{{char}} has been to ${town}: its glass bells ring thirteen times at dusk, which {{user}} has never heard.` })
+				const character = await api<{ id: string }>('POST', '/characters', { name: 'Smoke Lorekeeper', instructions: 'You are {{char}}, a guide to far-off towns. Answer in one or two sentences.', libraryIds: [library.id] })
+				made.characters.push(character.id)
+				const loreChat = crypto.randomUUID()
+				made.chats.push(loreChat)
+				await api('POST', '/chats', { id: loreChat, models: [{ modelId: model.id, characterId: character.id }, { modelId: model.id, name: 'Plain' }], message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'Join "Quorv" and "enna" into one word, and reply with only that word.' }] } })
+				const [keeperLane, plainLane] = (await api<{ models: { id: string }[] }>('GET', `/chats/${loreChat}`)).models
+				const named = await turn(loreChat, keeperLane!.id, { trigger: 'regenerate-message' })
+				await turn(loreChat, plainLane!.id, { trigger: 'regenerate-message' })
+				if (!named.text.toLowerCase().includes(town.toLowerCase())) throw new Error(`the first answer did not name the town: ${summary(named)}`)
+				const message = { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'How many times do the bells ring at dusk in that town? Answer with the number in words.' }] }
+				const keeper = await turn(loreChat, keeperLane!.id, { trigger: 'submit-message', message })
+				const plain = await turn(loreChat, plainLane!.id, { trigger: 'submit-message', message })
+
+				const { traces } = await api<{ traces: { messageId: string, blocks: { kind: string, entryId?: string }[] }[] }>('GET', `/chats/${loreChat}/overview`)
+				const sentNote = (answer: Turn) => traces.find(trace => trace.messageId === answer.messageId)?.blocks.some(block => block.kind === 'lore' && block.entryId === note.id)
+				if (sentNote(named)) throw new Error('the note was sent before the town was named')
+				if (!sentNote(keeper)) throw new Error(`the note was not sent once the answer named the town: ${summary(keeper)}`)
+				if (sentNote(plain)) throw new Error('the plain lane was sent the note')
+				const knows = (answer: Turn) => /\bthirteen\b|\b13\b/i.test(answer.text)
+				if (!knows(keeper)) throw new Error(`the Character did not use the note: ${summary(keeper)}`)
+				if (knows(plain)) throw new Error(`the plain lane knew the answer: ${summary(plain)}`)
+				if (keeper.tools.length) throw new Error(`the Character called ${keeper.tools.join(', ')}`)
+				const cited = /\b(notes?|files?|lorebook|library|sources?)\b/i.exec(keeper.text)
+				if (cited) throw new Error(`the Character cited "${cited[0]}": ${summary(keeper)}`)
+
+				// Its card, out and in again: the same Character with the same lorebook note.
+				const exported = await fetch(`${BASE}/api/v1/characters/${character.id}/card`, { headers: { cookie: cookieHeader() } })
+				if (!exported.ok) throw new Error(`the card export answered ${exported.status}`)
+				const form = new FormData()
+				form.append('file', new File([await exported.blob()], 'card.json', { type: 'application/json' }))
+				const imported = await api<{ character: { id: string, name: string, instructions: string, libraryIds: string[] } }>('POST', '/characters/import', form)
+				made.characters.push(imported.character.id)
+				made.libraries.push(...imported.character.libraryIds)
+				const [copy] = imported.character.libraryIds
+				const entries = copy ? await api<{ name: string, tags: string[] }[]>('GET', `/libraries/${copy}/entries`) : []
+				const lorebook = copy && (await api<{ lorebook: { on: boolean } | null }>('GET', `/libraries/${copy}`)).lorebook
+				if (imported.character.name !== 'Smoke Lorekeeper' || imported.character.instructions !== 'You are {{char}}, a guide to far-off towns. Answer in one or two sentences.' || !lorebook || !lorebook.on || entries.map(entry => `${entry.name}:${entry.tags.join()}`).join() !== `${town}:${town}`) {
+					throw new Error(`the card imported as ${JSON.stringify({ name: imported.character.name, lorebook, entries })}`)
+				}
+				return `the answer named ${town}; then the Character ${summary(keeper)}; Plain ${summary(plain)}; the card came back with its lorebook`
+			}
+			finally {
+				for (const id of made.chats) await api('DELETE', `/chats/${id}`)
+				for (const id of made.characters) await api('DELETE', `/characters/${id}`)
+				for (const id of made.libraries) await api('DELETE', `/libraries/${id}`)
 			}
 		})
 

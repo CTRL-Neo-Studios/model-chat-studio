@@ -1,3 +1,4 @@
+import { crc32 } from 'node:zlib'
 import { createError } from 'nuxt/server'
 import { z } from 'zod'
 // Relative, not `#shared`, so this module also loads in `bun test`.
@@ -34,6 +35,17 @@ function textChunk(data: Uint8Array) {
 	return zero === -1 ? undefined : { keyword: latin1.decode(data.subarray(0, zero)), text: latin1.decode(data.subarray(zero + 1)) }
 }
 
+const isCardChunk = (chunk: ReturnType<typeof pngChunks>[number]) => chunk.type === 'tEXt' && CARD_CHUNKS.includes(textChunk(chunk.data)?.keyword ?? '')
+
+/** The PNG with only the chunks given, as they were, and `insert` (a whole chunk) just before its end. */
+function rebuildPng(bytes: Uint8Array, chunks: ReturnType<typeof pngChunks>, insert?: Uint8Array) {
+	const parts = chunks.flatMap(chunk => [...(insert && chunk.type === 'IEND' ? [insert] : []), bytes.subarray(chunk.start, chunk.end)])
+	const image = new Uint8Array(8 + parts.reduce((total, part) => total + part.length, 0))
+	image.set(PNG_SIGNATURE)
+	parts.reduce((at, part) => (image.set(part, at), at + part.length), 8)
+	return image
+}
+
 /**
  * A card file's JSON, and for a PNG the image without its card chunks. A PNG carries the card base64-encoded in a
  * `tEXt` chunk: `ccv3` when present, else `chara`; which version it is comes from the JSON, not the chunk's name.
@@ -52,15 +64,7 @@ export function readCardFile(bytes: Uint8Array) {
 			throw refuse('The card in this PNG could not be read')
 		}
 		// The image as an avatar: every chunk but the card's, as they were.
-		const kept = chunks.filter(chunk => !(chunk.type === 'tEXt' && CARD_CHUNKS.includes(textChunk(chunk.data)?.keyword ?? '')))
-		const image = new Uint8Array(8 + kept.reduce((total, chunk) => total + chunk.end - chunk.start, 0))
-		image.set(PNG_SIGNATURE)
-		let at = 8
-		for (const chunk of kept) {
-			image.set(bytes.subarray(chunk.start, chunk.end), at)
-			at += chunk.end - chunk.start
-		}
-		return { card, image }
+		return { card, image: rebuildPng(bytes, chunks.filter(chunk => !isCardChunk(chunk))) }
 	}
 	try {
 		return { card: JSON.parse(new TextDecoder().decode(bytes)) as unknown, image: undefined }
@@ -68,6 +72,22 @@ export function readCardFile(bytes: Uint8Array) {
 	catch {
 		throw refuse('Not a character card: a PNG with a card in it, or a card\'s JSON')
 	}
+}
+
+/**
+ * A PNG avatar with a card in it, as cards travel: base64 JSON in a `chara` text chunk before the image's end. Card
+ * chunks the image already had are dropped first. Refuses what is not a PNG.
+ */
+export function writeCardPng(image: Uint8Array, card: unknown) {
+	if (!PNG_SIGNATURE.every((byte, index) => image[index] === byte)) throw refuse('Only a PNG avatar can carry a card: export it as JSON')
+	const text = new TextEncoder().encode(`chara\0${Buffer.from(JSON.stringify(card)).toString('base64')}`)
+	const chunk = new Uint8Array(12 + text.length)
+	const view = new DataView(chunk.buffer)
+	view.setUint32(0, text.length)
+	chunk.set(new TextEncoder().encode('tEXt'), 4)
+	chunk.set(text, 8)
+	view.setUint32(8 + text.length, crc32(chunk.subarray(4, 8 + text.length)))
+	return rebuildPng(image, pngChunks(image).filter(chunk => !isCardChunk(chunk)), chunk)
 }
 
 const text = z.string().optional()
@@ -149,4 +169,40 @@ export function cardToCharacter(raw: unknown) {
 
 	const card = Object.fromEntries(Object.entries(data).filter(([key, value]) => !MAPPED.includes(key) && !isEmpty(value)))
 	return { fields, card: { spec, ...(Object.keys(card).length && { data: card }) }, book: entries ? data.character_book : undefined, report }
+}
+
+/**
+ * A Character as a V2 card (plan section 2): its instructions as the description (the system prompt, personality and
+ * scenario left empty), its greetings, example dialogue, closing note, creator's notes and tags, the fields it was
+ * imported with written back, and `book` as its lorebook. The V1 fields are repeated at the top level, as SillyTavern
+ * writes them, for older readers.
+ */
+export function characterToCard(character: Omit<CharacterFields, 'color' | 'libraryIds'> & { card: Record<string, unknown> | null }, book?: Record<string, unknown>) {
+	const kept = typeof character.card?.data === 'object' && character.card.data !== null ? character.card.data as Record<string, unknown> : {}
+	const v1 = {
+		name: character.name,
+		description: character.instructions,
+		personality: '',
+		scenario: '',
+		first_mes: character.greetings[0] ?? '',
+		mes_example: character.examples,
+	}
+	return {
+		spec: 'chara_card_v2',
+		spec_version: '2.0',
+		...v1,
+		data: {
+			...kept,
+			...v1,
+			creator_notes: character.creatorNotes,
+			system_prompt: '',
+			post_history_instructions: character.note,
+			alternate_greetings: character.greetings.slice(1),
+			tags: character.tags,
+			creator: typeof kept.creator === 'string' ? kept.creator : '',
+			character_version: typeof kept.character_version === 'string' ? kept.character_version : '',
+			extensions: typeof kept.extensions === 'object' && kept.extensions !== null ? kept.extensions : {},
+			...(book && { character_book: book }),
+		},
+	}
 }

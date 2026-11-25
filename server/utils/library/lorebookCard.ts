@@ -26,8 +26,10 @@ const EXTENSION_FIELDS = ['position', 'depth', 'role', 'selectiveLogic', 'probab
 const QUIET = ['uid', 'display_index', 'use_regex', 'addMemo']
 const BOOK_FIELDS = ['name', 'description', 'scan_depth', 'token_budget', 'recursive_scanning', 'entries']
 
+/** The fields of `source` not `mapped`, as they came; empty objects (a bare `extensions: {}`) are not worth keeping. */
 function keep(source: Json, mapped: string[]) {
-	return Object.fromEntries(Object.entries(source).filter(([key, value]) => !mapped.includes(key) && value !== undefined))
+	return Object.fromEntries(Object.entries(source).filter(([key, value]) => !mapped.includes(key) && value !== undefined
+		&& !(typeof value === 'object' && value !== null && !Array.isArray(value) && !Object.keys(value).length)))
 }
 
 /** A unique note name, from the entry's comment, else its name, else its first keyword. */

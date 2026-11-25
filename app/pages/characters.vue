@@ -88,6 +88,23 @@ async function remove(character: Character) {
 	if (!await act(`/api/v1/characters/${character.id}`, { method: 'DELETE', success: 'Character deleted' })) queryCache.setQueryData(charactersQuery.key, before)
 }
 
+// A card file: fetched, then saved under the name the server gives it.
+const toast = useToast()
+async function exportCard(character: Character, format: 'json' | 'png') {
+	try {
+		const response = await $fetch.raw<Blob>(`/api/v1/characters/${character.id}/card`, { query: { format }, responseType: 'blob' })
+		const name = /filename\*=UTF-8''([^;]+)/.exec(response.headers.get('content-disposition') ?? '')?.[1]
+		const link = document.createElement('a')
+		link.href = URL.createObjectURL(response._data!)
+		link.download = name ? decodeURIComponent(name) : `${character.name}.${format}`
+		link.click()
+		URL.revokeObjectURL(link.href)
+	}
+	catch (error) {
+		toast.add({ title: 'The card could not be exported', description: serverMessage(error), icon: 'i-lucide-alert-circle', color: 'error' })
+	}
+}
+
 function actions(character: Character): DropdownMenuItem[][] {
 	const mine = character.ownerId !== null
 	return [[
@@ -95,6 +112,10 @@ function actions(character: Character): DropdownMenuItem[][] {
 		...(mine
 			? (isAdmin.value ? [{ label: 'Publish for everyone', icon: 'i-lucide-share', onSelect: () => copy(character, true) }] : [])
 			: [{ label: 'Copy to my Characters', icon: 'i-lucide-copy', onSelect: () => copy(character, false) }]),
+	], [
+		// A card in its picture when the Character has an avatar; only a PNG one can carry it, the server says so otherwise.
+		...(character.avatarFileId ? [{ label: 'Export card (PNG)', icon: 'i-lucide-image-down', onSelect: () => exportCard(character, 'png') }] : []),
+		{ label: 'Export card (JSON)', icon: 'i-lucide-file-down', onSelect: () => exportCard(character, 'json') },
 	], ...(canEdit.value ? [[{ label: 'Delete', icon: 'i-lucide-trash', color: 'error' as const, onSelect: () => remove(character) }]] : [])]
 }
 </script>
