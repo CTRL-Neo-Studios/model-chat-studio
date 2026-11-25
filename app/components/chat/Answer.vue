@@ -39,6 +39,8 @@ const streaming = computed(() => props.pending?.status === 'streaming')
 const writing = computed(() => props.pending?.status === 'submitted' || streaming.value)
 // A group speaker still waiting for its turn in the round.
 const queued = computed(() => props.pending?.status === 'queued')
+// Anyone signed in who reads the chat may listen (and pays for it); guests reading by link may not.
+const { loggedIn } = useUserSession()
 </script>
 
 <template>
@@ -90,10 +92,12 @@ const queued = computed(() => props.pending?.status === 'queued')
 			/>
 		</div>
 
-		<div v-if="isOwner && message" :class="['flex items-center gap-0.5', card ? 'px-1.5 pb-1.5' : 'mt-1 -ms-1.5']">
+		<div v-if="(isOwner || loggedIn) && message" :class="['flex items-center gap-0.5', card ? 'px-1.5 pb-1.5' : 'mt-1 -ms-1.5']">
 			<!-- The answer's versions; the version shown is the one the models read from then on. -->
-			<ChatSwitch v-if="versions && versions.length > 1 && !writing && !editing" :ids="versions" :current="message.id" noun="version" :disabled="busy" @show="id => emit('show', id)" />
+			<ChatSwitch v-if="isOwner && versions && versions.length > 1 && !writing && !editing" :ids="versions" :current="message.id" noun="version" :disabled="busy" @show="id => emit('show', id)" />
+			<ChatReadAloud v-if="!writing && !editing" :message="message" />
 			<ChatMessageActions
+				v-if="isOwner"
 				:message="message"
 				:streaming="writing"
 				:editing="editing"

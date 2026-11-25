@@ -66,6 +66,13 @@ export const meQuery = defineQueryOptions({
 	query: () => useRequestFetch()('/api/v1/users/me'),
 })
 
+/** Read-aloud on the active platform: whether it is set up, its voices and the member's. */
+export const speechVoicesQuery = defineQueryOptions({
+	key: ['speech', 'voices'],
+	query: () => useRequestFetch()('/api/v1/speech/voices'),
+	staleTime: FIVE_MINUTES,
+})
+
 export const usageQuery = defineQueryOptions({
 	key: ['me', 'usage'],
 	query: () => useRequestFetch()('/api/v1/me/usage'),

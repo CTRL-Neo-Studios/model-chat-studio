@@ -60,6 +60,22 @@ async function setCharacter(value: string) {
 	queryCache.setQueryData(meQuery.key, { ...before, preferences: { ...before.preferences, characterId } })
 	if (!await act('/api/v1/me/preferences', { method: 'PATCH', body: { characterId }, success: 'Saved' })) queryCache.setQueryData(meQuery.key, before)
 }
+
+// Read-aloud's voice on the active platform; another platform keeps its own.
+const { data: speech } = useQuery(speechVoicesQuery)
+const voiceItems = computed(() => (speech.value?.voices ?? []).map(voice => ({ label: voice.id === speech.value?.defaultVoice ? `${voice.name} (default)` : voice.name, value: voice.id })))
+async function setVoice(voice: string) {
+	const current = speech.value
+	if (!current?.available) return
+	queryCache.setQueryData(speechVoicesQuery.key, { ...current, voice })
+	if (!await act('/api/v1/me/preferences', { method: 'PATCH', body: { voices: { [current.platform]: voice } }, success: 'Saved' })) queryCache.setQueryData(speechVoicesQuery.key, current)
+}
+const { read, stop, readingId } = useReadAloud()
+const SAMPLE = 'Hello! This is how answers sound when you have them read aloud.'
+function playSample() {
+	if (readingId.value === 'sample') stop()
+	else read('sample', [{ type: 'text', text: SAMPLE }])
+}
 </script>
 
 <template>
@@ -129,6 +145,14 @@ async function setCharacter(value: string) {
 				<UPageCard title="You in new chats" description="The Character you are in new chats; each chat can pick another. Its name stands for {{user}} and its instructions tell the models about you." variant="subtle">
 					<USelect v-if="me" :model-value="me.preferences.characterId ?? NONE" :items="characterItems" class="w-full sm:w-72" @update:model-value="setCharacter" />
 					<USkeleton v-else class="h-8 w-72" />
+				</UPageCard>
+
+				<UPageCard title="Read aloud" :description="speech?.available ? `Answers are read in this voice on ${platforms.find(entry => entry.id === speech?.platform)?.name}, the active platform. Listening is billed like a chat.` : 'Read-aloud is not set up on the active platform yet.'" variant="subtle">
+					<div v-if="speech?.available" class="flex flex-wrap gap-2">
+						<USelect :model-value="speech.voice ?? speech.defaultVoice" :items="voiceItems" class="w-full sm:w-72" aria-label="Voice" @update:model-value="setVoice" />
+						<UButton :label="readingId === 'sample' ? 'Stop' : 'Play a sample'" :icon="readingId === 'sample' ? 'i-lucide-square' : 'i-lucide-volume-2'" color="neutral" variant="subtle" @click="playSample" />
+					</div>
+					<USkeleton v-else-if="!speech" class="h-8 w-72" />
 				</UPageCard>
 			</div>
 		</template>

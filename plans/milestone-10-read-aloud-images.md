@@ -1,6 +1,6 @@
 # Milestone 10: read-aloud and image generation
 
-Status: spikes L and M done, 10.1 built (2026-11-25); 10.2 next. Part of `roadmap-milestones-7-14.md`. No migration. Needs 7.3 for "speakers see images".
+Status: spikes L and M done, 10.1 and 10.2 built (2026-11-25); 10.3 next. Part of `roadmap-milestones-7-14.md`. No migration. Needs 7.3 for "speakers see images".
 
 Goal: an answer can be listened to, and a chat can make images.
 
@@ -89,6 +89,22 @@ Fixture check (a throwaway plugin answering both speech calls; lists and prices 
 - Chromium: the OpenRouter card showed the new field and, once a model was picked, the voice select with that model's voices.
 - The settings, the preference and the fixture's usage rows were put back.
 
+Built (10.2): `useReadAloud` (`app/composables/useReadAloud.ts`) reads one answer at a time in the whole app:
+- It makes the answer's text plain and cuts it into pieces (`speechText`, `speechPieces`), then fetches each from `POST /speech` with the member's voice (or the default) and plays them in order on one shared audio element. The next piece is fetched while one plays.
+- Starting another answer, or Stop, aborts what is in flight and requests nothing more. An error shows as a toast.
+- The audio element is started on the click with a WAV of no samples, so Safari lets it play the pieces that arrive later. This was not tried in Safari.
+- Pieces stay in memory by platform, voice and text while the page is open, so listening again is free; a reload forgets them.
+
+`ChatReadAloud` is the button under an answer: "Read aloud" (a speaker), "Stop" (a square) while it reads, pulsing while it waits for a piece. It shows only once read-aloud is set up (`speechVoicesQuery`). The answer's actions row now shows for any signed-in member who reads the chat, with only this button for those who do not own it; guests reading by link see none.
+
+`/settings` has a "Read aloud" card: a select of the active platform's voices ("(default)" marked), saved at once to `voices` for that platform, and "Play a sample", which reads one sentence in the chosen voice. Each platform keeps its own choice, but the card shows only the active one's voices; another platform's are not listed.
+
+Fixture check in Chromium. A throwaway plugin answered DeepSeek chat with a fixed 1,123-character answer and DeepSeek TTS with a 1.5 s tone after 0.4 s, recording each request. The page's `play()` was watched only to log what played.
+- Read to the end: the answer was read in 3 pieces (250, 528 and 343 characters), requested in order in Stella, the default. Each played and ended, the next starting as the previous ended, about 1.6 s apart. The button showed Stop while reading and Read aloud after.
+- The voice: Tide chosen in the settings' select ("Saved"). "Play a sample" sent its sentence in Tide.
+- Stop: on the chat again (the page reloaded, so nothing was in memory), Stop was pressed half a second into the first piece. Pieces 1 and 2 had been requested, both in Tide, the second while the first played. Five seconds later nothing more had been requested or played, and the button read Read aloud again.
+- The preference, the chat and the fixture's usage rows were put back.
+
 ## 6. To verify before building
 
 - **Spike L, speech.** On both platforms: the time to the first sound for a 300-character piece; whether Chromium, Safari and Firefox play what comes back (`audio/wav` from DeepSeek, MP3 from OpenRouter) from a fetched blob; how OpenRouter reports the cost of a speech call (the body is audio: a header, or a lookup by generation id?); the shape of its speech models list and where the voices are; whether DeepSeek's own Markdown filter can stay on next to the app's.
@@ -114,7 +130,8 @@ Result M (2026-11-25, `images.ts`, `own-image.ts`, `other-speaker-image.ts`):
 ## 7. Ceilings and things left out
 
 - No true streaming of speech: it comes in pieces.
-- One voice per member and platform; Characters have no voices of their own.
+- One voice per member and platform; Characters have no voices of their own. The settings list only the active platform's voices.
+- Read-aloud is not checked in Safari or on phones here; its unlocking of audio on the click is the usual way, untried.
 - No editing of an image, no image made from another image, no models that write images straight into their answer.
 - Speech and images are not offered to guests reading by link: there is nobody to bill.
 - No video.
