@@ -18,34 +18,47 @@ export const MAX_SHARED_CHART = 4_000
 
 /**
  * Another speaker's answer as the others read it: its text, with each chart it drew in place as `[chart]` and the
- * chart's JSON (title, type, data, series), cut at `MAX_SHARED_CHART` characters. Charts whose call failed are left out.
+ * chart's JSON (title, type, data, series), cut at `MAX_SHARED_CHART` characters, and each image it drew as
+ * "[image: the prompt]". Charts and images whose call failed are left out.
  */
 function sharedText(answer: StoredMessage) {
 	return answer.parts.map((part) => {
 		if (part.type === 'text') return part.text
-		if (part.type !== 'tool-chart' || !('state' in part) || part.state !== 'output-available') return ''
+		if (!('state' in part) || part.state !== 'output-available') return ''
+		if (part.type === 'tool-generate_image') return `\n\n[image: ${(part.output as { prompt: string }).prompt}]\n\n`
+		if (part.type !== 'tool-chart') return ''
 		const json = JSON.stringify(part.input)
 		return `\n\n[chart] ${json.length > MAX_SHARED_CHART ? `${json.slice(0, MAX_SHARED_CHART)}… (cut)` : json}\n\n`
 	}).join('').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+/** The images another speaker drew, as files after its text, for a speaker whose model reads images. */
+function sharedImages(answer: StoredMessage): UIMessage['parts'] {
+	return answer.parts.flatMap((part) => {
+		if (part.type !== 'tool-generate_image' || !('state' in part) || part.state !== 'output-available') return []
+		const { url, mediaType } = part.output as { url: string, mediaType: string }
+		return [{ type: 'file' as const, url, mediaType }]
+	})
 }
 
 /**
  * A group chat's shared thread as one speaker (`laneId`) sees it: every user message and every answer, each round's
  * answers in speaking order (the user message's `speakers`). The speaker's own answers stay its own; the user's
  * messages and the other speakers' answers become user messages that start with the writer's name, the answers as
- * their text and charts (reasoning and other tool calls stay with whoever made them). A greeting opens the thread.
- * Summaries pass through.
+ * their text, charts and images (reasoning and other tool calls stay with whoever made them). A speaker whose model
+ * reads images (`seesImages`) also gets the others' images themselves. A greeting opens the thread. Summaries pass
+ * through.
  *
  * With `questionId`, the thread ends at that round, holding the speakers before this one: on a regenerate, those
  * before its place in `speakers`; otherwise every answer given so far. Without, the whole thread (for `/compact`).
  */
-export function groupThread(messages: StoredMessage[], { laneId, questionId, userName }: { laneId: string, questionId?: string, userName: string }): UIMessage[] {
+export function groupThread(messages: StoredMessage[], { laneId, questionId, userName, seesImages = false }: { laneId: string, questionId?: string, userName: string, seesImages?: boolean }): UIMessage[] {
 	const thread: UIMessage[] = []
 	/** The speaker's own answer as it is; another's as a user message under its name, if it says anything. */
 	const pushAnswer = (answer: StoredMessage) => {
 		const shared = answer.chatModelId === laneId ? undefined : sharedText(answer)
 		if (answer.chatModelId === laneId) thread.push(answer)
-		else if (shared) thread.push({ id: answer.id, role: 'user', parts: [{ type: 'text', text: `${answer.metadata?.lane?.name ?? 'Another model'}: ${shared}` }] })
+		else if (shared) thread.push({ id: answer.id, role: 'user', parts: [{ type: 'text', text: `${answer.metadata?.lane?.name ?? 'Another model'}: ${shared}` }, ...(seesImages ? sharedImages(answer) : [])] })
 	}
 	for (const message of messages) {
 		if (message.role === 'system') thread.push(message)

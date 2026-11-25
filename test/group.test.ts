@@ -93,6 +93,25 @@ test('the others\' charts come as JSON in place, cut when long; failed charts an
 	expect(critic).toBe(`user Critic: [chart] ${JSON.stringify(sales)}`)
 })
 
+test('another speaker\'s image: its prompt in the text, and the image itself for a speaker whose model reads images', () => {
+	const image = { fileId: 'f1', url: '/api/v1/files/f1', mediaType: 'image/webp', prompt: 'a red fox' }
+	const drew: Stored[] = [
+		user('u1', 'Draw a fox', ['Painter', 'Critic']),
+		{
+			...answer('p1', 'u1', 'Painter', ''),
+			parts: [
+				{ type: 'text', text: 'Done.' },
+				{ type: 'tool-generate_image', toolCallId: 'i1', state: 'output-available', input: { prompt: 'a red fox' }, output: image },
+				{ type: 'tool-generate_image', toolCallId: 'i2', state: 'output-error', input: { prompt: 'a blue fox' }, errorText: 'no' },
+			] as Stored['parts'],
+		},
+	]
+	const seeing = groupThread(drew, { laneId: 'Critic', questionId: 'u1', userName: 'Captain', seesImages: true })
+	expect(seeing[1]!.parts).toEqual([{ type: 'text', text: 'Painter: Done.\n\n[image: a red fox]' }, { type: 'file', url: '/api/v1/files/f1', mediaType: 'image/webp' }])
+	const blind = groupThread(drew, { laneId: 'Critic', questionId: 'u1', userName: 'Captain' })
+	expect(read(blind)).toEqual(['user Captain: Draw a fox', 'user Painter: Done.\n\n[image: a red fox]'])
+})
+
 test('a greeting opens the shared thread: the greeter\'s own, the others\' under its name', () => {
 	const greeted: Stored[] = [{ id: 'g', role: 'assistant', parentId: null, chatModelId: 'Bard', metadata: { greeting: true, lane: { name: 'Bard', color: null } }, parts: [{ type: 'text', text: 'Welcome, traveller.' }] }, user('u1', 'Hello', ['Bard', 'Guard'])]
 	expect(read(groupThread(greeted, { laneId: 'Bard', questionId: 'u1', userName: 'Captain' }))).toEqual(['assistant Welcome, traveller.', 'user Captain: Hello'])

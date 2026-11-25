@@ -16,7 +16,8 @@ for (const line of home.headers.getSetCookie()) {
 	const [name, ...value] = pair!.split('=')
 	cookies[name!.trim()] = value.join('=')
 }
-const csrf = /name="csrf-token" content="([^"]+)"/.exec(await home.text())?.[1]
+/** The page's CSRF token, for requests `api` cannot make (an audio answer). */
+export const csrf = /name="csrf-token" content="([^"]+)"/.exec(await home.text())?.[1]
 if (home.status !== 200 || !csrf) {
 	console.error(`The home page answered ${home.status} without a CSRF token: is SESSION an admin's current session?`)
 	process.exit(1)

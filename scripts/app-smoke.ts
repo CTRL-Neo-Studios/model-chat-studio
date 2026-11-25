@@ -1,4 +1,4 @@
-// Phase 9 smoke run: drives a running instance through its own API, as the browser does, on each platform
+// Milestone 10 smoke run: drives a running instance through its own API, as the browser does, on each platform
 // that has an instance key. Run it as an admin: it switches the active platform and switches it back.
 //
 //   SESSION=<value of the nuxt-auth-session cookie> [BASE_URL=http://localhost:3000] bun scripts/app-smoke.ts [--search]
@@ -7,12 +7,13 @@
 // the first message, two models answering one message at once, a library note found and read with the file tools,
 // a lorebook note that reaches only its Character's lane once an answer names its keyword (and the Character's card
 // exported and imported again), a group round in the order the message asks for, a chat started in a folder whose
-// defaults are a group (the second speaker reads the first one's chart), dictation, the spend
-// ledger, and deleting the chat. `--search` adds web search to the library question and a web search turn (on
-// OpenRouter each costs about $0.02). The test files come from `scripts/smoke-files.ts` (macOS makes them; elsewhere
-// `--wav`, `--image`, `--pdf`).
+// defaults are a group (the second speaker reads the first one's chart), dictation, a piece read aloud in the
+// platform's default voice, an image drawn by the model's tool call and one by `/image` (each about $0.01, once an
+// image model is set), the spend ledger, and deleting the chat. `--search` adds web search to the library question
+// and a web search turn (on OpenRouter each costs about $0.02). The test files come from `scripts/smoke-files.ts`
+// (macOS makes them; elsewhere `--wav`, `--image`, `--pdf`).
 import { IMAGE_WORD, makeSmokeFiles, PDF_WORD, SENTENCE } from './smoke-files'
-import { api, BASE, cookieHeader, turn, type Turn } from './smoke-client'
+import { api, BASE, cookieHeader, csrf, turn, type Turn } from './smoke-client'
 
 let failures = 0
 async function step(name: string, run: () => Promise<string>) {
@@ -29,7 +30,7 @@ const summary = (t: Turn) => `${JSON.stringify(t.text.trim().slice(0, 100))} (${
 
 type PlatformId = 'openrouter' | 'deepseek'
 interface Settings { inferencePlatform: PlatformId | null, platforms: Record<PlatformId, { hasKey: boolean, defaultModel?: string, sttModel?: string }> }
-interface Catalog { platform: { id: PlatformId } | null, defaultModel: string | null, models: { id: string, inputModalities: string[], webSearch: boolean }[] }
+interface Catalog { platform: { id: PlatformId } | null, defaultModel: string | null, models: { id: string, inputModalities: string[], webSearch: boolean }[], images: { available: boolean, reason: string | null } }
 
 const files = makeSmokeFiles()
 const settings = await api<Settings>('GET', '/admin/settings')
@@ -291,6 +292,36 @@ try {
 			const matched = words(SENTENCE).filter(word => heard.includes(word)).length / words(SENTENCE).length
 			if (matched < 0.8) throw new Error(`heard ${JSON.stringify(text)}`)
 			return JSON.stringify(text)
+		})
+
+		await step('read aloud', async () => {
+			const voices = await api<{ available: boolean, defaultVoice: string | null }>('GET', '/speech/voices')
+			if (!voices.available) return 'skipped: read-aloud is not set up on this platform'
+			const response = await fetch(`${BASE}/api/v1/speech`, {
+				method: 'POST',
+				headers: { 'cookie': cookieHeader(), 'csrf-token': csrf!, 'content-type': 'application/json' },
+				body: JSON.stringify({ text: 'This is the smoke run, reading one short sentence aloud.' }),
+			})
+			const type = response.headers.get('content-type') ?? ''
+			const bytes = (await response.arrayBuffer()).byteLength
+			if (!response.ok || !type.startsWith('audio/') || bytes < 1000) throw new Error(`answered ${response.status} ${type}, ${bytes} bytes`)
+			return `${type}, ${Math.round(bytes / 1024)} KB in ${voices.defaultVoice}`
+		})
+
+		await step('images', async () => {
+			if (!catalog.images.available) return `skipped: ${catalog.images.reason}`
+			await api('PATCH', `/chats/${chatId}`, { settings: { images: true } })
+			lastAnswer = await turn(chatId, laneId, { trigger: 'submit-message', message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'Use the generate_image tool to draw a small red apple on a white table, then say "done".' }] } })
+			if (!lastAnswer.tools.includes('generate_image')) throw new Error(`no image drawn: ${summary(lastAnswer)}, tools ${lastAnswer.tools.join(', ') || 'none'}`)
+			type Drawn = { type: string, state?: string, output?: { url: string } }
+			const shown = await api<{ messages: { id: string, parts: Drawn[] }[] }>('GET', `/chats/${chatId}`)
+			const drawn = shown.messages.find(message => message.id === lastAnswer!.messageId)?.parts.find(part => part.type === 'tool-generate_image' && part.state === 'output-available')
+			if (!drawn?.output) throw new Error('the answer holds no finished image')
+			const exchange = await api<{ drawn: { parts: Drawn[] } }>('POST', `/chats/${chatId}/images`, { prompt: 'a small blue paper boat' })
+			const stored = [drawn.output.url, exchange.drawn.parts[0]?.output?.url]
+			const types = await Promise.all(stored.map(async url => url ? (await fetch(`${BASE}${url}`, { headers: { cookie: cookieHeader() } })).headers.get('content-type') : 'missing'))
+			if (types.some(type => !type?.startsWith('image/'))) throw new Error(`stored images answered ${types.join(', ')}`)
+			return `the tool's (${types[0]}) and /image's (${types[1]})`
 		})
 
 		await step('spend ledger', async () => {

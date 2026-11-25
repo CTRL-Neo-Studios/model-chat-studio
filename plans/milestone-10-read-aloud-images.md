@@ -1,6 +1,6 @@
 # Milestone 10: read-aloud and image generation
 
-Status: spikes L and M done, 10.1, 10.2 and 10.3 built (2026-11-25); 10.4 next. Part of `roadmap-milestones-7-14.md`. No migration. Needs 7.3 for "speakers see images".
+Status: complete (2026-11-25): spikes L and M, 10.1 to 10.4, and the live run on both platforms. Part of `roadmap-milestones-7-14.md`. No migration. Needs 7.3 for "speakers see images".
 
 Goal: an answer can be listened to, and a chat can make images.
 
@@ -117,6 +117,24 @@ Fixture check, DeepSeek active, the chat on `deepseek-flash` (reads images). A t
 - The next turn sent DeepSeek "[image: a gradient square]" in place of the tool call, then the user message "The picture you drew in your last answer, shown again so you can see it:" with the image as a data URL, then the new question.
 - In Chromium the image showed in the answer with Download. With a library attached, "Add to library" copied it there. The prompt menu's "Images" switch was on, saved off to the chat, and with web search on said DeepSeek draws only while thinking is on.
 - Deleting the chat deleted the image file (404). The setting, the chat, the library and the fixture's usage rows were put back.
+
+Built (10.4): `/image the words` draws with no model turn (`POST /chats/:id/images`, `{ prompt, aspectRatio? }`).
+- The route checks the setup and the 10-a-minute limit, then calls `makeImage`. `saveImageExchange` (`turns.ts`) saves two messages at the tip, both marked `kind: 'image'`: the user's "/image the words", which becomes the tip, and an answer of no lane, labelled "Image", holding the image as a finished `generate_image` call that the image card shows. The image file is linked to that answer. If saving fails, the image is deleted.
+- Models are not sent the exchange. `withoutImageExchanges` (`thread.ts`) removes it after the branch is found, so the next message, whose parent is the `/image` message, still reads the whole branch. This applies to the turn route and `/compact`. A turn asked to answer a `/image` message gets 400. A group's "Answer" picks the last message that is not one.
+- The "/" menu offers `image` while images are set up. Picking it leaves "/image " in the prompt; sending "/image …" draws instead of starting a turn, with the prompt shown as busy meanwhile.
+- Group speakers see images: `groupThread` gives another speaker's image as "[image: the prompt]" in its text, and to a speaker whose model reads images (`seesImages`) also as the image itself, a file after the text.
+- Read-aloud is hidden on answers with nothing to read (only an image or a chart).
+- `scripts/app-smoke.ts` gained "read aloud" (one piece in the platform's default voice) and "images" (one by the model's tool call, one by `/image`, both stored and served as images). Each is skipped while its setup is missing.
+
+Fixture check (DeepSeek answering, OpenRouter images faked):
+- `/image a lighthouse at dusk` saved both messages (the answer with no lane, kind `image`). Answering that message was refused with 400. The next turn sent DeepSeek only "Hello.", its answer and "What now?": no "/image", no image. Its parent was the `/image` message.
+- In a group, the Painter drew with the tool. The Critic, on `deepseek-flash`, which reads images, then received "Painter: [image: a gradient fox] …" with the image as an `image_url`.
+- In Chromium, typing "/ima" and Enter left "/image " in the prompt; "a sailboat on a lake" and Enter drew it, and the exchange showed with the image card. The read-aloud button showed on both "Noted." answers and not on the image.
+- The chats, the setting and the fixture's usage rows were put back.
+
+Live run (`scripts/app-smoke.ts`, 2026-11-25), with the OpenRouter speech model set to the cheapest, `hexgrad/kokoro-82m` (voice af_alloy), and the image model to `recraft/recraft-v4.1-flash-v2`, both unset again afterwards. Every step passed on both platforms:
+- OpenRouter (`deepseek/deepseek-v4.1-flash-1017`): read aloud gave `audio/mpeg`, 27 KB in af_alloy. The model drew with the tool and `/image` drew, both stored as `image/webp`. $0.0166 for the run.
+- DeepSeek (`deepseek-flash`): read aloud gave `audio/wav`, 150 KB in Stella. Images were drawn on OpenRouter by the tool and by `/image`, both `image/webp`. $0.0185 for the run.
 
 ## 6. To verify before building
 

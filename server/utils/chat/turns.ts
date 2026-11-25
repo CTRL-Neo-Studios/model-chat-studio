@@ -192,6 +192,8 @@ export async function applyTurnTrigger(db: Db, chatId: string, request: TurnRequ
 			? createError({ status: 404, statusText: 'Message not found' })
 			: createError({ status: 400, statusText: 'There is no message to answer' })
 	}
+	// A `/image` message is the user's own drawing: no model answers it.
+	if (target.role === 'user' && target.metadata?.kind === 'image') throw createError({ status: 400, statusText: 'A /image message gets no model answer' })
 	if (target.role === 'user') return target.id
 	if (target.role !== 'assistant' || !target.parentId) throw createError({ status: 400, statusText: 'There is no message to answer' })
 	if (target.chatModelId !== request.chatModelId) throw createError({ status: 400, statusText: 'This answer belongs to another model' })
@@ -236,6 +238,35 @@ export async function saveAnswer(db: Db, answer: { id: string, chatId: string, p
 				.where(and(eq(tables.message.id, answer.parentId), sql`not ${speakers} @> jsonb_build_array(${answer.chatModelId}::text)`))
 		}
 		return true
+	})
+}
+
+/**
+ * Saves a `/image` exchange at the tip: the user's message (`/image` and the prompt), then an answer of no lane
+ * holding the image as a finished `generate_image` call, both marked `kind: 'image'`. The message becomes the tip
+ * and the image file is linked to the answer. Returns both, as the chat lists them.
+ */
+export async function saveImageExchange(db: Db, input: { chatId: string, prompt: string, aspectRatio?: string, model: string, image: { fileId: string, url: string, mediaType: string, prompt: string } }) {
+	const { chatId, prompt, image } = input
+	return await db.transaction(async (tx) => {
+		// One send at a time per chat, as for a turn: the message follows the tip it read.
+		const parentId = await chatTip(tx, chatId, true)
+		const [asked] = await tx.insert(tables.message)
+			.values({ id: crypto.randomUUID(), chatId, role: 'user', parentId, parts: [{ type: 'text', text: `/image ${prompt}` }], metadata: { kind: 'image' } })
+			.returning(messageColumns)
+		const [drawn] = await tx.insert(tables.message)
+			.values({
+				id: crypto.randomUUID(),
+				chatId,
+				role: 'assistant',
+				parentId: asked!.id,
+				parts: [{ type: 'tool-generate_image', toolCallId: crypto.randomUUID(), state: 'output-available', input: { prompt, ...(input.aspectRatio && { aspectRatio: input.aspectRatio }) }, output: image }],
+				metadata: { kind: 'image', model: input.model, lane: { name: 'Image', color: null } },
+			})
+			.returning(messageColumns)
+		await tx.update(tables.file).set({ messageId: drawn!.id }).where(eq(tables.file.id, image.fileId))
+		await tx.update(tables.chat).set({ leafId: asked!.id }).where(eq(tables.chat.id, chatId))
+		return { asked: asked!, drawn: drawn! }
 	})
 }
 

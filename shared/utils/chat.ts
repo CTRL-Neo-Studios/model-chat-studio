@@ -124,8 +124,11 @@ export interface MessageMetadata {
 	durationMs?: number
 	/** 1 for the first answer, then one more per regenerate (capped by `maxRegenerations`). */
 	attempt?: number
-	/** A `/compact` summary (role `system`): of a lane's thread up to it, or in a group chat of the shared thread. */
-	kind?: 'summary'
+	/**
+	 * `summary`: a `/compact` summary (role `system`): of a lane's thread up to it, or in a group chat of the shared
+	 * thread. `image`: both messages of a `/image` exchange, yours and the image; models are not sent them.
+	 */
+	kind?: 'summary' | 'image'
 	/** Library files and notes auto-fetched for this answer, by path. */
 	fetched?: { entryId: string, name: string }[]
 	/** A group chat's user message: the lanes that answered it, in speaking order. */

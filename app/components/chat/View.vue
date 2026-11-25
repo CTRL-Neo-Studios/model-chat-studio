@@ -173,14 +173,21 @@ function summariesFrom(firstId: string) {
 const { renameChat } = useChatActions()
 const lastLanes = useCookie<{ profileId?: string, modelId?: string | null }[]>('chat-lanes', { default: () => [], sameSite: 'lax' })
 const lastSettings = useCookie<ChatSettings>('chat-settings', { default: () => ({}), sameSite: 'lax' })
-const commands: PromptCommand[] = [
+// `/image` while images are set up: picking it leaves "/image " in the prompt for the words to draw.
+const { images: imagesState } = useModels()
+const commands = computed<PromptCommand[]>(() => [
 	{ kind: 'compact', label: 'compact', description: 'Summarise the chat so far; each model is sent the summary from now on', icon: 'i-lucide-fold-vertical' },
 	{ kind: 'clear', label: 'clear', description: 'Start a new chat with the same models and settings', icon: 'i-lucide-eraser' },
 	{ kind: 'rename', label: 'rename', description: 'Rename this chat', icon: 'i-lucide-pencil' },
-]
+	...(imagesState.value.available ? [{ kind: 'image' as const, label: 'image', description: 'Draw an image from your words, with no model turn', icon: 'i-lucide-image' }] : []),
+])
 const compacting = ref(false)
 async function runCommand(kind: PromptCommand['kind']) {
 	if (kind === 'rename') return renameChat(chatId, title.value)
+	if (kind === 'image') {
+		input.value = '/image '
+		return
+	}
 	if (kind === 'clear') {
 		// The new chat starts from these models: profiles by id, other models by model id, as the home page keeps them.
 		lastLanes.value = enabledLanes.value.map(lane => lane.profileId ? { profileId: lane.profileId } : { modelId: lane.modelId })
@@ -234,17 +241,31 @@ function slotsFor(questionId: string) {
 const cards = (questionId: string) => lanes.value.length > 1 || slotsFor(questionId).length > 1
 const question = (id: string) => messages.value.find(message => message.id === id)!
 
-// "Answer" in a group chat: a lane answers the last message after the others, reading their answers.
-const lastQuestion = computed(() => messages.value.findLast(message => message.role === 'user'))
+// "Answer" in a group chat: a lane answers the last message after the others, reading their answers. A `/image`
+// message gets no model answer.
+const lastQuestion = computed(() => messages.value.findLast(message => message.role === 'user' && message.metadata?.kind !== 'image'))
 function answerLast(lane: { id: string }) {
 	if (lastQuestion.value) answers.regenerate(lane.id, lastQuestion.value)
+}
+
+/** `/image`: the server draws and returns the exchange, which joins the chat at its end. */
+const drawing = ref(false)
+async function drawImage(prompt: string) {
+	drawing.value = true
+	input.value = ''
+	const drawn = await act<{ asked: ChatMessage, drawn: ChatMessage }>(`/api/v1/chats/${chatId}/images`, { method: 'POST', body: { prompt } })
+	drawing.value = false
+	if (drawn) messages.value = [...messages.value, drawn.asked, drawn.drawn]
+	else input.value = `/image ${prompt}`
 }
 
 function handleSubmit(e: Event) {
 	e.preventDefault()
 	const text = input.value
 	const files = fileParts.value
-	if ((!text.trim() && !files.length) || uploading.value || answers.busy.value) return
+	if ((!text.trim() && !files.length) || uploading.value || answers.busy.value || drawing.value) return
+	const imagePrompt = /^\/image\s+(\S[\s\S]*)$/.exec(text.trim())?.[1]
+	if (imagePrompt && imagesState.value.available) return drawImage(imagePrompt)
 	if (!enabledLanes.value.length) {
 		toast.add({ description: 'Turn on a model first', icon: 'i-lucide-alert-circle', color: 'warning' })
 		return
@@ -542,8 +563,8 @@ onMounted(() => {
 								:models="answeringModels"
 								:uploads="uploads"
 								:uploading="uploading"
-								:status="answers.busy.value ? 'streaming' : 'ready'"
-								:disabled="compacting"
+								:status="answers.busy.value ? 'streaming' : drawing ? 'submitted' : 'ready'"
+								:disabled="compacting || drawing"
 								:commands="commands"
 								class="[view-transition-name:chat-prompt] rounded-b-none backdrop-blur-sm"
 								:memory-max="memoryMax"

@@ -12,7 +12,7 @@ import { expandReferences } from '#server/utils/library/references'
 import { chatLibraries } from '#server/utils/library/libraries'
 import { listChatModels } from '#server/utils/chat/lanes'
 import { assertWithinBudget, chatTip, listChatMessages, monthlyBudgetStatus } from '#server/utils/chat/turns'
-import { shownThread } from '#server/utils/chat/thread'
+import { shownThread, withoutImageExchanges } from '#server/utils/chat/thread'
 import { getCatalog, getPriceOverride, useInference } from '#server/utils/inference'
 import { groupThread } from '#server/utils/chat/group'
 import { charactersById } from '#server/utils/chat/characters'
@@ -47,7 +47,7 @@ export default defineEventHandler(async (event) => {
 	// The branch shown; a summary belongs to its tip, so a branch that leaves earlier does not get it.
 	const tip = await chatTip(db, chat.id)
 	const results = await Promise.allSettled((group ? answering.slice(0, 1) : answering).map(async (lane) => {
-		const shown = shownThread(await listChatMessages(db, chat.id, group ? undefined : lane.id), tip)
+		const shown = withoutImageExchanges(shownThread(await listChatMessages(db, chat.id, group ? undefined : lane.id), tip))
 		const thread = group
 			? groupThread(shown as UIMessage<MessageMetadata>[], { laneId: lane.id, userName })
 			: shown as UIMessage[]

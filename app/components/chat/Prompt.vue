@@ -7,7 +7,7 @@ import type { PromptUpload } from '~/composables/usePromptUploads'
 
 /** A "/" command the prompt offers; the parent runs it. */
 export interface PromptCommand {
-	kind: 'compact' | 'clear' | 'temp' | 'rename'
+	kind: 'compact' | 'clear' | 'temp' | 'rename' | 'image'
 	label: string
 	description: string
 	icon: string

@@ -28,6 +28,14 @@ export function threadTo<M extends ThreadMessage>(messages: M[], questionId: str
 }
 
 /**
+ * A branch as models read it: without `/image` exchanges, which are the user's own drawings. Applied after the branch
+ * is found, so the message after one still finds its way back through it.
+ */
+export function withoutImageExchanges<M extends { metadata?: { kind?: string } | null }>(messages: M[]): M[] {
+	return messages.filter(message => message.metadata?.kind !== 'image')
+}
+
+/**
  * For each user message shown that has other branches at its place: every branch's first message, in the order
  * made (`messages` in `listChatMessages` order, every branch).
  */
