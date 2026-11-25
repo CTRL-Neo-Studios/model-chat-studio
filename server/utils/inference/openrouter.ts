@@ -120,7 +120,7 @@ function openrouterCost(raw: unknown): number | null {
 
 export const openrouterPlatform: InferencePlatform = {
 	id: 'openrouter',
-	capabilities: { providerRouting: true, safetyCheck: false, nativeTitle: false, sttModel: true, decisions: true },
+	capabilities: { providerRouting: true, safetyCheck: false, nativeTitle: false, sttModel: true, decisions: true, speechModel: true },
 
 	async checkKey(apiKey) {
 		const response = await fetch(`${BASE_URL}/key`, { headers: { Authorization: `Bearer ${apiKey}` } })
@@ -149,6 +149,31 @@ export const openrouterPlatform: InferencePlatform = {
 	async listDecisionModels(apiKey) {
 		const { data } = await get<{ data: OpenRouterModel[] }>('/models?output_modalities=decisions', apiKey)
 		return data.map(toOpenRouterModel)
+	},
+
+	// The voices are in the speech models list, the price (per character, in `pricing.prompt`) in the models list.
+	// Only models that publish their voices and return MP3 are offered (spike L).
+	async listSpeechModels(apiKey) {
+		type SpeechModel = { id: string, output_modalities: { type: string, supported_parameters?: { voice?: { values?: string[] }, response_format?: { values?: string[] } } }[] }
+		const [{ data: speech }, { data: priced }] = await Promise.all([
+			get<{ data: SpeechModel[] }>('/audio/speech/models', apiKey),
+			get<{ data: OpenRouterModel[] }>('/models?output_modalities=speech', apiKey),
+		])
+		const byId = Object.fromEntries(priced.map(model => [model.id, model]))
+		return speech.flatMap((model) => {
+			const output = model.output_modalities.find(modality => modality.type === 'speech')?.supported_parameters
+			const voices = output?.voice?.values ?? []
+			const listed = byId[model.id]
+			if (!listed || !voices.length || !output?.response_format?.values?.includes('mp3')) return []
+			return [{
+				...toOpenRouterModel(listed),
+				inputModalities: ['text'],
+				outputModalities: ['audio'],
+				pricing: null,
+				pricePerMillionChars: listed.pricing.prompt ? Number(listed.pricing.prompt) * 1e6 : null,
+				voices,
+			}]
+		})
 	},
 
 	async listEndpoints(apiKey, modelId) {
@@ -212,5 +237,21 @@ export const openrouterPlatform: InferencePlatform = {
 		if (!response.ok) throw new Error(`OpenRouter transcription answered ${response.status}: ${await response.text()}`)
 		const { text, usage } = await response.json() as { text: string, usage?: unknown }
 		return { text, costUsd: openrouterCost(usage) }
+	},
+
+	// https://openrouter.ai/docs/guides/overview/multimodal/tts: the response is the audio and says nothing of the
+	// cost, and no generation record appears for it (spike L), so the cost is the catalog price per character.
+	async speak({ apiKey, text, voice, model, pricePerMillionChars }) {
+		const response = await fetch(`${BASE_URL}/audio/speech`, {
+			method: 'POST',
+			headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ model, input: text, voice, response_format: 'mp3' }),
+		})
+		if (!response.ok) throw new Error(`OpenRouter speech answered ${response.status}: ${await response.text()}`)
+		return {
+			audio: new Uint8Array(await response.arrayBuffer()),
+			mediaType: response.headers.get('content-type') ?? 'audio/mpeg',
+			costUsd: pricePerMillionChars == null ? null : pricePerMillionChars * text.length / 1e6,
+		}
 	},
 }

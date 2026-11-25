@@ -13,6 +13,8 @@ const platformPatch = z.object({
 	defaultModel: z.string().min(1).nullable(),
 	titleModel: z.string().min(1).nullable(),
 	sttModel: z.string().min(1).nullable(),
+	speechModel: z.string().min(1).nullable(),
+	speechVoice: z.string().min(1).nullable(),
 	decisionModel: z.string().min(1).nullable(),
 }).partial().strict()
 

@@ -17,8 +17,10 @@ const props = withDefaults(defineProps<{
 /** The chosen model id, or nothing when dismissed. */
 const emit = defineEmits<{ close: [id?: string], retry: [] }>()
 
-// Speech-to-text models: priced per minute of audio, and the input filter does not apply.
-const perMinute = computed(() => props.models.some(entry => entry.pricePerMinute !== undefined))
+// Speech models: priced per minute of audio (speech to text) or per million characters (text to speech); the
+// input filter and context columns do not apply.
+const unit = computed(() => props.models.some(entry => entry.pricePerMinute !== undefined) ? 'minute' as const : props.models.some(entry => entry.pricePerMillionChars !== undefined) ? 'chars' as const : null)
+const unitPrice = (entry: Entry) => unit.value === 'minute' ? entry.pricePerMinute : entry.pricePerMillionChars
 
 const UIcon = resolveComponent('UIcon')
 const UTooltip = resolveComponent('UTooltip')
@@ -35,13 +37,13 @@ const inputFilters = [
 const sorts = computed(() => [
 	{ label: 'By name', value: 'name' },
 	{ label: 'Cheapest first', value: 'price' },
-	...(perMinute.value ? [] : [{ label: 'Largest context', value: 'context' }]),
+	...(unit.value ? [] : [{ label: 'Largest context', value: 'context' }]),
 ])
 
 // Every word must appear in the name, id or vendor.
 const rows = computed(() => {
 	const words = search.value.toLowerCase().split(/\s+/).filter(Boolean)
-	const price = (entry: Entry) => entry.pricePerMinute ?? (entry.pricing ? entry.pricing.input + entry.pricing.output : null) ?? Number.POSITIVE_INFINITY
+	const price = (entry: Entry) => unitPrice(entry) ?? (entry.pricing ? entry.pricing.input + entry.pricing.output : null) ?? Number.POSITIVE_INFINITY
 	return props.models
 		.filter(entry => input.value === 'any' || entry.inputModalities.includes(input.value))
 		.filter((entry) => {
@@ -81,11 +83,11 @@ const columns = computed<TableColumn<Entry>[]>(() => [{
 	id: 'output',
 	header: 'Output',
 	cell: ({ row }) => modalities(row.original.outputModalities),
-}, ...(perMinute.value
+}, ...(unit.value
 	? [{
 			id: 'price',
-			header: 'Price per minute',
-			cell: ({ row }) => row.original.pricePerMinute != null ? formatUsd(row.original.pricePerMinute) : 'Unknown',
+			header: unit.value === 'minute' ? 'Price per minute' : 'Price per 1M characters',
+			cell: ({ row }) => unitPrice(row.original) != null ? formatUsd(unitPrice(row.original)!) : 'Unknown',
 			meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } },
 		} satisfies TableColumn<Entry>]
 	: [{
@@ -119,7 +121,7 @@ function choose(_event: Event, row: TableRow<Entry>) {
 						<span class="text-xs text-muted tabular-nums">{{ rows.length }} models</span>
 					</template>
 				</UInput>
-				<USelect v-if="!perMinute" v-model="input" :items="inputFilters" class="w-40" />
+				<USelect v-if="!unit" v-model="input" :items="inputFilters" class="w-40" />
 				<USelect v-model="sort" :items="sorts" class="w-40" />
 			</div>
 			<UAlert

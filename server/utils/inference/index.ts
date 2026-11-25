@@ -76,12 +76,33 @@ export async function getFullCatalog(inference: ActiveInference): Promise<Catalo
 	return await cached(catalogCache, platform.id, 60 * 60_000, () => platform.listModels(apiKey))
 }
 
-/** A platform's speech-to-text or Decisions models, cached for an hour; empty where it has none. */
-export async function getKindCatalog(inference: ActiveInference, kind: 'stt' | 'decisions'): Promise<CatalogModel[]> {
+/** A platform's speech-to-text, Decisions or text-to-speech models, cached for an hour; empty where it has none. */
+export async function getKindCatalog(inference: ActiveInference, kind: 'stt' | 'decisions' | 'speech'): Promise<CatalogModel[]> {
 	const { platform, apiKey } = inference
-	const list = kind === 'stt' ? platform.listSttModels : platform.listDecisionModels
+	const list = kind === 'stt' ? platform.listSttModels : kind === 'speech' ? platform.listSpeechModels : platform.listDecisionModels
 	if (!list) return []
 	return await cached(catalogCache, `${platform.id}:${kind}`, 60 * 60_000, () => list(apiKey))
+}
+
+/**
+ * Read-aloud on a platform: its voices, the default one and, where a speech model is chosen, that model and its
+ * price. `null` until it is set up: no speech model chosen, or the chosen one is no longer offered.
+ */
+export async function speechSetup(inference: ActiveInference) {
+	const { platform, config } = inference
+	if (!platform.capabilities.speechModel) {
+		const voices = platform.voices ?? []
+		return voices.length ? { voices, defaultVoice: voices[0]!.id, model: undefined, pricePerMillionChars: null } : null
+	}
+	if (!config.speechModel) return null
+	const model = (await getKindCatalog(inference, 'speech')).find(entry => entry.id === config.speechModel)
+	if (!model?.voices?.length) return null
+	return {
+		voices: model.voices.map(id => ({ id, name: id })),
+		defaultVoice: config.speechVoice && model.voices.includes(config.speechVoice) ? config.speechVoice : model.voices[0]!,
+		model: model.id,
+		pricePerMillionChars: model.pricePerMillionChars ?? null,
+	}
 }
 
 /** The platform's models, narrowed to the admin allowlist when it has entries. */

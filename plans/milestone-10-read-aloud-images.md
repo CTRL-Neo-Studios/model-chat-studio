@@ -1,6 +1,6 @@
 # Milestone 10: read-aloud and image generation
 
-Status: spikes L and M done (2026-11-25); 10.1 next. Part of `roadmap-milestones-7-14.md`. No migration. Needs 7.3 for "speakers see images".
+Status: spikes L and M done, 10.1 built (2026-11-25); 10.2 next. Part of `roadmap-milestones-7-14.md`. No migration. Needs 7.3 for "speakers see images".
 
 Goal: an answer can be listened to, and a chat can make images.
 
@@ -19,7 +19,7 @@ Goal: an answer can be listened to, and a chat can make images.
 | Images by the model | A switch on the chat, "Images", beside web search. While on, a turn offers the model a tool, `generate_image`, and the model decides when to draw. |
 | Images by command | `/image a red panda in space` draws from your words, with no model turn. |
 | Where an image goes | Into storage as a file of the chat, and into the answer, shown inline with Download and "Add to library". |
-| What models see | The model that drew gets "the image was made and shown". In later turns its own image stands in the thread as a line of text, "[image: the prompt]". A `/image` exchange is not sent to the models at all. In a group chat, another speaker whose model reads images gets the image itself (decided with milestone 7). |
+| What models see | The model that drew gets "the image was made and shown". In later turns its own images stand in the thread as a line of text each, "[image: the prompt]"; for a model that reads images, the latest one is also shown again, in a user message after that answer: "The picture you drew in your last answer, shown again so you can see it". A `/image` exchange is not sent to the models at all. In a group chat, another speaker whose model reads images gets the image itself (decided with milestone 7). |
 | Limits | Budget checked before each piece of speech and each image. At most 4 images in one answer; 10 images and 60 pieces of speech a minute per member. |
 | DeepSeek turns | The tool is an app tool like the chart. DeepSeek takes no app tools with web search on and thinking off (milestone 4), so there the switch says images are unavailable. |
 
@@ -58,8 +58,36 @@ Goal: an answer can be listened to, and a chat can make images.
 | 10.P | Spikes L and M, below | each is confirmed or the plan changes |
 | 10.1 | Speech on the server: `speak` on both adapters, the route, the voices route, the settings and their pickers, the usage kind | tests for cutting text into pieces, stripping Markdown, and DeepSeek's cost (Chinese counted twice); against fixture platforms the route returns audio on each and records a `tts` row; over budget answers 402 |
 | 10.2 | Read-aloud on screen: the button, playing pieces in order, stop, the voice preference | in Chromium against a fixture: a three-piece answer plays to the end in order; Stop ends it and no further piece is requested; the chosen voice is the one sent |
-| 10.3 | Images by the model: the setting and picker, the function that makes an image, the tool, the chat's switch, images in answers | tests for the limits and for what later turns carry in place of an image; fixture: with the switch on, a tool call makes an image that shows in the answer and is stored as the chat's file; with DeepSeek active the image request goes to OpenRouter and the answer to DeepSeek |
+| 10.3 | Images by the model: the setting and picker, the function that makes an image, the tool, the chat's switch, images in answers | tests for the limits and for what later turns carry in place of an image (the text line, and the latest image shown again to a model that reads images); fixture: with the switch on, a tool call makes an image that shows in the answer and is stored as the chat's file; with DeepSeek active the image request goes to OpenRouter and the answer to DeepSeek |
 | 10.4 | `/image`, group speakers seeing images, smoke steps, the live run | fixture: `/image` adds its two messages and the next turn's request holds neither; a second speaker with a vision model receives the first one's image. Live on both platforms: an answer read aloud in each platform's voice, an image drawn by a model's tool call and by `/image` |
+
+Built (10.1): `shared/utils/speech.ts` holds `plainForSpeech`, `speechText` and `speechPieces`, for 10.2's player and the server's limits:
+- `plainForSpeech` leaves out fenced code (one left open at the end too), table rows and their separator lines, images, bare and angle-bracket URLs and HTML tags. Links are read as their text. Heading, quote, list and rule marks and emphasis come off; inline code is kept aside meanwhile, so `__init__.py` keeps its underscores, and underscores inside words stay.
+- `speechText` reads an answer's text parts only (not reasoning, tools or files), at most `SPEECH_ANSWER_MAX` (20,000 characters).
+- `speechPieces` cuts at sentence ends (`Intl.Segmenter`, so Chinese too): the first piece about 250 characters, the rest about 600, a sentence kept whole up to `SPEECH_PIECE_MAX` (1,000) and longer ones cut at a space or comma, else at the limit.
+
+The platforms: `InferencePlatform` gains `speak`, `capabilities.speechModel`, `listSpeechModels` (OpenRouter) and `voices` (DeepSeek: Stella, the default, and Tide); `CatalogModel` gains `pricePerMillionChars` and `voices`.
+- DeepSeek's `speak` asks `/v1/tools/tts` for WAV, its Markdown filter on; the cost is `deepseekSpeechCost`, $0.45 per 10,000 characters at list price, a Han character counting as two.
+- OpenRouter's `listSpeechModels` joins `/audio/speech/models` (voices, formats) with `/models?output_modalities=speech` (price per character), keeping models that publish voices and return MP3 (26 today). Its `speak` asks `/audio/speech` for MP3; the cost is the catalog price times the characters.
+- `speechSetup` (`server/utils/inference`) gives the active platform's voices, default voice, and the speech model with its price, or `null` until set up.
+- The settings gain `speechModel` and `speechVoice` (OpenRouter), the preferences `voices` (one per platform; `PATCH /me/preferences` merges them, `null` clears one), and usage the kind `tts`.
+
+Routes:
+- `POST /speech` (`{ text, voice? }`) takes one piece of at most 1,000 characters, 60 a minute. It refuses with 503 until set up and checks the budget before the call (402). The voice is the one asked for if the platform offers it, else the member's, else the default. It answers the audio with `X-Voice` and `Cache-Control: no-store`, and records a `tts` row with the cost.
+- `GET /speech/voices` answers `{ available, platform, voices, defaultVoice, voice }`.
+- `GET /admin/models?kind=speech` lists the speech models.
+- The OpenRouter card on `/admin/settings` has "Text-to-speech model" (the model browser shows "Price per 1M characters", and "Cheapest first" sorts by it) and "Default voice", a select of that model's voices.
+
+Tests: Markdown made plain (code, tables, links, emphasis, an open fence), an answer's parts, the pieces (sizes, sentence ends, a long sentence, Chinese, text without spaces), DeepSeek's price.
+
+Fixture check (a throwaway plugin answering both speech calls; lists and prices real):
+- DeepSeek: `GET /speech/voices` gave Stella and Tide, Stella the default. A piece came back as `audio/wav` read by Stella, the request `{ text, voice_id: 'stella', format: 'wav' }`. Asked for Tide it was Tide; asked for a voice DeepSeek lacks, Stella. After choosing Tide in the preferences, Tide unasked.
+- OpenRouter without a speech model: 503 "Read-aloud is not set up yet". With Kokoro and `af_bella` set: 54 voices, `af_bella` the default, `audio/mpeg`, the request `{ model: 'hexgrad/kokoro-82m', input, voice: 'af_bella', response_format: 'mp3' }`.
+- A piece of 1,001 characters: 400.
+- Usage: one `tts` row per piece, DeepSeek's at $0.002205 for 45 characters with 4 Chinese, OpenRouter's at $0.00004455 (45 × $0.99 per million).
+- With a budget of $0: 402, and no call reached the platform.
+- Chromium: the OpenRouter card showed the new field and, once a model was picked, the voice select with that model's voices.
+- The settings, the preference and the fixture's usage rows were put back.
 
 ## 6. To verify before building
 
@@ -77,7 +105,10 @@ Result L (2026-11-25, `model-chat-studio-prep/scripts/spikes/m10/speech.ts`, ins
 Result M (2026-11-25, `images.ts`, `own-image.ts`, `other-speaker-image.ts`):
 - **`POST /api/v1/images`** with `recraft/recraft-v4.1-flash-v2` (the cheapest paid image model of 71 at `GET /images/models`, $0.007 an image, priced per endpoint at `…/endpoints`; a `:free` variant exists) answers `{ created, data: [{ b64_json, media_type }], usage }`. The image is WebP, 0.7 to 1.5 MB, 1.3 to 2.2 s; `usage.cost` is 0.007. Without `aspect_ratio` the model picks a size (832×1280, 1024×1024, 896×1152); `16:9` gave 1344×768. The model lists 12 aspect ratios.
 - **The tool is called, and only when asked.** `generate_image` was called on DeepSeek with web search off and thinking off, and with web search on and thinking on, and on OpenRouter (DeepSeek V4.1 Flash) with web search on. Each time it got a detailed prompt and, after "The image was made and shown to the user", wrote one sensible line about the picture and offered other styles. Asked the capital of Portugal, no model drew. (DeepSeek with web search on and thinking off takes no app tools: milestone 4.)
-- **A model does not see its own earlier image.** Given back as a file part of its own answer, the request is accepted on both platforms, but DeepSeek described a fox asleep in the snow as "a cat sitting and smiling", and OpenRouter answered that it could not view it. With only a neutral text line they guessed or said they could not see it. So later turns carry "[image: the prompt]", as planned.
+- **A model does not see its own earlier image where it stands.** Given back as a file part of its own answer, the request is accepted on both platforms, but the image is dropped: DeepSeek described a fox asleep in the snow as "a cat sitting and smiling", and in a rerun both answered that no image had been drawn. With only a neutral text line they guessed ("a red fox sitting") or said they could not see it.
+- **Shown again in a user message it is seen** on both platforms: labelled "The picture you drew in your last answer, shown again so you can see it", DeepSeek said "A red fox sleeping in snow." and OpenRouter "A red fox, curled up sleeping." (`own-image.ts`).
+- **An image in the tool's result is not sent as an image.** With `toModelOutput` returning a media part, both platforms got it as base64 text: 1.5 million tokens for one 1.6 MB WebP, over the context limit. Tool results stay text.
+- **Decided after M (you, 2026-11-25):** later turns carry "[image: the prompt]" for every image; a model that reads images is also shown the latest one again in a user message (decision table above). Each such turn pays for that image's input again.
 - **Another speaker's image, in a user message as a group passes it on, is seen** on both platforms ("A fox sleeping in snow."), so 10.4's plan holds.
 
 ## 7. Ceilings and things left out
@@ -85,6 +116,5 @@ Result M (2026-11-25, `images.ts`, `own-image.ts`, `other-speaker-image.ts`):
 - No true streaming of speech: it comes in pieces.
 - One voice per member and platform; Characters have no voices of their own.
 - No editing of an image, no image made from another image, no models that write images straight into their answer.
-- A model does not see its own earlier images, only their prompts.
 - Speech and images are not offered to guests reading by link: there is nobody to bill.
 - No video.

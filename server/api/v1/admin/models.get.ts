@@ -9,8 +9,8 @@ import { getFullCatalog, getKindCatalog, instanceInference } from '#server/utils
 const querySchema = z.object({
 	/** Defaults to the active platform. */
 	platform: z.enum(['openrouter', 'deepseek']).optional(),
-	/** `stt`: speech-to-text models, for the `sttModel` setting; `decisions`: for `decisionModel`. */
-	kind: z.enum(['chat', 'stt', 'decisions']).default('chat'),
+	/** `stt`: speech-to-text models, for the `sttModel` setting; `decisions`: for `decisionModel`; `speech`: for `speechModel`, with their voices. */
+	kind: z.enum(['chat', 'stt', 'decisions', 'speech']).default('chat'),
 })
 
 /**

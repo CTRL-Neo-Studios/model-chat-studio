@@ -24,4 +24,6 @@ export type CatalogModelView = ReturnType<typeof useModels>['models']['value'][n
 export type BrowsableModel = Pick<CatalogModelView, 'id' | 'name' | 'vendor' | 'contextLength' | 'maxOutputTokens' | 'inputModalities' | 'outputModalities' | 'pricing'> & {
 	/** Speech-to-text models only. */
 	pricePerMinute?: number | null
+	/** Text-to-speech models only. */
+	pricePerMillionChars?: number | null
 }
