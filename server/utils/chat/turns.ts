@@ -41,16 +41,16 @@ export const userMessageSchema = z.object({
 type UserMessageParts = z.infer<typeof userMessageSchema>['parts']
 
 /**
- * Links a message's attachments to it. Each must have been uploaded by the chat's owner to this chat
+ * Links a message's attachments to it. Each must have been uploaded to this chat by the message's sender
  * and not belong to another message, so a message cannot pull in someone else's file.
  */
-export async function attachFiles(db: Db, chatId: string, messageId: string, parts: UserMessageParts) {
+export async function attachFiles(db: Db, chatId: string, messageId: string, parts: UserMessageParts, senderId: string) {
 	const ids = [...new Set(parts.flatMap(part => part.type === 'file' ? [FILE_URL_PATTERN.exec(part.url)![1]!] : []))]
 	if (!ids.length) return
 	const linked = await db.update(tables.file).set({ messageId }).where(and(
 		inArray(tables.file.id, ids),
 		eq(tables.file.chatId, chatId),
-		inArray(tables.file.ownerId, db.select({ id: tables.chat.userId }).from(tables.chat).where(eq(tables.chat.id, chatId))),
+		eq(tables.file.ownerId, senderId),
 		or(isNull(tables.file.messageId), eq(tables.file.messageId, messageId)),
 	)).returning({ id: tables.file.id })
 	if (linked.length !== ids.length) throw createError({ status: 400, statusText: 'An attachment was not found' })
@@ -72,23 +72,24 @@ export function fallbackTitle(text: string): string {
 	return clean.length > 60 ? `${clean.slice(0, 59)}…` : clean || 'New chat'
 }
 
-/** A chat with the ids of the people it is shared with. Ids that are not UUIDs find nothing. */
+/** A chat with the ids of the people it is shared with, and of those of them who are editors. Ids that are not UUIDs find nothing. */
 export async function findChat(db: Db, id: string | undefined) {
 	if (!z.uuid().safeParse(id).success) return undefined
 	const [[chat], shares] = await Promise.all([
 		db.select().from(tables.chat).where(eq(tables.chat.id, id!)),
-		db.select({ userId: tables.chatShare.userId }).from(tables.chatShare).where(eq(tables.chatShare.chatId, id!)),
+		db.select({ userId: tables.chatShare.userId, role: tables.chatShare.role }).from(tables.chatShare).where(eq(tables.chatShare.chatId, id!)),
 	])
-	return chat && { ...chat, sharedWith: shares.map(share => share.userId) }
+	return chat && { ...chat, sharedWith: shares.map(share => share.userId), editors: shares.flatMap(share => share.role === 'editor' ? [share.userId] : []) }
 }
 
-/** The people a chat is shared with, as the share dialog shows them. */
+/** The people a chat is shared with and their roles, as the share dialog shows them. */
 export async function listChatShares(db: Db, chatId: string) {
 	return await db.select({
 		id: tables.user.id,
 		username: tables.user.username,
 		name: tables.user.name,
 		avatarUrl: tables.user.avatarUrl,
+		role: tables.chatShare.role,
 	}).from(tables.chatShare)
 		.innerJoin(tables.user, eq(tables.user.id, tables.chatShare.userId))
 		.where(eq(tables.chatShare.chatId, chatId))
@@ -157,23 +158,24 @@ export async function chatTip(db: Db, chatId: string, lock = false) {
  * Applies a turn's trigger before the model is called and returns the user message the answer replies to.
  * Nothing changes yet: the answer becomes the lane's shown version when it is saved (`saveAnswer`), so a failed
  * turn keeps the earlier one.
- * - `submit-message` saves a new message after the chat's tip, as the new tip, or joins one that another lane saved
- *   for the same send (`joinsMessage`). Any other existing id is refused; edits are `PATCH /chats/:id/messages/:id`.
+ * - `submit-message` saves a new message after the chat's tip, as the new tip, sent by `senderId`, or joins one that
+ *   another lane saved for the same send (`joinsMessage`). Any other existing id is refused; edits are
+ *   `PATCH /chats/:id/messages/:id`.
  * - `regenerate-message` answers the target answer's question again, or the target user message, or
  *   without a target the tip.
  */
-export async function applyTurnTrigger(db: Db, chatId: string, request: TurnRequest): Promise<string> {
+export async function applyTurnTrigger(db: Db, chatId: string, request: TurnRequest, senderId: string): Promise<string> {
 	if (request.trigger === 'submit-message') {
 		const { id, parts } = request.message
 		const saved = await db.transaction(async (tx) => {
 			// One send at a time per chat, so the message follows the tip it read and becomes the tip.
 			const parentId = await chatTip(tx, chatId, true)
 			const [saved] = await tx.insert(tables.message)
-				.values({ id, chatId, role: 'user', parts, parentId })
+				.values({ id, chatId, role: 'user', parts, parentId, userId: senderId })
 				.onConflictDoNothing()
 				.returning({ id: tables.message.id })
 			if (!saved) return undefined
-			await attachFiles(tx, chatId, saved.id, parts)
+			await attachFiles(tx, chatId, saved.id, parts, senderId)
 			await tx.update(tables.chat).set({ leafId: saved.id }).where(eq(tables.chat.id, chatId))
 			return saved
 		})
@@ -246,13 +248,13 @@ export async function saveAnswer(db: Db, answer: { id: string, chatId: string, p
  * holding the image as a finished `generate_image` call, both marked `kind: 'image'`. The message becomes the tip
  * and the image file is linked to the answer. Returns both, as the chat lists them.
  */
-export async function saveImageExchange(db: Db, input: { chatId: string, prompt: string, aspectRatio?: string, model: string, image: { fileId: string, url: string, mediaType: string, prompt: string } }) {
-	const { chatId, prompt, image } = input
+export async function saveImageExchange(db: Db, input: { chatId: string, senderId: string, prompt: string, aspectRatio?: string, model: string, image: { fileId: string, url: string, mediaType: string, prompt: string } }) {
+	const { chatId, senderId, prompt, image } = input
 	return await db.transaction(async (tx) => {
 		// One send at a time per chat, as for a turn: the message follows the tip it read.
 		const parentId = await chatTip(tx, chatId, true)
 		const [asked] = await tx.insert(tables.message)
-			.values({ id: crypto.randomUUID(), chatId, role: 'user', parentId, parts: [{ type: 'text', text: `/image ${prompt}` }], metadata: { kind: 'image' } })
+			.values({ id: crypto.randomUUID(), chatId, role: 'user', parentId, userId: senderId, parts: [{ type: 'text', text: `/image ${prompt}` }], metadata: { kind: 'image' } })
 			.returning(messageColumns)
 		const [drawn] = await tx.insert(tables.message)
 			.values({
@@ -396,24 +398,26 @@ export async function showBranch(db: Db, chatId: string, messageId: string) {
 export const MAX_BRANCHES = 50
 
 /**
- * What the chat page shows: the branch at the chat's tip, each answer the version shown; for the owner, also every
- * version's id of the answers that have several and every branch's first message of the messages that have several.
+ * What the chat page shows: the branch at the chat's tip, each answer the version shown; for those who may write
+ * (`switches`), also every version's id of the answers that have several and every branch's first message of the
+ * messages that have several.
  */
-export async function chatThread(db: Db, chatId: string, isOwner: boolean) {
+export async function chatThread(db: Db, chatId: string, switches: boolean) {
 	const [[chat], messages, versions] = await Promise.all([
 		db.select({ leafId: tables.chat.leafId }).from(tables.chat).where(eq(tables.chat.id, chatId)),
 		listChatMessages(db, chatId),
-		isOwner ? listAnswerVersions(db, chatId) : {} as Record<string, string[]>,
+		switches ? listAnswerVersions(db, chatId) : {} as Record<string, string[]>,
 	])
 	const shown = shownThread(messages, chat?.leafId ?? null)
-	return { messages: shown, versions, branches: isOwner ? branchesOf(messages, shown) : {} as Record<string, string[]> }
+	return { messages: shown, versions, branches: switches ? branchesOf(messages, shown) : {} as Record<string, string[]> }
 }
 
 /**
  * "Save and resend": a new branch at a user message's place, with the new text and the message's attachments,
- * "@" references and mentions. It becomes the tip; the earlier branch stays. Returns it, as the chat lists it.
+ * "@" references and mentions, sent by `senderId`. It becomes the tip; the earlier branch stays. Returns it, as the
+ * chat lists it.
  */
-export async function branchMessage(db: Db, chatId: string, messageId: string, text: string) {
+export async function branchMessage(db: Db, chatId: string, messageId: string, text: string, senderId: string) {
 	return await db.transaction(async (tx) => {
 		const message = await findMessage(tx, chatId, messageId)
 		if (message.role !== 'user') throw createError({ status: 400, statusText: 'Only your own messages can be answered again' })
@@ -424,7 +428,7 @@ export async function branchMessage(db: Db, chatId: string, messageId: string, t
 		))
 		if ((siblings?.count ?? 0) >= MAX_BRANCHES) throw createError({ status: 400, statusText: `A message can have at most ${MAX_BRANCHES} branches` })
 		const [branch] = await tx.insert(tables.message)
-			.values({ id: crypto.randomUUID(), chatId, role: 'user', parentId: message.parentId, parts: withText(message.parts, text) })
+			.values({ id: crypto.randomUUID(), chatId, role: 'user', parentId: message.parentId, userId: senderId, parts: withText(message.parts, text) })
 			.returning(messageColumns)
 		await tx.update(tables.chat).set({ leafId: branch!.id }).where(eq(tables.chat.id, chatId))
 		return branch!

@@ -1,6 +1,6 @@
 # Milestone 11: edit access for people a chat is shared with
 
-Status: planned. Part of `roadmap-milestones-7-14.md`. One migration. Needs 8.2 (the chat's tip).
+Status: 11.1 built (2026-11-25); 11.2 next. Part of `roadmap-milestones-7-14.md`. One migration (`0022_shared_editing`, both columns, written in 11.1). Needs 8.2 (the chat's tip).
 
 Goal: someone a chat is shared with can take part in it, not only read it.
 
@@ -61,6 +61,20 @@ Goal: someone a chat is shared with can take part in it, not only read it.
 | 11.1 | Roles, the three abilities, the share dialog, an editor's turn billed to the editor | tests for every route against owner, editor, viewer, guest and stranger; a test that an editor's turn records usage under the editor and reads the owner's libraries; in Chromium with two accounts against a fixture: an editor sends and gets an answer, a viewer has no prompt, the owner's budget is untouched |
 | 11.2 | Authors: the column, names in the threads, chips | tests for both thread builders with one and two authors; fixture: the request holds the editor's message under the editor's name and the owner's under the owner's |
 | 11.3 | Keeping in step: the tip check, taking in new messages, leaving; a smoke step | fixture with two accounts: the owner's open page shows the editor's message and answer within 10 s without a reload; two messages sent at once give one 409, and the second sender's text is still in the prompt; an editor who left gets 404 |
+
+Built (11.1):
+- Migration `0022_shared_editing` adds `chatShare.role` (`viewer` by default, so existing shares stay read-only) and `message.userId`, filled with the chat's owner on existing user messages. Both columns are written in 11.1, so the single migration of the plan holds. New user messages record their sender from now on (a sent message, "Save and resend", `/image`); 11.2 shows them.
+- `chatAbilities` has `readChat`, `writeChat` and `manageChat`. Someone who may read the chat but not do the thing is told 403; someone who may not read it, 404. `findChat` returns `editors` beside `sharedWith`. `writeChat` covers the turn, speakers, `/compact`, `/image`, uploads, message edit and delete, votes and the tip; everything else stays `manageChat`, the conversation overview included.
+- The turn and `/compact` pay as the sender: key, budget, rate limits and usage rows are the sender's, as they were. The chat's setup is the owner's: `chatOwner` gives `{{user}}` (the owner's name) and the libraries a Character brings (those the owner may read). Attachments must have been uploaded by the message's sender, no longer by the chat's owner.
+- `PATCH /chats/:id` takes `sharedWith: [{ userId, role }]`; `GET /chats/:id` gives the reader's `role` (`owner`, `editor`, `viewer`, `null`) in place of `isOwner`, and versions and branches to editors too; `GET /me/shared-chats` gives the role.
+- The share dialog has a role beside each person and for those being added, as the library's people dialog has. The chat page splits `isOwner` from `canWrite`: editors get the prompt (its "+" menu only with "Add files"; no web search or images switches, no memory slider, no Context popover), the actions on messages and answers, versions and branches, and the "/" commands but `rename`. "Shared with me" shows the role.
+- Tests: the role table (owner, editor, viewer, stranger, admin, guest, link access, a banned owner) against read, write and manage with their statuses; attachments from whoever uploaded them, with an editor's own upload and the sender recorded; the migration's backfill.
+
+Fixture check (DeepSeek faked; the admin as owner, three throwaway members):
+- Every chat route as owner, editor, viewer, stranger and guest, with bodies that fail validation (400 means past the access check): reads 200/200/200/404/404; the turn, speakers, compact, images, message edit and delete, tip, votes and uploads pass for owner and editor, 403 for the viewer, 404 for the stranger, 403 for the guest; title and settings, lanes, libraries and the overview pass only for the owner, 403 for editor and viewer. An upload with a JSON body answers 500 for those allowed (the upload parsing, unchanged here).
+- The owner's Character brought a private library with a note tagged "kestrel"; the editor, who gets 404 for that library, asked about the kestrel codename. The request held the note, and `{{user}}` was the owner's name. The usage rows were the editor's; the owner's spend did not move.
+- In Chromium: the owner's share dialog showed mc-editor as "Editor: also takes part" and mc-viewer as "Viewer: reads". The editor had the prompt without the owner's switches, sent a message and got its answer. The viewer had no prompt and no actions; "Shared with me" showed "Viewer".
+- The chat, library, Character, members and usage rows were deleted.
 
 ## 7. Ceilings and things left out
 

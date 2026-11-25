@@ -195,6 +195,8 @@ export const chatModel = pgTable("chatModel", {
 export const chatShare = pgTable("chatShare", {
 	chatId: uuid().notNull().references(() => chat.id, { onDelete: "cascade" }),
 	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	/** `viewer` reads the chat; `editor` also takes part: sends, edits, votes, switches (milestone 11). */
+	role: text({ enum: ["viewer", "editor"] }).notNull().default("viewer"),
 	createdAt,
 }, (t) => [
 	primaryKey({ columns: [t.chatId, t.userId] }),
@@ -216,6 +218,8 @@ export const message = pgTable("message", {
 	metadata: jsonb().$type<MessageMetadata>(),
 	/** The lane that wrote an answer; `null` on user messages and on answers of a deleted lane. */
 	chatModelId: uuid().references(() => chatModel.id, { onDelete: "set null" }),
+	/** Who sent a user message: the owner or an editor; `null` on answers and summaries, and once the sender is gone. */
+	userId: uuid().references(() => user.id, { onDelete: "set null" }),
 	/** On answers, the version shown: a lane's other answers to the same message are its earlier versions. */
 	active: boolean().notNull().default(true),
 	createdAt,

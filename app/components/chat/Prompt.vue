@@ -28,6 +28,8 @@ const props = withDefaults(defineProps<{
 	commands?: PromptCommand[]
 	/** A library's files, notes and folders for "@"; none hides the menu. */
 	mentions?: EditorMentionMenuItem[]
+	/** The chat's switches in the "+" menu (web search, images); off for an editor, whose chat it is not. */
+	switches?: boolean
 }>(), {
 	status: 'ready',
 	error: undefined,
@@ -35,6 +37,7 @@ const props = withDefaults(defineProps<{
 	memoryMax: undefined,
 	commands: () => [],
 	mentions: () => [],
+	switches: true,
 })
 
 const emit = defineEmits<{
@@ -184,6 +187,7 @@ const menuOptions = { strategy: 'fixed', placement: 'top-start', offset: 8, flip
 					v-model:web-search="webSearch"
 					v-model:images="images"
 					:web-search-available="models.some(model => model.webSearch)"
+					:switches="switches"
 					:open="open"
 				/>
 				<UPopover v-if="memoryMax !== undefined" :content="{ side: 'top', align: 'start' }" @update:open="open => !open && commitMemory()">

@@ -85,14 +85,14 @@ export default defineEventHandler(async (event) => {
 		await tx.insert(schema.chatModel).values(lanes)
 		// The greetings open the chat, so they are saved before its first message.
 		if (greetings.length) await tx.insert(schema.message).values(greetings)
-		const [saved] = await tx.insert(schema.message).values({ id: message.id, chatId: id, role: 'user', parts: message.parts }).onConflictDoNothing().returning()
+		const [saved] = await tx.insert(schema.message).values({ id: message.id, chatId: id, role: 'user', userId: user.id, parts: message.parts }).onConflictDoNothing().returning()
 		if (!saved) throw createError({ status: 409, statusText: 'This id is already in use' })
 		// The first message is the tip; the chat row comes first, so it is set once the message exists.
 		await tx.update(schema.chat).set({ leafId: saved.id }).where(eq(schema.chat.id, id))
 		// Attach order is `createdAt`; one statement would give every row the same time.
 		const now = Date.now()
 		if (libraryIds.length) await tx.insert(schema.chatLibrary).values(libraryIds.map((libraryId, index) => ({ chatId: id, libraryId, createdAt: new Date(now + index) })))
-		await attachFiles(tx, id, saved.id, message.parts)
+		await attachFiles(tx, id, saved.id, message.parts, user.id)
 		const { userId: _, ...view } = chat
 		return { ...view, leafId: saved.id }
 	})

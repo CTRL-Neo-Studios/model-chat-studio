@@ -11,7 +11,8 @@ const props = defineProps<{
 	message?: ChatMessage
 	pending?: PendingAnswer
 	card: boolean
-	isOwner: boolean
+	/** The owner or an editor: stop, retry, versions and the actions. */
+	canWrite: boolean
 	editing: boolean
 	vote: boolean | null
 	/** Off for answers of a model that was removed from the chat. */
@@ -50,7 +51,7 @@ const { loggedIn } = useUserSession()
 			<LaneDot :color="label.color" :avatar="avatar" :avatar-class="card ? 'size-6' : 'size-7'" />
 			<span class="text-sm font-medium text-highlighted truncate">{{ label.name }}</span>
 			<UButton
-				v-if="(writing || queued) && isOwner"
+				v-if="(writing || queued) && canWrite"
 				icon="i-lucide-square"
 				size="xs"
 				color="neutral"
@@ -88,16 +89,16 @@ const { loggedIn } = useUserSession()
 				color="error"
 				variant="subtle"
 				class="mt-2"
-				:actions="isOwner ? [{ label: 'Retry', color: 'error', variant: 'solid', size: 'xs', onClick: () => emit('regenerate') }, { label: 'Dismiss', color: 'error', variant: 'link', size: 'xs', onClick: () => emit('dismiss') }] : undefined"
+				:actions="canWrite ? [{ label: 'Retry', color: 'error', variant: 'solid', size: 'xs', onClick: () => emit('regenerate') }, { label: 'Dismiss', color: 'error', variant: 'link', size: 'xs', onClick: () => emit('dismiss') }] : undefined"
 			/>
 		</div>
 
-		<div v-if="(isOwner || loggedIn) && message" :class="['flex items-center gap-0.5', card ? 'px-1.5 pb-1.5' : 'mt-1 -ms-1.5']">
+		<div v-if="(canWrite || loggedIn) && message" :class="['flex items-center gap-0.5', card ? 'px-1.5 pb-1.5' : 'mt-1 -ms-1.5']">
 			<!-- The answer's versions; the version shown is the one the models read from then on. -->
-			<ChatSwitch v-if="isOwner && versions && versions.length > 1 && !writing && !editing" :ids="versions" :current="message.id" noun="version" :disabled="busy" @show="id => emit('show', id)" />
+			<ChatSwitch v-if="canWrite && versions && versions.length > 1 && !writing && !editing" :ids="versions" :current="message.id" noun="version" :disabled="busy" @show="id => emit('show', id)" />
 			<ChatReadAloud v-if="!writing && !editing" :message="message" />
 			<ChatMessageActions
-				v-if="isOwner"
+				v-if="canWrite"
 				:message="message"
 				:streaming="writing"
 				:editing="editing"

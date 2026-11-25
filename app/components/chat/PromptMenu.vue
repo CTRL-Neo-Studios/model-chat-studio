@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import type { DropdownMenuItem } from '@nuxt/ui'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
 	/** Whether any answering model can search the web. */
 	webSearchAvailable: boolean
 	/** Opens the file picker of the prompt. */
 	open: () => void
-}>()
+	/** The chat's switches (web search, images): its owner's to change; an editor gets only the files item. */
+	switches?: boolean
+}>(), { switches: true })
 
 defineShortcuts({
 	meta_u: { usingInput: true, handler: () => props.open() },
@@ -30,32 +32,34 @@ const items = computed<DropdownMenuItem[][]>(() => [[{
 	icon: 'i-lucide-paperclip',
 	kbds: ['meta', 'U'],
 	onSelect: () => props.open(),
-}], [
-	...(props.webSearchAvailable
-		? [{
-				label: 'Web search',
-				icon: 'i-lucide-globe',
+}], props.switches
+	? [
+			...(props.webSearchAvailable
+				? [{
+						label: 'Web search',
+						icon: 'i-lucide-globe',
+						type: 'checkbox' as const,
+						checked: !!webSearch.value,
+						onUpdateChecked: (checked: boolean) => {
+							webSearch.value = checked
+						},
+						onSelect: (e: Event) => e.preventDefault(),
+					}]
+				: []),
+			{
+				label: 'Images',
+				icon: 'i-lucide-image',
+				description: imagesNote.value,
 				type: 'checkbox' as const,
-				checked: !!webSearch.value,
+				checked: !!images.value && imagesState.value.available,
+				disabled: !imagesState.value.available,
 				onUpdateChecked: (checked: boolean) => {
-					webSearch.value = checked
+					images.value = checked
 				},
 				onSelect: (e: Event) => e.preventDefault(),
-			}]
-		: []),
-	{
-		label: 'Images',
-		icon: 'i-lucide-image',
-		description: imagesNote.value,
-		type: 'checkbox' as const,
-		checked: !!images.value && imagesState.value.available,
-		disabled: !imagesState.value.available,
-		onUpdateChecked: (checked: boolean) => {
-			images.value = checked
-		},
-		onSelect: (e: Event) => e.preventDefault(),
-	},
-]].filter(group => group.length))
+			},
+		]
+	: []].filter(group => group.length))
 </script>
 
 <template>

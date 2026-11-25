@@ -21,7 +21,9 @@ const { csrf, headerName } = useCsrf()
 
 // The page's state starts from the cached chat and is written back to it as it changes.
 const { data } = useQuery(chatQuery(chatId))
-const isOwner = computed(() => data.value?.isOwner ?? false)
+// The reader's role: the owner sets the chat up; editors take part (the prompt, the actions, the switches); viewers read.
+const isOwner = computed(() => data.value?.role === 'owner')
+const canWrite = computed(() => isOwner.value || data.value?.role === 'editor')
 const visibility = ref<'public' | 'private'>(data.value?.visibility ?? 'private')
 const sharedWith = ref(data.value?.sharedWith ?? [])
 // Renaming writes the cache (`useChatActions`), so the title is read from it.
@@ -35,7 +37,7 @@ const libraries = computed(() => data.value?.libraries ?? [])
 const editableLibraries = computed(() => libraries.value.filter(library => library.role === 'owner' || library.role === 'editor'))
 // Images in answers can be added to these; the chat's owner only.
 provide(chatLibrariesKey, computed(() => isOwner.value ? editableLibraries.value : []))
-const { items: libraryMentions, partsFor } = useLibraryMentions(() => isOwner.value ? libraries.value.filter(library => library.role) : [])
+const { items: libraryMentions, partsFor } = useLibraryMentions(() => canWrite.value ? libraries.value.filter(library => library.role) : [])
 const references = ref<string[]>([])
 const { data: libraryList } = useQuery(() => ({ ...librariesQuery, enabled: import.meta.client && isOwner.value }))
 /** Attaches and detaches libraries; shown at once, and read again from the server if it refuses one. */
@@ -84,11 +86,11 @@ async function keep() {
 
 useHead({ title: () => title.value || 'Chat' })
 
-const { data: votesData } = useQuery(() => ({ ...chatVotesQuery(chatId), enabled: import.meta.client && isOwner.value }))
+const { data: votesData } = useQuery(() => ({ ...chatVotesQuery(chatId), enabled: import.meta.client && canWrite.value }))
 const votes = computed(() => votesData.value ?? [])
 
 // The member's preferences; until they load, the server's defaults apply.
-const { data: me } = useQuery(() => ({ ...meQuery, enabled: import.meta.client && isOwner.value }))
+const { data: me } = useQuery(() => ({ ...meQuery, enabled: import.meta.client && canWrite.value }))
 
 const chatLanes = useChatLanes(data.value ?? undefined)
 const { lanes, enabledLanes, settings, laneModel, laneName, laneColor, laneAvatar } = chatLanes
@@ -173,12 +175,12 @@ function summariesFrom(firstId: string) {
 const { renameChat } = useChatActions()
 const lastLanes = useCookie<{ profileId?: string, modelId?: string | null }[]>('chat-lanes', { default: () => [], sameSite: 'lax' })
 const lastSettings = useCookie<ChatSettings>('chat-settings', { default: () => ({}), sameSite: 'lax' })
-// `/image` while images are set up: picking it leaves "/image " in the prompt for the words to draw.
 const { images: imagesState } = useModels()
+// `rename` is the owner's; `/image` while images are set up: picking it leaves "/image " in the prompt for the words to draw.
 const commands = computed<PromptCommand[]>(() => [
 	{ kind: 'compact', label: 'compact', description: 'Summarise the chat so far; each model is sent the summary from now on', icon: 'i-lucide-fold-vertical' },
 	{ kind: 'clear', label: 'clear', description: 'Start a new chat with the same models and settings', icon: 'i-lucide-eraser' },
-	{ kind: 'rename', label: 'rename', description: 'Rename this chat', icon: 'i-lucide-pencil' },
+	...(isOwner.value ? [{ kind: 'rename' as const, label: 'rename', description: 'Rename this chat', icon: 'i-lucide-pencil' }] : []),
 	...(imagesState.value.available ? [{ kind: 'image' as const, label: 'image', description: 'Draw an image from your words, with no model turn', icon: 'i-lucide-image' }] : []),
 ])
 const compacting = ref(false)
@@ -463,7 +465,7 @@ onMounted(() => {
 						should-auto-scroll
 						:messages="shown"
 						:status="answers.busy.value ? 'streaming' : 'ready'"
-						:class="['pt-(--ui-header-height)', !isOwner && 'pb-4 sm:pb-6']"
+						:class="['pt-(--ui-header-height)', !canWrite && 'pb-4 sm:pb-6']"
 						:ui="{ footer: 'pt-4 sm:pt-6' }"
 					>
 						<template #files="{ message, parts }">
@@ -490,7 +492,7 @@ onMounted(() => {
 									:message="slot.message"
 									:pending="slot.pending"
 									:card="cards(message.id.slice(8))"
-									:is-owner="isOwner"
+									:can-write="canWrite"
 									:editing="!!slot.message && editingMessageId === slot.message.id"
 									:vote="slot.message ? getVote(slot.message.id) : null"
 									:regenerable="!!slot.lane && message.id !== 'answers:'"
@@ -530,13 +532,13 @@ onMounted(() => {
 								v-else
 								:message="message"
 								:streaming="false"
-								:editing="isOwner && editingMessageId === message.id"
+								:editing="canWrite && editingMessageId === message.id"
 								@save="saveEdit"
 								@cancel-edit="editingMessageId = null"
 							/>
 						</template>
 
-						<template v-if="isOwner" #actions="{ message }">
+						<template v-if="canWrite" #actions="{ message }">
 							<template v-if="message.role === 'user'">
 								<!-- The message's branches: the conversation continues from the one shown. -->
 								<ChatSwitch v-if="branches[message.id] && editingMessageId !== message.id" :ids="branches[message.id]!" :current="message.id" noun="branch" :disabled="answers.busy.value" @show="showBranch" />
@@ -552,7 +554,7 @@ onMounted(() => {
 							</template>
 						</template>
 
-						<template v-if="isOwner" #footer>
+						<template v-if="canWrite" #footer>
 							<ChatPrompt
 								v-model="input"
 								v-model:files="promptFiles"
@@ -567,7 +569,8 @@ onMounted(() => {
 								:disabled="compacting || drawing"
 								:commands="commands"
 								class="[view-transition-name:chat-prompt] rounded-b-none backdrop-blur-sm"
-								:memory-max="memoryMax"
+								:memory-max="isOwner ? memoryMax : undefined"
+								:switches="isOwner"
 								:memory-length="settings.memoryLength"
 								@update:web-search="chatLanes.setSettings({ webSearch: $event })"
 								@update:images="chatLanes.setSettings({ images: $event })"
@@ -576,7 +579,7 @@ onMounted(() => {
 								@stop="answers.stop()"
 								@command="runCommand"
 							>
-								<template #tools>
+								<template v-if="isOwner" #tools>
 									<ChatContextSettings
 										:settings="settings"
 										:library-ids="libraries.map(library => library.id)"

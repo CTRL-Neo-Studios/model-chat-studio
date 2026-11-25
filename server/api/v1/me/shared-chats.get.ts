@@ -6,8 +6,9 @@ import { authorize } from '#server/utils/core/authorize'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 
 /**
- * The chats other people shared with the member by name, most recently active first, each with its owner. Chats
- * the member only opened through a public link are not here: link access names nobody.
+ * The chats other people shared with the member by name, most recently active first, each with its owner and the
+ * member's role in it (`viewer` or `editor`). Chats the member only opened through a public link are not here: link
+ * access names nobody.
  */
 export default defineEventHandler(async (event) => {
 	const user = await useServerAuth().requireUser(event)
@@ -17,6 +18,7 @@ export default defineEventHandler(async (event) => {
 		title: schema.chat.title,
 		updatedAt: schema.chat.updatedAt,
 		sharedAt: schema.chatShare.createdAt,
+		role: schema.chatShare.role,
 		owner: { id: schema.user.id, username: schema.user.username, name: schema.user.name, avatarUrl: schema.user.avatarUrl },
 	}).from(schema.chatShare)
 		.innerJoin(schema.chat, eq(schema.chat.id, schema.chatShare.chatId))

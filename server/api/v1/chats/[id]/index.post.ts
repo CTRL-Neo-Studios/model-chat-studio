@@ -9,7 +9,7 @@ import { userPreferencesSchema } from '#shared/utils/preferences'
 import { getInstanceSettings } from '#server/utils/core/settings'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { assertRateLimit } from '#server/utils/core/rateLimit'
-import { requireChat } from '#server/utils/chat/access'
+import { chatOwner, requireChat } from '#server/utils/chat/access'
 import { answerAttempt, applyTurnTrigger, assertWithinBudget, fallbackTitle, listChatMessages, monthlyBudgetStatus, saveAnswer, turnRequestSchema } from '#server/utils/chat/turns'
 import { listChatModels } from '#server/utils/chat/lanes'
 import { deleteStoredFiles, resolveAttachments } from '#server/utils/chat/files'
@@ -92,7 +92,7 @@ async function lorebookFor(books: { id: string, lorebook: Lorebook | null }[], i
  */
 export default defineEventHandler(async (event) => {
 	// Reads run in a few parallel groups, each one database round trip, before the model is called.
-	const [chat, { values: settings }] = await Promise.all([requireChat(event, 'manageChat'), getInstanceSettings(db)])
+	const [chat, { values: settings }] = await Promise.all([requireChat(event, 'writeChat'), getInstanceSettings(db)])
 	const user = await useServerAuth().requireUser(event)
 	const request = await readValidatedBody(event, turnRequestSchema)
 	// Each answer costs money; a stuck client or script should not be able to run up the bill.
@@ -132,7 +132,7 @@ export default defineEventHandler(async (event) => {
 
 	assertWithinBudget(budget, byok)
 
-	const parentId = await applyTurnTrigger(db, chatId, request)
+	const parentId = await applyTurnTrigger(db, chatId, request, user.id)
 	const [previousAttempt, thread] = await Promise.all([
 		answerAttempt(db, lane.id, parentId),
 		// Every branch: the one read is picked below. A group speaker reads every lane's answers; a separate lane only its own.
@@ -184,8 +184,9 @@ export default defineEventHandler(async (event) => {
 	// Who the lane is (its Character, else its own name and prompt) and who the user is, with `{{char}}` and `{{user}}` filled.
 	// A group speaker is also told who else answers in the chat.
 	const answering = lanes.filter(entry => entry.enabled).slice(0, maxChatModels)
-	const characters = await charactersById(db, [...(group ? answering : [lane]).map(entry => entry.characterId), chat.userCharacterId])
-	const userName = user.name ?? user.username
+	// The chat is the owner's whoever sends: `{{user}}` is the owner, and a Character's libraries are those the owner may read.
+	const [characters, owner] = await Promise.all([charactersById(db, [...(group ? answering : [lane]).map(entry => entry.characterId), chat.userCharacterId]), chatOwner(chat, user)])
+	const userName = owner.name ?? owner.username
 	const userCharacter = chat.userCharacterId ? characters[chat.userCharacterId] : undefined
 	const identityOf = (entry: typeof lane, modelName: string) => laneIdentity({ lane: entry, character: entry.characterId ? characters[entry.characterId] : undefined, userCharacter, modelName, userName })
 	const identity = identityOf(lane, model.name)
@@ -198,7 +199,7 @@ export default defineEventHandler(async (event) => {
 	const seesImages = model.inputModalities.includes('image')
 	const history = imagesForModel(group ? groupThread(withoutImageExchanges(shownThread(thread, parentId)), { laneId: lane.id, questionId: parentId, userName: identity.names.user, seesImages }) : upTo, seesImages)
 	// The chat's libraries, then its Character's (those the chat's owner may read): this lane only.
-	const libraries = await laneLibraries(db, user, (await chatLibraries(db, chatId)).map(({ id, name, lorebook }) => ({ id, name, lorebook })), character?.libraryIds ?? [])
+	const libraries = await laneLibraries(db, owner, (await chatLibraries(db, chatId)).map(({ id, name, lorebook }) => ({ id, name, lorebook })), character?.libraryIds ?? [])
 	// Lorebooks send their notes by keyword and are never offered to the file tools; the other libraries ("shelves")
 	// are auto-fetched and searched by the tools.
 	const lorebooks = libraries.filter(library => library.lorebook?.on)

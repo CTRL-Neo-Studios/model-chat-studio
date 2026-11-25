@@ -19,7 +19,7 @@ const bodySchema = z.object({
  * chat at its tip; models are not sent it. Returns both messages, as the chat lists them.
  */
 export default defineEventHandler(async (event) => {
-	const chat = await requireChat(event, 'manageChat')
+	const chat = await requireChat(event, 'writeChat')
 	const user = await useServerAuth().requireUser(event)
 	const { prompt, aspectRatio } = await readValidatedBody(event, bodySchema)
 	const setup = await imageSetup(db, user.id)
@@ -32,7 +32,7 @@ export default defineEventHandler(async (event) => {
 		throw createError({ status: 502, statusText: error instanceof Error ? error.message : 'The image could not be drawn' })
 	})
 	try {
-		return await saveImageExchange(db, { chatId: chat.id, prompt, aspectRatio, model: setup.model, image })
+		return await saveImageExchange(db, { chatId: chat.id, senderId: user.id, prompt, aspectRatio, model: setup.model, image })
 	}
 	catch (error) {
 		await deleteStoredFiles(db, [image.fileId], user.id)

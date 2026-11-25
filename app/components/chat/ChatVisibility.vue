@@ -5,6 +5,13 @@ interface Person {
 	name: string | null
 	avatarUrl: string | null
 }
+type Role = 'viewer' | 'editor'
+type Shared = Person & { role: Role }
+
+const ROLES = [
+	{ label: 'Viewer: reads', value: 'viewer' },
+	{ label: 'Editor: also takes part', value: 'editor' },
+] as const
 
 const props = defineProps<{
 	chatId: string
@@ -12,8 +19,8 @@ const props = defineProps<{
 
 /** Link access: `public` lets anyone with the link read the chat. */
 const visibility = defineModel<'public' | 'private'>('visibility', { required: true })
-/** The people the chat is shared with, read-only. */
-const sharedWith = defineModel<Person[]>('sharedWith', { required: true })
+/** The people the chat is shared with, each a viewer or an editor. */
+const sharedWith = defineModel<Shared[]>('sharedWith', { required: true })
 
 const toast = useToast()
 const { csrf, headerName } = useCsrf()
@@ -39,8 +46,8 @@ async function update<T>(target: Ref<T>, value: T, body: Record<string, unknown>
 	}
 }
 
-function setPeople(people: Person[]) {
-	return update(sharedWith, people, { sharedWith: people.map(person => person.id) })
+function setPeople(people: Shared[]) {
+	return update(sharedWith, people, { sharedWith: people.map(person => ({ userId: person.id, role: person.role })) })
 }
 
 function setLinkAccess(on: boolean) {
@@ -78,15 +85,16 @@ const items = computed(() => results.value
 		person,
 	})))
 
+const newRole = ref<Role>('viewer')
 function add(item: { person: Person } | undefined) {
 	if (!item) return
 	searchTerm.value = ''
-	setPeople([...sharedWith.value, item.person])
+	setPeople([...sharedWith.value, { ...item.person, role: newRole.value }])
 }
 </script>
 
 <template>
-	<UModal title="Share chat" description="People you add can read this chat. Only you can send messages in it." close>
+	<UModal title="Share chat" description="Viewers read this chat. Editors also send messages, retry, edit and vote, each paying for what they send; only you change its models and settings." close>
 		<UTooltip text="Share chat">
 			<UChip :show="visibility === 'public' || sharedWith.length > 0" size="sm" inset>
 				<UButton color="neutral" variant="ghost" icon="i-lucide-share" aria-label="Share chat" />
@@ -95,24 +103,27 @@ function add(item: { person: Person } | undefined) {
 
 		<template #body>
 			<div class="flex flex-col gap-5">
-				<!-- Remounted after each change, so the input empties instead of showing the person just added. -->
-				<UInputMenu
-					:key="sharedWith.length"
-					v-model:search-term="searchTerm"
-					:items="items"
-					:loading="searching"
-					ignore-filter
-					:reset-search-term-on-blur="false"
-					icon="i-lucide-user-plus"
-					placeholder="Add people by name or username"
-					:disabled="saving"
-					class="w-full"
-					@update:model-value="add($event as { person: Person } | undefined)"
-				>
-					<template #empty>
-						{{ searchTerm.trim().length < 2 ? 'Type at least two characters.' : 'Nobody found.' }}
-					</template>
-				</UInputMenu>
+				<div class="flex gap-2">
+					<!-- Remounted after each change, so the input empties instead of showing the person just added. -->
+					<UInputMenu
+						:key="sharedWith.length"
+						v-model:search-term="searchTerm"
+						:items="items"
+						:loading="searching"
+						ignore-filter
+						:reset-search-term-on-blur="false"
+						icon="i-lucide-user-plus"
+						placeholder="Add people by name or username"
+						:disabled="saving"
+						class="flex-1"
+						@update:model-value="add($event as { person: Person } | undefined)"
+					>
+						<template #empty>
+							{{ searchTerm.trim().length < 2 ? 'Type at least two characters.' : 'Nobody found.' }}
+						</template>
+					</UInputMenu>
+					<USelect v-model="newRole" :items="[...ROLES]" class="w-48" aria-label="Role for people added" />
+				</div>
 
 				<div class="flex flex-col gap-1">
 					<p class="text-sm font-medium text-highlighted">
@@ -131,6 +142,15 @@ function add(item: { person: Person } | undefined) {
 								@{{ person.username }}
 							</p>
 						</div>
+						<USelect
+							:model-value="person.role"
+							:items="[...ROLES]"
+							size="sm"
+							class="w-48"
+							:disabled="saving"
+							:aria-label="`Role of ${person.username}`"
+							@update:model-value="setPeople(sharedWith.map(shared => shared.id === person.id ? { ...shared, role: $event as Role } : shared))"
+						/>
 						<UButton
 							icon="i-lucide-x"
 							size="xs"

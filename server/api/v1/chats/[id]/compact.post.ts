@@ -5,7 +5,7 @@ import type { MessageMetadata } from '#shared/utils/chat'
 import { getInstanceSettings } from '#server/utils/core/settings'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { assertRateLimit } from '#server/utils/core/rateLimit'
-import { requireChat } from '#server/utils/chat/access'
+import { chatOwner, requireChat } from '#server/utils/chat/access'
 import { buildContext } from '#server/utils/chat/context'
 import { resolveAttachments } from '#server/utils/chat/files'
 import { expandReferences } from '#server/utils/library/references'
@@ -29,7 +29,7 @@ const COMPACT_INSTRUCTIONS = `You write a summary of a conversation for yourself
  * Summarised messages stay in the chat, readable, above a divider. Billed as `compact`.
  */
 export default defineEventHandler(async (event) => {
-	const [chat, { values: settings }] = await Promise.all([requireChat(event, 'manageChat'), getInstanceSettings(db)])
+	const [chat, { values: settings }] = await Promise.all([requireChat(event, 'writeChat'), getInstanceSettings(db)])
 	const user = await useServerAuth().requireUser(event)
 	assertRateLimit(`turn:${user.id}`, 20, 60_000, 'messages')
 
@@ -43,7 +43,9 @@ export default defineEventHandler(async (event) => {
 	// In a group chat one summary of the shared thread, written by the first lane's model, which every lane reads.
 	const group = chat.mode === 'group'
 	const answering = lanes.filter(lane => lane.enabled).slice(0, settings.maxChatModels)
-	const userName = (chat.userCharacterId && (await charactersById(db, [chat.userCharacterId]))[chat.userCharacterId]?.name) || user.name || user.username
+	// `{{user}}` is the chat's owner, whoever compacts.
+	const owner = await chatOwner(chat, user)
+	const userName = (chat.userCharacterId && (await charactersById(db, [chat.userCharacterId]))[chat.userCharacterId]?.name) || owner.name || owner.username
 	// The branch shown; a summary belongs to its tip, so a branch that leaves earlier does not get it.
 	const tip = await chatTip(db, chat.id)
 	const results = await Promise.allSettled((group ? answering.slice(0, 1) : answering).map(async (lane) => {
