@@ -1,7 +1,7 @@
 import { createError, defineEventHandler, readValidatedBody } from 'nuxt/server'
 import { convertToModelMessages, createUIMessageStreamResponse, generateId, generateText, isStepCount, smoothStream, streamText, toUIMessageStream, type TextStreamPart, type ToolSet, type UIMessage } from 'ai'
 import { db, schema } from 'hub:db'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { AUTO_FETCH_DEFAULTS, type ChatSettings, type MessageMetadata } from '#shared/utils/chat'
 import type { Lorebook } from '#shared/utils/lorebook'
 import { chartTool } from '#shared/utils/tools/chart'
@@ -12,7 +12,9 @@ import { assertRateLimit } from '#server/utils/core/rateLimit'
 import { requireChat } from '#server/utils/chat/access'
 import { answerAttempt, applyTurnTrigger, assertWithinBudget, fallbackTitle, listChatMessages, monthlyBudgetStatus, saveAnswer, turnRequestSchema } from '#server/utils/chat/turns'
 import { listChatModels } from '#server/utils/chat/lanes'
-import { resolveAttachments } from '#server/utils/chat/files'
+import { deleteStoredFiles, resolveAttachments } from '#server/utils/chat/files'
+import { imageSetup, makeImage } from '#server/utils/chat/images'
+import { imagesForModel, imageTool } from '#server/utils/chat/imageTool'
 import { getCatalog, getEndpoints, getPriceOverride, useInference } from '#server/utils/inference'
 import { buildContext, type LoreNoteSent } from '#server/utils/chat/context'
 import { expandReferences } from '#server/utils/library/references'
@@ -190,7 +192,8 @@ export default defineEventHandler(async (event) => {
 	const modelNameOf = (entry: typeof lane) => ((entry.platform === platform.id ? catalog.find(item => item.id === entry.modelId) : undefined) ?? catalog.find(item => item.id === config.defaultModel))?.name ?? 'Model'
 	const others = group ? answering.filter(entry => entry.id !== lane.id).map(entry => identityOf(entry, modelNameOf(entry)).names.char) : []
 	// A group speaker reads the shared thread, the others' answers under their names; otherwise the lane's own thread.
-	const history = group ? groupThread(shownThread(thread, parentId), { laneId: lane.id, questionId: parentId, userName: identity.names.user }) : upTo
+	// Images the model drew earlier come as lines of text, the latest also shown again to a model that reads images.
+	const history = imagesForModel(group ? groupThread(shownThread(thread, parentId), { laneId: lane.id, questionId: parentId, userName: identity.names.user }) : upTo, model.inputModalities.includes('image'))
 	// The chat's libraries, then its Character's (those the chat's owner may read): this lane only.
 	const libraries = await laneLibraries(db, user, (await chatLibraries(db, chatId)).map(({ id, name, lorebook }) => ({ id, name, lorebook })), character?.libraryIds ?? [])
 	// Lorebooks send their notes by keyword and are never offered to the file tools; the other libraries ("shelves")
@@ -235,9 +238,27 @@ export default defineEventHandler(async (event) => {
 				blocks: placeholder === -1 ? [...referenced.blocks, ...fetched.blocks] : referenced.blocks.toSpliced(placeholder, 1, ...fetched.blocks),
 			}
 		: referenced
+	// Images: with the chat's switch on, an image model set and an OpenRouter key stored, where app tools are allowed.
+	const drawing = chat.settings.images && prepared.appTools !== false && model.supportedParameters.includes('tools') ? await imageSetup(db, user.id) : null
+	/** The images this answer drew: linked to it once it is saved, deleted if it is not. */
+	const drawn: string[] = []
 	const tools: ToolSet = prepared.appTools === false
 		? prepared.tools
-		: { ...prepared.tools, chart: chartTool, ...(withFileTools && fileTools(db, shelves)) }
+		: {
+				...prepared.tools,
+				chart: chartTool,
+				...(withFileTools && fileTools(db, shelves)),
+				...(drawing && {
+					generate_image: imageTool({
+						userId: user.id,
+						make: async (prompt, aspectRatio) => {
+							const image = await makeImage(db, { user, chatId, prompt, aspectRatio, setup: drawing })
+							drawn.push(image.fileId)
+							return image
+						},
+					}),
+				}),
+			}
 	const price = await getPriceOverride(db, platform.id, model.id)
 	const modelHistory = await resolveAttachments({ db, inference, model, userId: user.id, chatId, libraryIds: libraries.map(library => library.id) }, context.messages).catch((error) => {
 		console.error('[chat] attachment failed', error)
@@ -300,6 +321,8 @@ export default defineEventHandler(async (event) => {
 						&& await saveAnswer(db, { id: responseMessage.id, chatId, parentId, chatModelId: lane.id, parts, metadata: stored }, keepPrevious, group)
 					// What the answer was given, for the conversation overview.
 					if (saved) await db.insert(schema.turnTrace).values({ messageId: responseMessage.id, blocks: context.blocks })
+					if (drawn.length && saved) await db.update(schema.file).set({ messageId: responseMessage.id }).where(inArray(schema.file.id, drawn))
+					else if (drawn.length) await deleteStoredFiles(db, drawn, user.id)
 					if (firstTurn) {
 						const title = (await titlePromise) ?? usage.title ?? fallbackTitle(firstText)
 						await db.update(schema.chat).set({ title }).where(and(eq(schema.chat.id, chatId), isNull(schema.chat.title)))

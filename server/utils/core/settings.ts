@@ -18,6 +18,8 @@ const platformConfigSchema = z.object({
 	speechModel: z.string().optional(),
 	/** OpenRouter only: the speech model's default voice; empty or gone is its first. */
 	speechVoice: z.string().optional(),
+	/** OpenRouter only: the model that draws images, whichever platform answers; empty is images off. */
+	imageModel: z.string().optional(),
 	/** OpenRouter only: the Decisions model that picks a group round's speakers; empty is off. */
 	decisionModel: z.string().optional(),
 })

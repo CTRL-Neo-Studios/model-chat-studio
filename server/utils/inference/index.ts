@@ -76,10 +76,11 @@ export async function getFullCatalog(inference: ActiveInference): Promise<Catalo
 	return await cached(catalogCache, platform.id, 60 * 60_000, () => platform.listModels(apiKey))
 }
 
-/** A platform's speech-to-text, Decisions or text-to-speech models, cached for an hour; empty where it has none. */
-export async function getKindCatalog(inference: ActiveInference, kind: 'stt' | 'decisions' | 'speech'): Promise<CatalogModel[]> {
+/** A platform's speech-to-text, Decisions, text-to-speech or image models, cached for an hour; empty where it has none. */
+export async function getKindCatalog(inference: ActiveInference, kind: 'stt' | 'decisions' | 'speech' | 'images'): Promise<CatalogModel[]> {
 	const { platform, apiKey } = inference
-	const list = kind === 'stt' ? platform.listSttModels : kind === 'speech' ? platform.listSpeechModels : platform.listDecisionModels
+	const lists = { stt: platform.listSttModels, decisions: platform.listDecisionModels, speech: platform.listSpeechModels, images: platform.listImageModels }
+	const list = lists[kind]
 	if (!list) return []
 	return await cached(catalogCache, `${platform.id}:${kind}`, 60 * 60_000, () => list(apiKey))
 }

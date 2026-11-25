@@ -33,6 +33,8 @@ const group = computed(() => data.value?.mode === 'group')
 const libraries = computed(() => data.value?.libraries ?? [])
 // "Add to library" copies into a library, which only its owner and editors change.
 const editableLibraries = computed(() => libraries.value.filter(library => library.role === 'owner' || library.role === 'editor'))
+// Images in answers can be added to these; the chat's owner only.
+provide(chatLibrariesKey, computed(() => isOwner.value ? editableLibraries.value : []))
 const { items: libraryMentions, partsFor } = useLibraryMentions(() => isOwner.value ? libraries.value.filter(library => library.role) : [])
 const references = ref<string[]>([])
 const { data: libraryList } = useQuery(() => ({ ...librariesQuery, enabled: import.meta.client && isOwner.value }))
@@ -536,6 +538,7 @@ onMounted(() => {
 								v-model:references="references"
 								:mentions="mentions"
 								:web-search="settings.webSearch"
+								:images="settings.images"
 								:models="answeringModels"
 								:uploads="uploads"
 								:uploading="uploading"
@@ -546,6 +549,7 @@ onMounted(() => {
 								:memory-max="memoryMax"
 								:memory-length="settings.memoryLength"
 								@update:web-search="chatLanes.setSettings({ webSearch: $event })"
+								@update:images="chatLanes.setSettings({ images: $event })"
 								@update:memory-length="chatLanes.setSettings({ memoryLength: $event ?? null })"
 								@submit="handleSubmit"
 								@stop="answers.stop()"

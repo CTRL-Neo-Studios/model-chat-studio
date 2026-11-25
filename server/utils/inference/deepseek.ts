@@ -158,7 +158,7 @@ function deepseekModel(input: TurnInput) {
 
 export const deepseekPlatform: InferencePlatform = {
 	id: 'deepseek',
-	capabilities: { providerRouting: false, safetyCheck: true, nativeTitle: true, sttModel: false, decisions: false, speechModel: false },
+	capabilities: { providerRouting: false, safetyCheck: true, nativeTitle: true, sttModel: false, decisions: false, speechModel: false, images: false },
 	voices: [{ id: 'stella', name: 'Stella (female)' }, { id: 'tide', name: 'Tide (male)' }],
 
 	async checkKey(apiKey) {

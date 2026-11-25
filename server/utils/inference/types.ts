@@ -32,6 +32,8 @@ export interface CatalogModel {
 	pricePerMinute?: number | null
 	/** Text-to-speech models only: USD per million characters read. */
 	pricePerMillionChars?: number | null
+	/** Image models only: USD per image, the cheapest of its endpoints. */
+	pricePerImage?: number | null
 	/** Text-to-speech models only: the voices it offers. */
 	voices?: string[]
 }
@@ -110,6 +112,8 @@ export interface InferencePlatform {
 		decisions: boolean
 		/** Text to speech needs a model chosen in the settings (`speechModel`); otherwise the platform has `voices`. */
 		speechModel: boolean
+		/** Image models can be chosen (`imageModel`); images are drawn on this platform whichever one answers. */
+		images: boolean
 	}
 	/** Resolves false for a key the platform rejects; throws when the platform cannot be reached. */
 	checkKey(apiKey: string): Promise<boolean>
@@ -120,6 +124,8 @@ export interface InferencePlatform {
 	listDecisionModels?(apiKey: string): Promise<CatalogModel[]>
 	/** Text-to-speech models with their voices, for platforms where one is chosen (`capabilities.speechModel`). */
 	listSpeechModels?(apiKey: string): Promise<CatalogModel[]>
+	/** Image models with their price per image (`capabilities.images`), for the `imageModel` setting. */
+	listImageModels?(apiKey: string): Promise<CatalogModel[]>
 	/** The voices of a platform without a speech model to choose, the first the default. */
 	voices?: { id: string, name: string }[]
 	listEndpoints?(apiKey: string, modelId: string): Promise<CatalogEndpoint[]>

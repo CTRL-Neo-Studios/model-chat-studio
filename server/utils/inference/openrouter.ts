@@ -118,9 +118,26 @@ function openrouterCost(raw: unknown): number | null {
 	return usage.cost + (usage.is_byok ? usage.cost_details?.upstream_inference_cost ?? 0 : 0)
 }
 
+/**
+ * Draws one image with OpenRouter's Images API (`POST /images`, spike M): the bytes, their type, and the cost the
+ * response reports. `aspectRatio` is passed on when given; the provider clamps it to what it supports.
+ */
+export async function openrouterImage(input: { apiKey: string, model: string, prompt: string, aspectRatio?: string }) {
+	const response = await fetch(`${BASE_URL}/images`, {
+		method: 'POST',
+		headers: { 'Authorization': `Bearer ${input.apiKey}`, 'Content-Type': 'application/json' },
+		body: JSON.stringify({ model: input.model, prompt: input.prompt, ...(input.aspectRatio && { aspect_ratio: input.aspectRatio }) }),
+	})
+	if (!response.ok) throw new Error(`OpenRouter images answered ${response.status}: ${(await response.text()).slice(0, 500)}`)
+	const { data, usage } = await response.json() as { data: { b64_json?: string, media_type?: string }[], usage?: unknown }
+	const image = data[0]
+	if (!image?.b64_json) throw new Error('OpenRouter images returned no image')
+	return { bytes: Uint8Array.from(Buffer.from(image.b64_json, 'base64')), mediaType: image.media_type ?? 'image/png', costUsd: openrouterCost(usage) }
+}
+
 export const openrouterPlatform: InferencePlatform = {
 	id: 'openrouter',
-	capabilities: { providerRouting: true, safetyCheck: false, nativeTitle: false, sttModel: true, decisions: true, speechModel: true },
+	capabilities: { providerRouting: true, safetyCheck: false, nativeTitle: false, sttModel: true, decisions: true, speechModel: true, images: true },
 
 	async checkKey(apiKey) {
 		const response = await fetch(`${BASE_URL}/key`, { headers: { Authorization: `Bearer ${apiKey}` } })
@@ -174,6 +191,39 @@ export const openrouterPlatform: InferencePlatform = {
 				voices,
 			}]
 		})
+	},
+
+	// The image models list has no prices; each model's endpoints do, per image or per megapixel (one is shown).
+	// Fetched a few at a time; `getKindCatalog` keeps the result for an hour.
+	async listImageModels(apiKey) {
+		type ImageModel = { id: string, name: string, architecture: { input_modalities: string[] }, supported_parameters: Record<string, unknown> | null, endpoints: string }
+		type Endpoints = { endpoints?: { pricing?: { billable: string, unit: string, cost_usd: number }[] | null }[] }
+		const { data } = await get<{ data: ImageModel[] }>('/images/models', apiKey)
+		const prices: Record<string, number | null> = {}
+		for (let at = 0; at < data.length; at += 8) {
+			await Promise.all(data.slice(at, at + 8).map(async (model) => {
+				const path = model.endpoints.replace(/^\/api\/v1/, '')
+				const { endpoints = [] } = await get<Endpoints>(path, apiKey).catch(() => ({ endpoints: [] }))
+				const costs = endpoints.flatMap(endpoint => (endpoint.pricing ?? []).filter(line => line.billable === 'output_image' && (line.unit === 'image' || line.unit === 'megapixel')).map(line => line.cost_usd))
+				prices[model.id] = costs.length ? Math.min(...costs) : null
+			}))
+		}
+		return data.map(model => ({
+			id: model.id,
+			name: model.name,
+			vendor: model.id.split('/')[0] ?? '',
+			contextLength: null,
+			maxOutputTokens: null,
+			inputModalities: model.architecture.input_modalities.filter(modality => modality === 'text' || modality === 'image'),
+			outputModalities: ['image'],
+			webSearch: false,
+			supportedParameters: Object.keys(model.supported_parameters ?? {}),
+			reasoning: null,
+			reasoningLevels: [],
+			defaultReasoningLevel: null,
+			pricing: null,
+			pricePerImage: prices[model.id] ?? null,
+		}))
 	},
 
 	async listEndpoints(apiKey, modelId) {

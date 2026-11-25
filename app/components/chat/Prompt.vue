@@ -47,6 +47,8 @@ const emit = defineEmits<{
 const input = defineModel<string>({ default: '' })
 const files = defineModel<File[]>('files', { default: () => [] })
 const webSearch = defineModel<boolean | undefined>('webSearch')
+/** The chat's "Images" switch: the model may draw. */
+const images = defineModel<boolean | undefined>('images')
 /** How many messages each lane is sent; `null` is all. */
 const memoryLength = defineModel<number | null | undefined>('memoryLength')
 /** The ids of the library entries named with "@". */
@@ -180,6 +182,7 @@ const menuOptions = { strategy: 'fixed', placement: 'top-start', offset: 8, flip
 			<div class="flex items-center gap-1 min-w-0">
 				<ChatPromptMenu
 					v-model:web-search="webSearch"
+					v-model:images="images"
 					:web-search-available="models.some(model => model.webSearch)"
 					:open="open"
 				/>

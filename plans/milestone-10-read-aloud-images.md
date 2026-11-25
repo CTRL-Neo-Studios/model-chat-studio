@@ -1,6 +1,6 @@
 # Milestone 10: read-aloud and image generation
 
-Status: spikes L and M done, 10.1 and 10.2 built (2026-11-25); 10.3 next. Part of `roadmap-milestones-7-14.md`. No migration. Needs 7.3 for "speakers see images".
+Status: spikes L and M done, 10.1, 10.2 and 10.3 built (2026-11-25); 10.4 next. Part of `roadmap-milestones-7-14.md`. No migration. Needs 7.3 for "speakers see images".
 
 Goal: an answer can be listened to, and a chat can make images.
 
@@ -105,6 +105,19 @@ Fixture check in Chromium. A throwaway plugin answered DeepSeek chat with a fixe
 - Stop: on the chat again (the page reloaded, so nothing was in memory), Stop was pressed half a second into the first piece. Pieces 1 and 2 had been requested, both in Tide, the second while the first played. Five seconds later nothing more had been requested or played, and the button read Read aloud again.
 - The preference, the chat and the fixture's usage rows were put back.
 
+Built (10.3): the admin picks an "Image model" on the OpenRouter card (`imageModel`, `GET /admin/models?kind=images`). OpenRouter's image models list has no prices, so `listImageModels` reads each model's endpoints, 8 at a time, and keeps the cheapest per-image (or per-megapixel) price; the picker's column is "Price per image". 44 of the 71 models had one; the rest are priced per output token and show "Unknown".
+- `server/utils/chat/images.ts`: `imageSetup` finds the image model and the stored OpenRouter key (the member's own, else the instance's); `makeImage` checks the budget on the instance key, calls `POST /images` (`openrouterImage` in the adapter), stores the image as a file of the chat and writes a usage row of kind `image` with the cost the response reports.
+- `server/utils/chat/imageTool.ts`: the `generate_image` tool (a prompt, an optional aspect ratio) and its limits, at most 4 images in an answer and 10 a minute per member; the model is told only "The image was made and shown to the user." `imagesForModel` makes what later turns carry: each drawn image becomes "[image: the prompt]", a failed call is left out, and a model that reads images gets the latest one again in a user message right after the answer that drew it.
+- The answer route offers the tool when the chat's `images` setting is on, an image model and key exist, the model takes tools and app tools are allowed (not with DeepSeek web search and thinking off). The answer's images are linked to it when it is saved (`file.messageId`), so they go with it; if it is not saved they are deleted.
+- `GET /models` says whether images are available and why not. The prompt menu has an "Images" switch with that reason, or, on DeepSeek with web search on, that drawing needs thinking on.
+- `ChatToolImage` shows "Drawing: the prompt", then the image with Download and, with the chat's editable libraries (provided by `ChatView`), "Add to library"; a failure shows as an error card.
+
+Fixture check, DeepSeek active, the chat on `deepseek-flash` (reads images). A throwaway plugin answered DeepSeek chat with a `generate_image` call and then text, and OpenRouter images with a 256-pixel PNG costing $0.007, recording each request.
+- The image request went to OpenRouter (`recraft/recraft-v4.1-flash-v2`, the prompt and `aspect_ratio: 1:1`), the answers to DeepSeek. The image was stored as a file of the chat, linked to the answer, served inline; the usage row was `image` on OpenRouter at $0.007.
+- The next turn sent DeepSeek "[image: a gradient square]" in place of the tool call, then the user message "The picture you drew in your last answer, shown again so you can see it:" with the image as a data URL, then the new question.
+- In Chromium the image showed in the answer with Download. With a library attached, "Add to library" copied it there. The prompt menu's "Images" switch was on, saved off to the chat, and with web search on said DeepSeek draws only while thinking is on.
+- Deleting the chat deleted the image file (404). The setting, the chat, the library and the fixture's usage rows were put back.
+
 ## 6. To verify before building
 
 - **Spike L, speech.** On both platforms: the time to the first sound for a 300-character piece; whether Chromium, Safari and Firefox play what comes back (`audio/wav` from DeepSeek, MP3 from OpenRouter) from a fetched blob; how OpenRouter reports the cost of a speech call (the body is audio: a header, or a lookup by generation id?); the shape of its speech models list and where the voices are; whether DeepSeek's own Markdown filter can stay on next to the app's.
@@ -133,5 +146,6 @@ Result M (2026-11-25, `images.ts`, `own-image.ts`, `other-speaker-image.ts`):
 - One voice per member and platform; Characters have no voices of their own. The settings list only the active platform's voices.
 - Read-aloud is not checked in Safari or on phones here; its unlocking of audio on the click is the usual way, untried.
 - No editing of an image, no image made from another image, no models that write images straight into their answer.
+- Image models priced per output token show no price in the picker; their real cost still comes from the response.
 - Speech and images are not offered to guests reading by link: there is nobody to bill.
 - No video.

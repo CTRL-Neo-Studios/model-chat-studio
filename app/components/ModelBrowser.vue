@@ -17,10 +17,14 @@ const props = withDefaults(defineProps<{
 /** The chosen model id, or nothing when dismissed. */
 const emit = defineEmits<{ close: [id?: string], retry: [] }>()
 
-// Speech models: priced per minute of audio (speech to text) or per million characters (text to speech); the
-// input filter and context columns do not apply.
-const unit = computed(() => props.models.some(entry => entry.pricePerMinute !== undefined) ? 'minute' as const : props.models.some(entry => entry.pricePerMillionChars !== undefined) ? 'chars' as const : null)
-const unitPrice = (entry: Entry) => unit.value === 'minute' ? entry.pricePerMinute : entry.pricePerMillionChars
+// Speech and image models: priced per minute of audio (speech to text), per million characters (text to speech) or
+// per image; the input filter and context columns do not apply.
+const unit = computed(() => props.models.some(entry => entry.pricePerMinute !== undefined)
+	? 'minute' as const
+	: props.models.some(entry => entry.pricePerMillionChars !== undefined)
+		? 'chars' as const
+		: props.models.some(entry => entry.pricePerImage !== undefined) ? 'image' as const : null)
+const unitPrice = (entry: Entry) => ({ minute: entry.pricePerMinute, chars: entry.pricePerMillionChars, image: entry.pricePerImage })[unit.value ?? 'minute']
 
 const UIcon = resolveComponent('UIcon')
 const UTooltip = resolveComponent('UTooltip')
@@ -86,7 +90,7 @@ const columns = computed<TableColumn<Entry>[]>(() => [{
 }, ...(unit.value
 	? [{
 			id: 'price',
-			header: unit.value === 'minute' ? 'Price per minute' : 'Price per 1M characters',
+			header: ({ minute: 'Price per minute', chars: 'Price per 1M characters', image: 'Price per image' })[unit.value!],
 			cell: ({ row }) => unitPrice(row.original) != null ? formatUsd(unitPrice(row.original)!) : 'Unknown',
 			meta: { class: { th: 'text-right', td: 'text-right tabular-nums' } },
 		} satisfies TableColumn<Entry>]

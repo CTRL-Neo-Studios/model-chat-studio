@@ -49,6 +49,8 @@ export const chatSettingsSchema = z.object({
 	}).partial().optional(),
 	/** Chats with a library: the model may list, search and read its notes and text files. Absent: on. */
 	fileTools: z.boolean().optional(),
+	/** The model may draw images (`generate_image`), when an image model is set and an OpenRouter key is stored. Absent: off. */
+	images: z.boolean().optional(),
 })
 
 export type ChatSettings = z.infer<typeof chatSettingsSchema>
