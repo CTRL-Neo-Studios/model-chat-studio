@@ -116,6 +116,13 @@ const messages = shallowRef<ChatMessage[]>((data.value?.messages ?? []) as ChatM
 const versions = shallowRef<Record<string, string[]>>({ ...data.value?.versions })
 // Every branch's first message at the places that have several, keyed by the one shown (owner only).
 const branches = shallowRef<Record<string, string[]>>({ ...data.value?.branches })
+// Who sent the user messages, by id (milestone 11). A message sent from this page has no sender yet: it is the reader's.
+const authors = shallowRef<Record<string, { name: string, avatarUrl: string | null }>>({ ...data.value?.authors })
+const { user: reader } = useUserSession()
+const senderOf = (message: ChatMessage) => message.userId ?? reader.value?.id ?? ''
+const authorOf = (message: ChatMessage) => authors.value[senderOf(message)] ?? (senderOf(message) === reader.value?.id ? { name: reader.value?.name || reader.value?.username || 'You', avatarUrl: reader.value?.avatar ?? null } : { name: 'Someone', avatarUrl: null })
+// Names on messages only once more than one person writes in the branch shown.
+const severalAuthors = computed(() => Object.keys(Object.fromEntries(messages.value.flatMap(message => message.role === 'user' ? [[senderOf(message), true]] : []))).length > 1)
 const answers = useLaneAnswers(chatId, messages, {
 	onAnswered: refreshTitle,
 	keepPreviousOnStop: () => (me.value?.preferences.stoppedRegenerate ?? 'keep-previous') === 'keep-previous',
@@ -148,9 +155,10 @@ function writeBack() {
 		messages: messages.value as typeof chat.messages,
 		versions: versions.value,
 		branches: branches.value,
+		authors: authors.value,
 	})
 }
-watch([messages, versions, branches], writeBack)
+watch([messages, versions, branches, authors], writeBack)
 watch([visibility, sharedWith, settings, lanes], writeBack, { deep: true })
 
 /**
@@ -328,10 +336,11 @@ async function saveEdit(message: UIMessage, text: string, resend: boolean) {
 }
 
 /** The thread as the server shows it now: after a deletion or a switch of branch. */
-function setThread(thread: { messages: unknown[], versions: Record<string, string[]>, branches: Record<string, string[]> }) {
+function setThread(thread: { messages: unknown[], versions: Record<string, string[]>, branches: Record<string, string[]>, authors: Record<string, { name: string, avatarUrl: string | null }> }) {
 	messages.value = thread.messages as ChatMessage[]
 	versions.value = thread.versions
 	branches.value = thread.branches
+	authors.value = thread.authors
 }
 
 const deleteModal = useOverlay().create(LazyModalConfirm)
@@ -528,14 +537,20 @@ onMounted(() => {
 									</template>
 								</UCollapsible>
 							</div>
-							<ChatMessageContent
-								v-else
-								:message="message"
-								:streaming="false"
-								:editing="canWrite && editingMessageId === message.id"
-								@save="saveEdit"
-								@cancel-edit="editingMessageId = null"
-							/>
+							<template v-else>
+								<!-- The sender, once more than one person writes here. -->
+								<div v-if="severalAuthors && message.role === 'user'" class="flex items-center gap-1.5 mb-1 text-xs text-muted">
+									<UAvatar :src="authorOf(message).avatarUrl || undefined" :alt="authorOf(message).name" size="3xs" />
+									<span class="truncate">{{ authorOf(message).name }}</span>
+								</div>
+								<ChatMessageContent
+									:message="message"
+									:streaming="false"
+									:editing="canWrite && editingMessageId === message.id"
+									@save="saveEdit"
+									@cancel-edit="editingMessageId = null"
+								/>
+							</template>
 						</template>
 
 						<template v-if="canWrite" #actions="{ message }">

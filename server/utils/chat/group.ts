@@ -2,7 +2,7 @@ import type { UIMessage } from 'ai'
 // Relative, not `#shared`, so this module also loads in `bun test`.
 import type { MessageMetadata } from '../../../shared/utils/chat'
 
-type StoredMessage = UIMessage<MessageMetadata> & { chatModelId?: string | null, parentId?: string | null }
+type StoredMessage = UIMessage<MessageMetadata> & { chatModelId?: string | null, parentId?: string | null, userId?: string | null }
 
 /** A message as the speaker reads it: starting with its writer's name. Files and "@" references stay. */
 function labelled(message: StoredMessage, name: string): UIMessage {
@@ -11,6 +11,21 @@ function labelled(message: StoredMessage, name: string): UIMessage {
 		? [{ type: 'text' as const, text: `${name}:` }, ...message.parts]
 		: message.parts.map((part, index) => index === first && part.type === 'text' ? { ...part, text: `${name}: ${part.text}` } : part)
 	return { id: message.id, role: 'user', parts }
+}
+
+/** A user message's sender by name (`names`, by user id); someone whose account is gone is "Someone". */
+const senderName = (message: StoredMessage, names: Record<string, string>) => names[message.userId ?? ''] ?? 'Someone'
+
+/**
+ * A lane's own thread when more than one person sent its user messages (milestone 11): each user message starts
+ * with its sender's name, as in a group chat (`names`, by user id; the owner's is `{{user}}`). With one sender it is
+ * unchanged, so a chat nobody else writes in reads as before.
+ */
+export function namedSenders(messages: StoredMessage[], names: Record<string, string>): UIMessage[] {
+	const senders: Record<string, true> = {}
+	for (const message of messages) if (message.role === 'user') senders[message.userId ?? ''] = true
+	if (Object.keys(senders).length < 2) return messages
+	return messages.map(message => message.role === 'user' ? labelled(message, senderName(message, names)) : message)
 }
 
 /** At most this many characters of one chart's JSON go to the other speakers. */
@@ -47,12 +62,13 @@ function sharedImages(answer: StoredMessage): UIMessage['parts'] {
  * messages and the other speakers' answers become user messages that start with the writer's name, the answers as
  * their text, charts and images (reasoning and other tool calls stay with whoever made them). A speaker whose model
  * reads images (`seesImages`) also gets the others' images themselves. A greeting opens the thread. Summaries pass
- * through.
+ * through. A user message is under its sender's name (`names`, by user id, when given; the owner's is `{{user}}`),
+ * else under `userName`.
  *
  * With `questionId`, the thread ends at that round, holding the speakers before this one: on a regenerate, those
  * before its place in `speakers`; otherwise every answer given so far. Without, the whole thread (for `/compact`).
  */
-export function groupThread(messages: StoredMessage[], { laneId, questionId, userName, seesImages = false }: { laneId: string, questionId?: string, userName: string, seesImages?: boolean }): UIMessage[] {
+export function groupThread(messages: StoredMessage[], { laneId, questionId, userName, names, seesImages = false }: { laneId: string, questionId?: string, userName: string, names?: Record<string, string>, seesImages?: boolean }): UIMessage[] {
 	const thread: UIMessage[] = []
 	/** The speaker's own answer as it is; another's as a user message under its name, if it says anything. */
 	const pushAnswer = (answer: StoredMessage) => {
@@ -65,7 +81,7 @@ export function groupThread(messages: StoredMessage[], { laneId, questionId, use
 		// A greeting answers no message: it opens the thread.
 		if (message.role === 'assistant' && !message.parentId) pushAnswer(message)
 		if (message.role !== 'user') continue
-		thread.push(labelled(message, userName))
+		thread.push(labelled(message, names ? senderName(message, names) : userName))
 
 		const speakers = message.metadata?.speakers ?? []
 		// Answers of lanes that are not in `speakers` (removed since) come after, in the order written.

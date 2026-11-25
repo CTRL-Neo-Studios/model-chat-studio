@@ -1,6 +1,6 @@
 # Milestone 11: edit access for people a chat is shared with
 
-Status: 11.1 built (2026-11-25); 11.2 next. Part of `roadmap-milestones-7-14.md`. One migration (`0022_shared_editing`, both columns, written in 11.1). Needs 8.2 (the chat's tip).
+Status: 11.1 and 11.2 built (2026-11-25); 11.3 next. Part of `roadmap-milestones-7-14.md`. One migration (`0022_shared_editing`, both columns, written in 11.1). Needs 8.2 (the chat's tip).
 
 Goal: someone a chat is shared with can take part in it, not only read it.
 
@@ -75,6 +75,18 @@ Fixture check (DeepSeek faked; the admin as owner, three throwaway members):
 - The owner's Character brought a private library with a note tagged "kestrel"; the editor, who gets 404 for that library, asked about the kestrel codename. The request held the note, and `{{user}}` was the owner's name. The usage rows were the editor's; the owner's spend did not move.
 - In Chromium: the owner's share dialog showed mc-editor as "Editor: also takes part" and mc-viewer as "Viewer: reads". The editor had the prompt without the owner's switches, sent a message and got its answer. The viewer had no prompt and no actions; "Shared with me" showed "Viewer".
 - The chat, library, Character, members and usage rows were deleted.
+
+Built (11.2):
+- The thread the chat page gets carries each user message's sender (`userId`) and `authors`, their names (else usernames) and avatars by id (`chatAuthors`), from every route that returns it: the chat, a deletion, a branch switch.
+- `namedSenders` (`group.ts`) puts each user message of a lane's thread under its sender's name, as a group thread does, once that thread holds messages from more than one person; with one sender it is returned as it is, so nothing changes on the wire. `groupThread` takes the same `names`. The owner's name is `{{user}}` (the user's Character, else the owner's name); a sender whose account is gone is "Someone". The turn and `/compact` both use them.
+- The chat page shows a chip (avatar and name) on each user message once the branch shown has more than one sender. A message just sent from the page counts as the reader's until the server's thread replaces it.
+- Tests: both thread builders with one sender and with two (and a gone sender), and the group thread with and without names.
+
+Fixture check (DeepSeek faked; the admin as owner, one throwaway editor):
+- Separate lanes, the owner alone: the request held "First from the owner." as it was. After the editor wrote and the owner again: "Wilson: First from the owner.", "mc-editor: Second from the editor.", "Wilson: Third from the owner." The chat's `authors` named both, and its messages carried their senders.
+- A group: "Wilson: Group hello from the owner." and "mc-editor: Group hello from the editor."
+- In Chromium the owner saw the chips, Wilson with his avatar and mc-editor with the letter avatar; an older chat of the owner's alone showed none.
+- The chats, the editor and the usage rows were deleted.
 
 ## 7. Ceilings and things left out
 

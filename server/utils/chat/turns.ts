@@ -105,9 +105,20 @@ const messageColumns = {
 	parts: tables.message.parts,
 	metadata: tables.message.metadata,
 	chatModelId: tables.message.chatModelId,
+	/** Who sent a user message (milestone 11): the owner or an editor. */
+	userId: tables.message.userId,
 	/** For an answer, the user message it answers. */
 	parentId: tables.message.parentId,
 	createdAt: tables.message.createdAt,
+}
+
+/** The people who sent the user messages among `messages`, by id: their name (else username) and avatar. */
+export async function chatAuthors(db: Db, messages: { role: string, userId: string | null }[]) {
+	const ids = [...new Set(messages.flatMap(message => message.role === 'user' && message.userId ? [message.userId] : []))]
+	const rows = ids.length
+		? await db.select({ id: tables.user.id, name: tables.user.name, username: tables.user.username, avatarUrl: tables.user.avatarUrl }).from(tables.user).where(inArray(tables.user.id, ids))
+		: []
+	return Object.fromEntries(rows.map(row => [row.id, { name: row.name || row.username, avatarUrl: row.avatarUrl }]))
 }
 
 /**
@@ -398,9 +409,9 @@ export async function showBranch(db: Db, chatId: string, messageId: string) {
 export const MAX_BRANCHES = 50
 
 /**
- * What the chat page shows: the branch at the chat's tip, each answer the version shown; for those who may write
- * (`switches`), also every version's id of the answers that have several and every branch's first message of the
- * messages that have several.
+ * What the chat page shows: the branch at the chat's tip, each answer the version shown, and who sent its user
+ * messages (`authors`); for those who may write (`switches`), also every version's id of the answers that have
+ * several and every branch's first message of the messages that have several.
  */
 export async function chatThread(db: Db, chatId: string, switches: boolean) {
 	const [[chat], messages, versions] = await Promise.all([
@@ -409,7 +420,7 @@ export async function chatThread(db: Db, chatId: string, switches: boolean) {
 		switches ? listAnswerVersions(db, chatId) : {} as Record<string, string[]>,
 	])
 	const shown = shownThread(messages, chat?.leafId ?? null)
-	return { messages: shown, versions, branches: switches ? branchesOf(messages, shown) : {} as Record<string, string[]> }
+	return { messages: shown, versions, branches: switches ? branchesOf(messages, shown) : {} as Record<string, string[]>, authors: await chatAuthors(db, shown) }
 }
 
 /**

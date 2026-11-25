@@ -10,7 +10,7 @@ import { getInstanceSettings } from '#server/utils/core/settings'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { assertRateLimit } from '#server/utils/core/rateLimit'
 import { chatOwner, requireChat } from '#server/utils/chat/access'
-import { answerAttempt, applyTurnTrigger, assertWithinBudget, fallbackTitle, listChatMessages, monthlyBudgetStatus, saveAnswer, turnRequestSchema } from '#server/utils/chat/turns'
+import { answerAttempt, applyTurnTrigger, assertWithinBudget, chatAuthors, fallbackTitle, listChatMessages, monthlyBudgetStatus, saveAnswer, turnRequestSchema } from '#server/utils/chat/turns'
 import { listChatModels } from '#server/utils/chat/lanes'
 import { deleteStoredFiles, resolveAttachments } from '#server/utils/chat/files'
 import { imageSetup, makeImage } from '#server/utils/chat/images'
@@ -28,7 +28,7 @@ import { spaceResolver } from '#shared/utils/librarySpace'
 import { findStructureProfile } from '#server/utils/chat/structureProfiles'
 import { charactersById, laneLibraries } from '#server/utils/chat/characters'
 import { fillPlaceholders, laneIdentity } from '#shared/utils/character'
-import { groupInstructions, groupThread } from '#server/utils/chat/group'
+import { groupInstructions, groupThread, namedSenders } from '#server/utils/chat/group'
 import { shownThread, threadTo, withoutImageExchanges } from '#server/utils/chat/thread'
 import type { FinishedStep, Pricing } from '#server/utils/inference/types'
 
@@ -136,7 +136,7 @@ export default defineEventHandler(async (event) => {
 	const [previousAttempt, thread] = await Promise.all([
 		answerAttempt(db, lane.id, parentId),
 		// Every branch: the one read is picked below. A group speaker reads every lane's answers; a separate lane only its own.
-		listChatMessages(db, chatId, group ? undefined : lane.id) as Promise<(UIMessage<MessageMetadata> & { parentId: string | null, chatModelId: string | null })[]>,
+		listChatMessages(db, chatId, group ? undefined : lane.id) as Promise<(UIMessage<MessageMetadata> & { parentId: string | null, chatModelId: string | null, userId: string | null })[]>,
 	])
 	// Each regenerate is one more attempt at the lane's answer to this message; past the admin's cap it is refused.
 	const attempt = previousAttempt + 1
@@ -185,7 +185,11 @@ export default defineEventHandler(async (event) => {
 	// A group speaker is also told who else answers in the chat.
 	const answering = lanes.filter(entry => entry.enabled).slice(0, maxChatModels)
 	// The chat is the owner's whoever sends: `{{user}}` is the owner, and a Character's libraries are those the owner may read.
-	const [characters, owner] = await Promise.all([charactersById(db, [...(group ? answering : [lane]).map(entry => entry.characterId), chat.userCharacterId]), chatOwner(chat, user)])
+	const [characters, owner, authors] = await Promise.all([
+		charactersById(db, [...(group ? answering : [lane]).map(entry => entry.characterId), chat.userCharacterId]),
+		chatOwner(chat, user),
+		chatAuthors(db, thread),
+	])
 	const userName = owner.name ?? owner.username
 	const userCharacter = chat.userCharacterId ? characters[chat.userCharacterId] : undefined
 	const identityOf = (entry: typeof lane, modelName: string) => laneIdentity({ lane: entry, character: entry.characterId ? characters[entry.characterId] : undefined, userCharacter, modelName, userName })
@@ -194,10 +198,12 @@ export default defineEventHandler(async (event) => {
 	const modelNameOf = (entry: typeof lane) => ((entry.platform === platform.id ? catalog.find(item => item.id === entry.modelId) : undefined) ?? catalog.find(item => item.id === config.defaultModel))?.name ?? 'Model'
 	const others = group ? answering.filter(entry => entry.id !== lane.id).map(entry => identityOf(entry, modelNameOf(entry)).names.char) : []
 	// A group speaker reads the shared thread, the others' answers under their names (their images too, if it reads
-	// images); otherwise the lane's own thread. Images the model drew earlier come as lines of text, the latest also
-	// shown again to a model that reads images.
+	// images); otherwise the lane's own thread. Each user message is under its sender's name in a group, and in a
+	// lane's thread once more than one person writes; the owner's name is `{{user}}`. Images the model drew earlier
+	// come as lines of text, the latest also shown again to a model that reads images.
 	const seesImages = model.inputModalities.includes('image')
-	const history = imagesForModel(group ? groupThread(withoutImageExchanges(shownThread(thread, parentId)), { laneId: lane.id, questionId: parentId, userName: identity.names.user, seesImages }) : upTo, seesImages)
+	const names = { ...Object.fromEntries(Object.entries(authors).map(([id, author]) => [id, author.name])), [chat.userId]: identity.names.user }
+	const history = imagesForModel(group ? groupThread(withoutImageExchanges(shownThread(thread, parentId)), { laneId: lane.id, questionId: parentId, userName: identity.names.user, names, seesImages }) : namedSenders(upTo, names), seesImages)
 	// The chat's libraries, then its Character's (those the chat's owner may read): this lane only.
 	const libraries = await laneLibraries(db, owner, (await chatLibraries(db, chatId)).map(({ id, name, lorebook }) => ({ id, name, lorebook })), character?.libraryIds ?? [])
 	// Lorebooks send their notes by keyword and are never offered to the file tools; the other libraries ("shelves")

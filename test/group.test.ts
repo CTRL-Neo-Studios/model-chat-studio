@@ -1,9 +1,9 @@
 import { expect, test } from 'bun:test'
 import type { UIMessage } from 'ai'
 import type { MessageMetadata } from '../shared/utils/chat'
-import { MAX_SHARED_CHART, groupThread } from '../server/utils/chat/group'
+import { MAX_SHARED_CHART, groupThread, namedSenders } from '../server/utils/chat/group'
 
-type Stored = UIMessage<MessageMetadata> & { chatModelId?: string | null, parentId?: string | null }
+type Stored = UIMessage<MessageMetadata> & { chatModelId?: string | null, parentId?: string | null, userId?: string | null }
 
 const user = (id: string, text: string, speakers?: string[]): Stored => ({ id, role: 'user', parts: [{ type: 'text', text }], metadata: speakers && { speakers } })
 const answer = (id: string, parentId: string, lane: string, text: string): Stored => ({
@@ -116,4 +116,22 @@ test('a greeting opens the shared thread: the greeter\'s own, the others\' under
 	const greeted: Stored[] = [{ id: 'g', role: 'assistant', parentId: null, chatModelId: 'Bard', metadata: { greeting: true, lane: { name: 'Bard', color: null } }, parts: [{ type: 'text', text: 'Welcome, traveller.' }] }, user('u1', 'Hello', ['Bard', 'Guard'])]
 	expect(read(groupThread(greeted, { laneId: 'Bard', questionId: 'u1', userName: 'Captain' }))).toEqual(['assistant Welcome, traveller.', 'user Captain: Hello'])
 	expect(read(groupThread(greeted, { laneId: 'Guard', questionId: 'u1', userName: 'Captain' }))).toEqual(['user Bard: Welcome, traveller.', 'user Captain: Hello'])
+})
+
+test('a lane\'s thread names senders only once more than one person writes; the owner goes by `{{user}}`', () => {
+	const names = { owner: 'Captain', editor: 'Mira' }
+	const sent = (id: string, text: string, userId: string | null): Stored => ({ ...user(id, text), userId })
+	const alone = [sent('u1', 'Hi', 'owner'), answer('a1', 'u1', 'Designer', 'Hello'), sent('u2', 'More', 'owner')]
+	// One sender: unchanged, the same objects.
+	expect(namedSenders(alone, names)).toBe(alone)
+	const together = [sent('u1', 'Hi', 'owner'), answer('a1', 'u1', 'Designer', 'Hello'), sent('u2', 'And me', 'editor'), sent('u3', 'Old', null)]
+	expect(read(namedSenders(together, names))).toEqual(['user Captain: Hi', 'assistant [reasoning] Hello', 'user Mira: And me', 'user Someone: Old'])
+})
+
+test('a group thread names each user message by its sender when names are given, else as the user', () => {
+	const round = [{ ...user('u1', 'Plan it', ['Designer']), userId: 'owner' }, answer('d1', 'u1', 'Designer', 'Blue'), { ...user('u2', 'Agreed', ['Designer']), userId: 'editor' }]
+	expect(read(groupThread(round, { laneId: 'Designer', userName: 'Captain', names: { owner: 'Captain', editor: 'Mira' } })))
+		.toEqual(['user Captain: Plan it', 'assistant [reasoning] Blue', 'user Mira: Agreed'])
+	expect(read(groupThread(round, { laneId: 'Designer', userName: 'Captain' })))
+		.toEqual(['user Captain: Plan it', 'assistant [reasoning] Blue', 'user Captain: Agreed'])
 })

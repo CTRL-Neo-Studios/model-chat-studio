@@ -1,8 +1,8 @@
 import { DefaultChatTransport, readUIMessageStream, type UIMessage } from 'ai'
 import type { MessageMetadata } from '#shared/utils/chat'
 
-/** A message as the chat page holds it: answers know their lane and the user message they answer. */
-export type ChatMessage = UIMessage<MessageMetadata> & { chatModelId?: string | null, parentId?: string | null, createdAt?: string | Date }
+/** A message as the chat page holds it: answers know their lane and the user message they answer; user messages, their sender. */
+export type ChatMessage = UIMessage<MessageMetadata> & { chatModelId?: string | null, parentId?: string | null, userId?: string | null, createdAt?: string | Date }
 
 /**
  * An answer being written, waiting for its turn in a group round (`queued`), or one that failed before it was saved.

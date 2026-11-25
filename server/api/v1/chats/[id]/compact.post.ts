@@ -11,10 +11,10 @@ import { resolveAttachments } from '#server/utils/chat/files'
 import { expandReferences } from '#server/utils/library/references'
 import { chatLibraries } from '#server/utils/library/libraries'
 import { listChatModels } from '#server/utils/chat/lanes'
-import { assertWithinBudget, chatTip, listChatMessages, monthlyBudgetStatus } from '#server/utils/chat/turns'
+import { assertWithinBudget, chatAuthors, chatTip, listChatMessages, monthlyBudgetStatus } from '#server/utils/chat/turns'
 import { shownThread, withoutImageExchanges } from '#server/utils/chat/thread'
 import { getCatalog, getPriceOverride, useInference } from '#server/utils/inference'
-import { groupThread } from '#server/utils/chat/group'
+import { groupThread, namedSenders } from '#server/utils/chat/group'
 import { charactersById } from '#server/utils/chat/characters'
 
 const COMPACT_INSTRUCTIONS = `You write a summary of a conversation for yourself, so you can continue it later without the full history.
@@ -50,9 +50,11 @@ export default defineEventHandler(async (event) => {
 	const tip = await chatTip(db, chat.id)
 	const results = await Promise.allSettled((group ? answering.slice(0, 1) : answering).map(async (lane) => {
 		const shown = withoutImageExchanges(shownThread(await listChatMessages(db, chat.id, group ? undefined : lane.id), tip))
+		// Each user message under its sender's name, as in a turn; the owner's is `{{user}}`.
+		const names = { ...Object.fromEntries(Object.entries(await chatAuthors(db, shown)).map(([id, author]) => [id, author.name])), [chat.userId]: userName }
 		const thread = group
-			? groupThread(shown as UIMessage<MessageMetadata>[], { laneId: lane.id, userName })
-			: shown as UIMessage[]
+			? groupThread(shown as UIMessage<MessageMetadata>[], { laneId: lane.id, userName, names })
+			: namedSenders(shown as UIMessage<MessageMetadata>[], names)
 		const context = buildContext({ thread, systemPrompt: lane.systemPrompt, webSearch: false, memoryLength: null })
 		// Nothing new since the lane's last summary.
 		if (!context.blocks.some(block => block.kind === 'message')) return null
