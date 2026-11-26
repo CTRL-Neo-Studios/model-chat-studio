@@ -5,11 +5,14 @@ defineProps<{
 
 const { user } = useUserSession()
 
+const { data: counts } = useQuery(exploreCountsQuery)
+const waiting = computed(() => counts.value?.waiting ?? 0)
+
 // Moderators manage users and Explore; the rest is for admins. The API enforces the same.
 const links = computed(() => [
 	{ label: 'Users', icon: 'i-lucide-users', to: '/admin/users' },
 	{ label: 'Explore', icon: 'i-lucide-telescope', to: '/admin/explore' },
-	{ label: 'Review', icon: 'i-lucide-shield-check', to: '/admin/review' },
+	{ label: 'Review', icon: 'i-lucide-shield-check', to: '/admin/review', badge: waiting.value || undefined },
 	...(user.value?.role === 'admin'
 		? [
 				{ label: 'Invites', icon: 'i-lucide-ticket', to: '/admin/invites' },

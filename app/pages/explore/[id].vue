@@ -41,6 +41,13 @@ async function review(approve: boolean) {
 	if (done) await queryCache.invalidateQueries({ key: ['explore'] })
 }
 
+// A member's report, with a reason, for admins and moderators; once while it is open.
+async function report() {
+	const reason = await reasonModal.open({ heading: 'Report this listing', description: 'Admins and moderators read why, and remove it if it should not be on Explore. Its publisher is not told who reported it.', placeholder: 'What is wrong with it', maxlength: 500 }).result
+	if (!reason) return
+	await act(`/api/v1/explore/listings/${listingId}/reports`, { method: 'POST', body: { reason }, success: 'Reported: an admin or moderator will look at it' })
+}
+
 /** A library's entries in tree order with their depth, for an indented list. */
 function tree(entries: NonNullable<typeof content.value>['libraries'][number]['entries']) {
 	const depth: Record<string, number> = {}
@@ -127,6 +134,7 @@ async function get() {
 							</template>
 						</template>
 						<UButton v-if="mine" label="Your listings" size="xs" color="neutral" variant="link" to="/explore/mine" />
+						<UButton v-else label="Report…" icon="i-lucide-flag" size="xs" color="neutral" variant="link" @click="report" />
 					</div>
 				</div>
 				<UAlert v-if="page.got !== null && page.got < currentNumber" color="info" variant="subtle" icon="i-lucide-sparkles" :title="`Version ${currentNumber} is out; you have version ${page.got || 'an earlier one'}.`" description="Getting it makes new copies; the ones you have stay as they are, with whatever you changed." />

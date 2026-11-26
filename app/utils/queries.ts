@@ -111,6 +111,12 @@ export const exploreReviewsQuery = defineQueryOptions({
 	query: () => useRequestFetch()('/api/v1/explore/reviews'),
 })
 
+/** The counts beside "Explore": the member's listings rejected or removed; for reviewers, what waits for them. */
+export const exploreCountsQuery = defineQueryOptions({
+	key: ['explore', 'counts'],
+	query: () => useRequestFetch()('/api/v1/me/explore-counts'),
+})
+
 /** Admins and moderators: every listing, whatever its status. */
 export const adminListingsQuery = defineQueryOptions({
 	key: ['admin', 'listings'],

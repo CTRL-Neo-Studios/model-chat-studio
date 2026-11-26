@@ -9,6 +9,9 @@ const searchOpen = ref(false)
 // Guests only ever see a chat shared by link, so they have no list.
 const { data: chatList } = useQuery(() => ({ ...chatsQuery, enabled: import.meta.client && loggedIn.value }))
 const chats = computed(() => loggedIn.value ? (chatList.value ?? []).map(toUIChat) : [])
+// Beside "Explore": the member's listings rejected or removed, and for reviewers what waits for them.
+const { data: exploreCounts } = useQuery(() => ({ ...exploreCountsQuery, enabled: import.meta.client && loggedIn.value }))
+const exploreCount = computed(() => (exploreCounts.value?.attention ?? 0) + (exploreCounts.value?.waiting ?? 0))
 
 const prefetch = usePrefetch()
 
@@ -110,6 +113,7 @@ defineShortcuts({
 						label: 'Explore',
 						to: '/explore',
 						icon: 'i-lucide-telescope',
+						count: exploreCount,
 					}]"
 					:collapsed="collapsed"
 					orientation="vertical"
@@ -125,6 +129,7 @@ defineShortcuts({
 								class="bg-accented/50"
 							/>
 						</div>
+						<UBadge v-else-if="item.count" :label="String(item.count)" size="sm" variant="subtle" :aria-label="`${item.count} on Explore need you`" />
 					</template>
 				</UNavigationMenu>
 

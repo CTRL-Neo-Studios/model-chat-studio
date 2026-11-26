@@ -1,4 +1,4 @@
-// Milestone 13 smoke run: drives a running instance through its own API, as the browser does, on each platform
+// Milestone 14 smoke run: drives a running instance through its own API, as the browser does, on each platform
 // that has an instance key. Run it as an admin: it switches the active platform and switches it back.
 //
 //   SESSION=<value of the nuxt-auth-session cookie> [SECOND_SESSION=<another member's>] [BASE_URL=http://localhost:3000] bun scripts/app-smoke.ts [--search]
@@ -12,9 +12,10 @@
 // model's tool call and one by `/image` (each about $0.01, once an image model is set), the chat exported with its
 // attachments, imported and answering as a new chat, and found in the all-chats download, a pack published to Explore,
 // found and got by the second member and one round of its group chat (with SECOND_SESSION), the spend ledger, and
-// deleting the chat. `--search` adds web search to the library question and a web search turn (on OpenRouter each
-// costs about $0.02). The test files come from `scripts/smoke-files.ts` (macOS makes them; elsewhere `--wav`,
-// `--image`, `--pdf`).
+// deleting the chat. Once, with SECOND_SESSION: in reviewed mode the second member's Character waits and the admin
+// approves it, stars it into a list, reports it and removes it from the report, its publisher reading why.
+// `--search` adds web search to the library question and a web search turn (on OpenRouter each costs about $0.02).
+// The test files come from `scripts/smoke-files.ts` (macOS makes them; elsewhere `--wav`, `--image`, `--pdf`).
 import { IMAGE_WORD, makeSmokeFiles, PDF_WORD, SENTENCE } from './smoke-files'
 import { api, BASE, cookieHeader, csrf, signIn, turn, type Turn } from './smoke-client'
 
@@ -416,6 +417,48 @@ try {
 			return 'gone (404), with its files'
 		})
 	}
+
+	// Not a platform's: no model answers here, so once.
+	console.log('\n=== Explore: review, stars and reports')
+	await step('review, stars and reports', async () => {
+		if (!second) return 'skipped: set SECOND_SESSION to a second member\'s session to publish as them'
+		const before = (await api<{ publishing: string }>('GET', '/explore/settings')).publishing
+		const word = `smoke${Date.now().toString(36)}`
+		const character = await second.api<{ id: string }>('POST', '/characters', { color: null, libraryIds: [], greetings: [], examples: '', note: '', creatorNotes: '', tags: [], name: 'Smoke critic', instructions: 'You review things.' })
+		let listingId: string | undefined
+		let listId: string | undefined
+		try {
+			// In reviewed mode the second member's Character waits; the admin approves it from the queue.
+			await api('PATCH', '/explore/settings', { publishing: 'reviewed' })
+			const published = await second.api<{ listing: { id: string }, pending: boolean }>('POST', '/explore/listings', { name: 'Smoke critic', summary: `A smoke run's Character, ${word}`, description: '', tags: [], category: null, source: { characterIds: [character.id] } })
+			listingId = published.listing.id
+			const queue = await api<{ pending: { listingId: string, versionId: string }[] }>('GET', '/explore/reviews')
+			const waiting = queue.pending.find(entry => entry.listingId === listingId)
+			if (!published.pending || !waiting) throw new Error(`published ${published.pending ? 'waiting' : 'at once'}, ${waiting ? 'in' : 'not in'} the queue`)
+			await api('POST', `/explore/versions/${waiting.versionId}/review`, { approve: true })
+			const found = await api<{ listings: { id: string }[] }>('GET', `/explore/listings?q=${word}`)
+			if (found.listings[0]?.id !== listingId) throw new Error(`once approved, searching "${word}" found ${found.listings.length} listings, not it`)
+			// The admin stars it into a new list.
+			listId = (await api<{ id: string }>('POST', '/me/star-lists', { name: `Smoke ${word}` })).id
+			await api('PUT', `/me/star-lists/${listId}/listings/${listingId}`)
+			const stars = await api<{ listings: { id: string, stars: number }[], lists: { id: string, listingIds: string[] }[] }>('GET', '/me/stars')
+			if (stars.listings.find(card => card.id === listingId)?.stars !== 1 || !stars.lists.find(list => list.id === listId)?.listingIds.includes(listingId)) throw new Error('the list did not star it')
+			// Reported, then removed from the report: its publisher reads why, with a count beside "Explore".
+			const reportId = (await api<{ id: string }>('POST', `/explore/listings/${listingId}/reports`, { reason: 'A smoke run reports it.' })).id
+			if (!(await api<{ reports: { id: string }[] }>('GET', '/explore/reviews')).reports.some(entry => entry.id === reportId)) throw new Error('the report is not in the queue')
+			await api('PATCH', `/explore/reports/${reportId}`, { remove: true, reason: 'A smoke run removes it.' })
+			const mine = (await second.api<{ id: string, status: string, statusReason: string | null }[]>('GET', '/me/listings')).find(entry => entry.id === listingId)
+			const counts = await second.api<{ attention: number }>('GET', '/me/explore-counts')
+			if (mine?.status !== 'removed' || mine.statusReason !== 'A smoke run removes it.' || counts.attention < 1) throw new Error(`the publisher sees it ${mine?.status} (${mine?.statusReason}), ${counts.attention} needing them`)
+			return `waited and approved, found by "${word}", starred into a list, reported and removed; its publisher reads "${mine.statusReason}" (${counts.attention} needing them)`
+		}
+		finally {
+			await api('PATCH', '/explore/settings', { publishing: before })
+			if (listId) await api('DELETE', `/me/star-lists/${listId}`)
+			if (listingId) await second.api('DELETE', `/explore/listings/${listingId}`)
+			await second.api('DELETE', `/characters/${character.id}`)
+		}
+	})
 }
 finally {
 	await api('PATCH', '/admin/settings', { inferencePlatform: original })
