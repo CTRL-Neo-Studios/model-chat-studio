@@ -4,7 +4,8 @@ import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { libraryAbilities } from '#shared/abilities/libraryAbilities'
 import { authorize } from '#server/utils/core/authorize'
-import { assertEntryParent, entryColumns, entryNameSchema, findEntry, findLibrary, listEntries, noteContentSchema, tagsSchema, withUniqueName } from '#server/utils/library/libraries'
+import { assertEntryParent, entryColumns, findEntry, findLibrary, listEntries, withUniqueName } from '#server/utils/library/libraries'
+import { entryNameSchema, noteContentSchema, tagsSchema } from '#shared/utils/libraryFields'
 import { loreSchema } from '#shared/utils/lorebook'
 
 const bodySchema = z.object({

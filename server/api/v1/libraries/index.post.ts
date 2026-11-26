@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { libraryAbilities } from '#shared/abilities/libraryAbilities'
 import { authorize } from '#server/utils/core/authorize'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
-import { libraryDescriptionSchema, libraryNameSchema } from '#server/utils/library/libraries'
+import { libraryDescriptionSchema, libraryNameSchema } from '#shared/utils/libraryFields'
 
 const bodySchema = z.object({
 	name: libraryNameSchema,
