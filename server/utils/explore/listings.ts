@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { createError } from 'nuxt/server'
-import { desc, eq, inArray, max } from 'drizzle-orm'
+import { and, desc, eq, inArray, lte, max, ne, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 // Relative, not `#shared` or `hub:db`, so this module also loads in `bun test`.
 import * as tables from '../../db/schema'
@@ -12,15 +12,16 @@ export type ListingTexts = z.output<typeof listingTextsSchema>
 export type Listing = typeof tables.listing.$inferSelect
 
 /**
- * One listing, whoever it belongs to, with `ownerBanned` (its publisher is banned while the ban lasts, which hides it);
- * access is checked with `exploreAbilities`. Ids that are not UUIDs find nothing.
+ * One listing, whoever it belongs to, with `ownerBanned` (its publisher is banned while the ban lasts, which hides it)
+ * and `published` (it has an approved version); access is checked with `exploreAbilities`. Ids that are not UUIDs
+ * find nothing.
  */
 export async function findListing(db: Db, id: string | undefined) {
 	if (!z.uuid().safeParse(id).success) return undefined
 	const [row] = await db.select({ listing: tables.listing, banned: tables.user.banned, banExpires: tables.user.banExpires }).from(tables.listing)
 		.innerJoin(tables.user, eq(tables.user.id, tables.listing.ownerId))
 		.where(eq(tables.listing.id, id!))
-	return row && { ...row.listing, ownerBanned: row.banned && (!row.banExpires || row.banExpires > new Date()) }
+	return row && { ...row.listing, ownerBanned: row.banned && (!row.banExpires || row.banExpires > new Date()), published: row.listing.currentVersionId !== null }
 }
 
 /** The listing one of whose versions owns this file, if any. */
@@ -67,12 +68,30 @@ async function basedOn(db: Db, userId: string, source: PackageSource) {
 	return got.find(({ created }) => [...created.characterIds, ...created.libraryIds, ...created.structureProfileIds, created.folderId].some(id => id && ids.includes(id)))?.listingId ?? null
 }
 
+/** The note on a version that went up in reviewed mode because nobody but its publisher could review it. */
+export const NOT_REVIEWED = 'Not reviewed: there was no other admin or moderator to review it.'
+
+/**
+ * How a new version starts: approved in open and off mode; in reviewed mode, waiting for review, unless nobody but its
+ * publisher could review it (nobody reviews their own), when it goes up approved with `NOT_REVIEWED`.
+ */
+async function startingReview(db: Db, publisherId: string, settings: ExploreSettings): Promise<{ status: 'approved' | 'pending', reason: string | null }> {
+	if (settings.publishing !== 'reviewed') return { status: 'approved', reason: null }
+	const [reviewer] = await db.select({ id: tables.user.id }).from(tables.user).where(and(
+		inArray(tables.user.role, ['moderator', 'admin']),
+		ne(tables.user.id, publisherId),
+		or(eq(tables.user.banned, false), lte(tables.user.banExpires, sql`now()`)),
+	)).limit(1)
+	return reviewer ? { status: 'pending', reason: null } : { status: 'approved', reason: NOT_REVIEWED }
+}
+
 /**
  * Stores a version of a listing: the package's files copied into storage the version owns (`explore/<version>/<key>`),
  * four at a time, then, in one transaction, `first` (the listing's row, on publishing), the version numbered after the
- * last, its files, and the listing pointing at it. If the transaction fails, the copies are removed.
+ * last in its starting state, its files, and, when it is approved, the listing pointing at it. If the transaction
+ * fails, the copies are removed.
  */
-async function addVersion(db: Db, store: Store, input: { listingId: string, ownerId: string, notes: string, content: Package, paths: Record<string, string>, first?: (tx: Db) => Promise<unknown> }) {
+async function addVersion(db: Db, store: Store, input: { listingId: string, ownerId: string, notes: string, content: Package, paths: Record<string, string>, review: { status: 'approved' | 'pending', reason: string | null }, first?: (tx: Db) => Promise<unknown> }) {
 	const versionId = randomUUID()
 	const files = input.content.files.map(file => ({ ...file, id: randomUUID(), from: input.paths[file.key]!, blobPath: `explore/${versionId}/${file.key}${fileExtension(input.paths[file.key] ?? '')}` }))
 	const copied = await copyFiles(store, files.map(file => ({ from: file.from, to: file.blobPath, mediaType: file.mediaType })))
@@ -80,12 +99,12 @@ async function addVersion(db: Db, store: Store, input: { listingId: string, owne
 		await db.transaction(async (tx) => {
 			await input.first?.(tx)
 			const [last] = await tx.select({ number: max(tables.listingVersion.number) }).from(tables.listingVersion).where(eq(tables.listingVersion.listingId, input.listingId))
-			await tx.insert(tables.listingVersion).values({ id: versionId, listingId: input.listingId, number: (last?.number ?? 0) + 1, notes: input.notes, content: input.content, size: packageSize(input.content) })
+			await tx.insert(tables.listingVersion).values({ id: versionId, listingId: input.listingId, number: (last?.number ?? 0) + 1, notes: input.notes, content: input.content, size: packageSize(input.content), ...input.review })
 			if (files.length) {
 				await tx.insert(tables.file).values(files.map(file => ({ id: file.id, ownerId: input.ownerId, chatId: null, blobPath: file.blobPath, fileName: file.name, mediaType: file.mediaType, size: file.size })))
 				await tx.insert(tables.listingFile).values(files.map(file => ({ versionId, key: file.key, fileId: file.id })))
 			}
-			await tx.update(tables.listing).set({ currentVersionId: versionId, updatedAt: new Date() }).where(eq(tables.listing.id, input.listingId))
+			if (input.review.status === 'approved') await tx.update(tables.listing).set({ currentVersionId: versionId, updatedAt: new Date() }).where(eq(tables.listing.id, input.listingId))
 		})
 	}
 	catch (error) {
@@ -94,34 +113,39 @@ async function addVersion(db: Db, store: Store, input: { listingId: string, owne
 	}
 }
 
-/** Publishes the member's items as a new listing, version 1. Returns the listing and what was left out. */
+/** Publishes the member's items as a new listing, version 1. Returns the listing, what was left out, and whether it waits for review. */
 export async function publishListing(db: Db, store: Store, input: { userId: string, texts: ListingTexts, source: PackageSource, settings: ExploreSettings }) {
 	assertCategory(input.settings, input.texts.category)
 	const { content, paths, left } = await take(db, input.userId, input.source, input.settings)
 	const listingId = randomUUID()
-	const basedOnId = await basedOn(db, input.userId, input.source)
+	const [basedOnId, review] = await Promise.all([basedOn(db, input.userId, input.source), startingReview(db, input.userId, input.settings)])
 	await addVersion(db, store, {
 		listingId,
 		ownerId: input.userId,
 		notes: '',
 		content,
 		paths,
+		review,
 		first: tx => tx.insert(tables.listing).values({ id: listingId, ownerId: input.userId, kind: listingKind(input.source), ...input.texts, source: input.source, basedOnId }),
 	})
-	return { listing: (await findListing(db, listingId))!, left }
+	return { listing: (await findListing(db, listingId))!, left, pending: review.status === 'pending' }
 }
 
 /**
- * "Publish an update": a new version from the listing's source (or a new one, of the same kind), with a note on what
- * changed. Copies made of earlier versions stay as they are.
+ * "Publish an update", and "Publish again" after a rejection: a new version from the listing's source (or a new one,
+ * of the same kind), with a note on what changed. Copies made of earlier versions stay as they are. While a version
+ * waits for review, the one approved before stays on Explore, and no other update is taken.
  */
 export async function publishUpdate(db: Db, store: Store, input: { listing: Listing, notes: string, source?: PackageSource, settings: ExploreSettings }) {
 	const source = input.source ?? input.listing.source
 	if (listingKind(source) !== input.listing.kind) throw createError({ status: 400, statusText: 'An update holds the same kind of content as the listing' })
+	const [waiting] = await db.select({ id: tables.listingVersion.id }).from(tables.listingVersion).where(and(eq(tables.listingVersion.listingId, input.listing.id), eq(tables.listingVersion.status, 'pending')))
+	if (waiting) throw createError({ status: 409, statusText: 'An update of this listing is waiting for review' })
 	const { content, paths, left } = await take(db, input.listing.ownerId, source, input.settings)
-	await addVersion(db, store, { listingId: input.listing.id, ownerId: input.listing.ownerId, notes: input.notes, content, paths })
+	const review = await startingReview(db, input.listing.ownerId, input.settings)
+	await addVersion(db, store, { listingId: input.listing.id, ownerId: input.listing.ownerId, notes: input.notes, content, paths, review })
 	if (input.source) await db.update(tables.listing).set({ source }).where(eq(tables.listing.id, input.listing.id))
-	return { listing: (await findListing(db, input.listing.id))!, left }
+	return { listing: (await findListing(db, input.listing.id))!, left, pending: review.status === 'pending' }
 }
 
 /** The publisher's changes (texts, listed or unlisted) and the moderators' (featured, removed with a reason, restored). */
@@ -144,9 +168,12 @@ export async function deleteListing(db: Db, store: Store, listingId: string) {
 	await removeFiles(store, owned.map(file => file.blobPath))
 }
 
-/** The member's listings, whatever their status, newest first, with their current version's number. */
+/**
+ * The member's listings, whatever their status, newest first, with their current (approved) version's number and
+ * every version's state, newest first: waiting, rejected with its reason, approved.
+ */
 export async function myListings(db: Db, userId: string) {
-	return await db.select({
+	const rows = await db.select({
 		id: tables.listing.id,
 		kind: tables.listing.kind,
 		name: tables.listing.name,
@@ -159,6 +186,7 @@ export async function myListings(db: Db, userId: string) {
 		featured: tables.listing.featured,
 		source: tables.listing.source,
 		gets: tables.listing.gets,
+		stars: tables.listing.stars,
 		publishedAt: tables.listing.publishedAt,
 		updatedAt: tables.listing.updatedAt,
 		version: tables.listingVersion.number,
@@ -166,6 +194,11 @@ export async function myListings(db: Db, userId: string) {
 		.leftJoin(tables.listingVersion, eq(tables.listingVersion.id, tables.listing.currentVersionId))
 		.where(eq(tables.listing.ownerId, userId))
 		.orderBy(desc(tables.listing.publishedAt))
+	const versions = rows.length
+		? await db.select({ listingId: tables.listingVersion.listingId, number: tables.listingVersion.number, status: tables.listingVersion.status, reason: tables.listingVersion.reason, createdAt: tables.listingVersion.createdAt })
+			.from(tables.listingVersion).where(inArray(tables.listingVersion.listingId, rows.map(row => row.id))).orderBy(desc(tables.listingVersion.number))
+		: []
+	return rows.map(row => ({ ...row, versions: versions.filter(version => version.listingId === row.id).map(({ listingId: _listingId, ...version }) => version) }))
 }
 
 export type MyListing = Awaited<ReturnType<typeof myListings>>[number]

@@ -155,10 +155,15 @@ export const listingTextsSchema = z.object({
 	category: z.string().trim().min(1).max(40).nullable(),
 })
 
-/** Explore's instance settings, kept by admins and moderators (milestone 13 plan, section 3). */
+export const PUBLISHING_MODES = ['open', 'reviewed', 'off'] as const
+
+/** Explore's instance settings, kept by admins and moderators (milestone 13 plan, section 3; modes, milestone 14). */
 export const exploreSettingsSchema = z.object({
-	/** Off: members browse and get, but only admins and moderators publish. */
-	publishing: z.boolean(),
+	/**
+	 * `open`: published at once. `reviewed`: each publication waits for an admin's or moderator's approval. `off`:
+	 * members browse and get, but only admins and moderators publish. Stored as a boolean before milestone 14: on and off.
+	 */
+	publishing: z.preprocess(value => value === true ? 'open' : value === false ? 'off' : value, z.enum(PUBLISHING_MODES)),
 	/** The categories a listing may pick one of. */
 	categories: z.array(z.string().trim().min(1).max(40)).max(30).transform(names => [...new Set(names)]),
 	/** The most a listing may weigh with its files; at most the package limit. */
@@ -166,4 +171,4 @@ export const exploreSettingsSchema = z.object({
 })
 
 export type ExploreSettings = z.infer<typeof exploreSettingsSchema>
-export const EXPLORE_DEFAULTS: ExploreSettings = { publishing: true, categories: [], maxSizeMb: PACKAGE_LIMITS.bytes / 1024 / 1024 }
+export const EXPLORE_DEFAULTS: ExploreSettings = { publishing: 'open', categories: [], maxSizeMb: PACKAGE_LIMITS.bytes / 1024 / 1024 }

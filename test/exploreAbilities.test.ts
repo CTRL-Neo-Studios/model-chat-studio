@@ -18,12 +18,15 @@ const listing = (status: ListingAccess['status']): ListingAccess => ({ ownerId: 
 // the publisher banned.
 test('each role can do what the access table says, and no more', async () => {
 	const rows: Record<string, [(user: User) => Promise<boolean>, boolean[]]> = {
-		'publish, publishing on': [user => allows(can.publish, user, { publishing: true }), [true, true, true, true, false]],
-		'publish, publishing off': [user => allows(can.publish, user, { publishing: false }), [false, false, true, true, false]],
+		'publish, open mode': [user => allows(can.publish, user, { publishing: 'open' }), [true, true, true, true, false]],
+		'publish, reviewed mode': [user => allows(can.publish, user, { publishing: 'reviewed' }), [true, true, true, true, false]],
+		'publish, publishing off': [user => allows(can.publish, user, { publishing: 'off' }), [false, false, true, true, false]],
 		'read a listed listing': [user => allows(can.readListing, user, listing('listed')), [true, true, true, true, false]],
 		'read an unlisted listing': [user => allows(can.readListing, user, listing('unlisted')), [true, false, true, true, false]],
 		'read a removed listing': [user => allows(can.readListing, user, listing('removed')), [true, false, true, true, false]],
 		'read a listed listing whose publisher is banned': [user => allows(can.readListing, user, { ...listing('listed'), ownerBanned: true }), [true, false, true, true, false]],
+		'read a listed listing not yet approved': [user => allows(can.readListing, user, { ...listing('listed'), published: false }), [true, false, true, true, false]],
+		'review the publisher\'s publication': [user => allows(can.review, user, listing('listed')), [false, false, true, true, false]],
 		'edit a listed listing': [user => allows(can.editListing, user, listing('listed')), [true, false, false, false, false]],
 		'edit an unlisted listing': [user => allows(can.editListing, user, listing('unlisted')), [true, false, false, false, false]],
 		'edit a removed listing': [user => allows(can.editListing, user, listing('removed')), [false, false, false, false, false]],
@@ -44,6 +47,8 @@ test('refusals say why, and hide what someone may not see', async () => {
 	expect(await refusal(authorize(can.editListing, people.member, listing('removed')))).toBe('404 Listing not found')
 	expect(await refusal(authorize(can.editListing, people.member, listing('listed')))).toBe('403 Only its publisher can change this listing')
 	expect(await refusal(authorize(can.editListing, people.publisher, listing('removed')))).toBe('403 This listing was removed by a moderator')
-	expect(await refusal(authorize(can.publish, people.member, { publishing: false }))).toBe('403 Publishing to Explore is turned off on this instance')
+	expect(await refusal(authorize(can.publish, people.member, { publishing: 'off' }))).toBe('403 Publishing to Explore is turned off on this instance')
 	expect(await refusal(authorize(can.deleteListing, people.member, listing('listed')))).toBe('403 Only its publisher can delete this listing')
+	expect(await refusal(authorize(can.readListing, people.member, { ...listing('listed'), published: false }))).toBe('404 Listing not found')
+	expect(await refusal(authorize(can.review, people.moderator, { ownerId: 'moderator', status: 'listed' }))).toBe('403 Nobody reviews their own publication')
 })

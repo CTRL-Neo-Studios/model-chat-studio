@@ -25,9 +25,9 @@ export function useListingActions() {
 	async function publish(source: PackageSource, name: string) {
 		const texts = await publishModal.open({ heading: 'Publish to Explore', texts: { name: name.slice(0, 80), summary: '', description: '', tags: [], category: null }, source }).result
 		if (!texts) return
-		const published = await act<{ left: string[] }>('/api/v1/explore/listings', { method: 'POST', body: { ...texts, source } })
+		const published = await act<{ left: string[], pending: boolean }>('/api/v1/explore/listings', { method: 'POST', body: { ...texts, source } })
 		if (!published) return
-		toast.add({ title: 'Published to Explore', description: published.left.join(' ') || undefined, icon: 'i-lucide-telescope', color: 'success', actions: yours })
+		toast.add({ title: published.pending ? 'Sent for review' : 'Published to Explore', description: [published.pending ? 'It shows on Explore once an admin or moderator approves it.' : '', ...published.left].join(' ').trim() || undefined, icon: 'i-lucide-telescope', color: 'success', actions: yours })
 		await refresh()
 	}
 
@@ -38,13 +38,13 @@ export function useListingActions() {
 		if (await act(`/api/v1/explore/listings/${listing.id}`, { method: 'PATCH', body: { ...texts }, success: 'Listing saved' })) await refresh()
 	}
 
-	/** "Publish an update": a new version from the items the listing was published from. */
-	async function update(listing: OwnListing) {
-		const notes = await updateModal.open({ name: listing.name, source: listing.source }).result
+	/** "Publish an update", or "Publish again" after a rejection: a new version from the items the listing was published from. */
+	async function update(listing: OwnListing, again = false) {
+		const notes = await updateModal.open({ name: listing.name, source: listing.source, again }).result
 		if (!notes) return
-		const updated = await act<{ left: string[] }>(`/api/v1/explore/listings/${listing.id}/versions`, { method: 'POST', body: { notes } })
+		const updated = await act<{ left: string[], pending: boolean }>(`/api/v1/explore/listings/${listing.id}/versions`, { method: 'POST', body: { notes } })
 		if (!updated) return
-		toast.add({ title: 'Update published', description: updated.left.join(' ') || undefined, icon: 'i-lucide-telescope', color: 'success' })
+		toast.add({ title: updated.pending ? 'Sent for review' : 'Update published', description: updated.left.join(' ') || undefined, icon: 'i-lucide-telescope', color: 'success' })
 		await refresh()
 	}
 

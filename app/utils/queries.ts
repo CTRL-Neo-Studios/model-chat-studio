@@ -96,11 +96,20 @@ export const exploreListingsQuery = defineQueryOptions((params: { q?: string, ki
 	query: () => useRequestFetch()('/api/v1/explore/listings', { query: params }),
 }))
 
-/** A listing's page: everything in its current version, its versions, and which one the member has. */
-export const exploreListingQuery = defineQueryOptions((id: string) => ({
-	key: ['explore', 'listing', id],
-	query: () => useRequestFetch()(`/api/v1/explore/listings/${id}`),
+/**
+ * A listing's page: everything in its current version (or, for its publisher and admins and moderators, `version`),
+ * its versions, and which one the member has.
+ */
+export const exploreListingQuery = defineQueryOptions(({ id, version }: { id: string, version?: string }) => ({
+	key: ['explore', 'listing', id, version ?? 'current'],
+	query: () => useRequestFetch()(`/api/v1/explore/listings/${id}`, { query: version ? { version } : {} }),
 }))
+
+/** Admins and moderators: what waits for review. Under `explore`, so a decision anywhere refreshes it. */
+export const exploreReviewsQuery = defineQueryOptions({
+	key: ['explore', 'reviews'],
+	query: () => useRequestFetch()('/api/v1/explore/reviews'),
+})
 
 /** Admins and moderators: every listing, whatever its status. */
 export const adminListingsQuery = defineQueryOptions({

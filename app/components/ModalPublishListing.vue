@@ -17,8 +17,9 @@ const { user } = useUserSession()
 const { data: settings } = useQuery(exploreSettingsQuery)
 const draft = ref<ListingTextsDraft>(structuredClone(toRaw(props.texts)))
 const ok = ref(!props.source)
-// Publishing off: members may not publish; admins and moderators still may.
-const closed = computed(() => !!props.source && settings.value?.publishing === false && getRoleLevel(user.value?.role) < getRoleLevel('moderator'))
+// Publishing off: members may not publish; admins and moderators still may. Reviewed: it waits for approval.
+const closed = computed(() => !!props.source && settings.value?.publishing === 'off' && getRoleLevel(user.value?.role) < getRoleLevel('moderator'))
+const reviewed = computed(() => !!props.source && settings.value?.publishing === 'reviewed')
 const NONE = 'none'
 const categories = computed(() => [{ label: 'None', value: NONE }, ...(settings.value?.categories ?? []).map(name => ({ label: name, value: name }))])
 const valid = computed(() => draft.value.name.trim() && draft.value.tags.length <= 5 && ok.value && !closed.value)
@@ -29,6 +30,7 @@ const valid = computed(() => draft.value.name.trim() && draft.value.tags.length 
 		<template #body>
 			<div class="flex flex-col gap-4">
 				<UAlert v-if="closed" color="warning" variant="subtle" icon="i-lucide-lock" title="Publishing is turned off" description="An admin or moderator has turned off publishing to Explore. You can still browse and get." />
+				<UAlert v-else-if="reviewed" color="info" variant="subtle" icon="i-lucide-shield-check" title="Publications are reviewed" description="It shows on Explore once an admin or moderator approves it; until then only you see it, on &quot;Your listings&quot;." />
 				<UFormField label="Name" required>
 					<UInput v-model="draft.name" :maxlength="80" autofocus class="w-full" />
 				</UFormField>

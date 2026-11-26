@@ -1,16 +1,20 @@
 <script setup lang="ts">
 import { formatDistanceToNow } from 'date-fns'
+import { LazyModalRename } from '#components'
 
 const route = useRoute()
 const listingId = route.params.id as string
 // Rendered by the server with its data, as members open it from links; the API decides what the visitor may see.
-const { data: page, error, refetch } = useQuery({ ...exploreListingQuery(listingId), enabled: true })
+// `?version=` shows its publisher and reviewers another version, a waiting one among them.
+const version = computed(() => typeof route.query.version === 'string' ? route.query.version : undefined)
+const { data: page, error, refetch } = useQuery(() => ({ ...exploreListingQuery({ id: listingId, version: version.value }), enabled: true }))
 useHead({ title: () => page.value?.listing.name ?? 'Explore' })
 
 const { user } = useUserSession()
 const act = useApiAction()
 const toast = useToast()
 const queryCache = useQueryCache()
+const overlay = useOverlay()
 const { addToLists } = useStarLists()
 
 const content = computed(() => page.value?.version?.content)
@@ -20,6 +24,22 @@ const libraryName = (key: string) => content.value?.libraries.find(entry => entr
 const profileName = (key: string | null) => content.value?.structureProfiles.find(entry => entry.key === key)?.name
 const avatar = computed(() => fileUrl(content.value?.characters[0]?.avatarKey ?? null))
 const mine = computed(() => page.value?.listing.ownerId === user.value?.id)
+const seesAll = computed(() => mine.value || getRoleLevel(user.value?.role) >= getRoleLevel('moderator'))
+/** The number of the version on Explore, whichever version is shown. */
+const currentNumber = computed(() => page.value?.versions.find(entry => entry.id === page.value?.listing.currentVersionId)?.number ?? 0)
+
+// A reviewer's decision on the version shown: approving puts it on Explore; a rejection's reason goes to its publisher.
+const reasonModal = overlay.create(LazyModalRename)
+const reviewing = ref(false)
+async function review(approve: boolean) {
+	const versionId = page.value!.version!.id
+	const reason = approve ? undefined : await reasonModal.open({ heading: 'Reject this publication', description: 'Its publisher reads the reason, changes what is needed and publishes again.', placeholder: 'What has to change', maxlength: 500 }).result
+	if (!approve && !reason) return
+	reviewing.value = true
+	const done = await act(`/api/v1/explore/versions/${versionId}/review`, { method: 'POST', body: approve ? { approve: true } : { reject: true, reason }, success: approve ? 'Approved: it is on Explore' : 'Rejected: its publisher sees why' })
+	reviewing.value = false
+	if (done) await queryCache.invalidateQueries({ key: ['explore'] })
+}
 
 /** A library's entries in tree order with their depth, for an indented list. */
 function tree(entries: NonNullable<typeof content.value>['libraries'][number]['entries']) {
@@ -99,16 +119,30 @@ async function get() {
 							<StarButton :listing-id="page.listing.id" :starred="page.starred" :stars="page.listing.stars" size="sm" />
 							<UButton label="Add to a list…" icon="i-lucide-list-plus" size="sm" color="neutral" variant="ghost" @click="addToLists(page.listing.id, page.listing.name)" />
 						</div>
-						<UButton v-if="page.got === null" label="Get" icon="i-lucide-download" :loading="getting" @click="get" />
-						<template v-else>
-							<UBadge label="You have this" icon="i-lucide-check" color="success" variant="subtle" />
-							<UButton v-if="page.got < page.version!.number" label="Get the new version" icon="i-lucide-download" size="sm" :loading="getting" @click="get" />
+						<template v-if="page.listing.currentVersionId">
+							<UButton v-if="page.got === null" label="Get" icon="i-lucide-download" :loading="getting" @click="get" />
+							<template v-else>
+								<UBadge label="You have this" icon="i-lucide-check" color="success" variant="subtle" />
+								<UButton v-if="page.got < currentNumber" label="Get the new version" icon="i-lucide-download" size="sm" :loading="getting" @click="get" />
+							</template>
 						</template>
 						<UButton v-if="mine" label="Your listings" size="xs" color="neutral" variant="link" to="/explore/mine" />
 					</div>
 				</div>
-				<UAlert v-if="page.got !== null && page.got < page.version!.number" color="info" variant="subtle" icon="i-lucide-sparkles" :title="`Version ${page.version!.number} is out; you have version ${page.got || 'an earlier one'}.`" description="Getting it makes new copies; the ones you have stay as they are, with whatever you changed." />
+				<UAlert v-if="page.got !== null && page.got < currentNumber" color="info" variant="subtle" icon="i-lucide-sparkles" :title="`Version ${currentNumber} is out; you have version ${page.got || 'an earlier one'}.`" description="Getting it makes new copies; the ones you have stay as they are, with whatever you changed." />
 				<UAlert v-if="page.listing.status !== 'listed'" color="warning" variant="subtle" icon="i-lucide-eye-off" :title="page.listing.status === 'removed' ? 'Removed by a moderator' : 'Unlisted'" :description="page.listing.statusReason ?? 'Only its publisher, admins and moderators see it.'" />
+				<!-- A version other than the one on Explore: its state, and for a reviewer, Approve and Reject. -->
+				<UAlert
+					v-if="page.version?.status === 'pending'"
+					color="info"
+					variant="subtle"
+					icon="i-lucide-hourglass"
+					:title="`Version ${page.version.number} waits for review`"
+					:description="page.reviewable ? [page.listing.currentVersionId ? 'An update: the version before stays on Explore until this one is approved.' : 'Not on Explore yet.', page.version.notes ? `Its note: ${page.version.notes}` : ''].join(' ').trim() : 'An admin or moderator other than its publisher reviews it; until then members do not see it.'"
+					:actions="page.reviewable ? [{ label: 'Approve', icon: 'i-lucide-check', color: 'success', loading: reviewing, onClick: () => review(true) }, { label: 'Reject…', icon: 'i-lucide-x', color: 'error', variant: 'subtle', onClick: () => review(false) }] : undefined"
+				/>
+				<UAlert v-else-if="page.version?.status === 'rejected'" color="error" variant="subtle" icon="i-lucide-circle-x" :title="`Version ${page.version.number} was rejected`" :description="page.version.reason ?? undefined" />
+				<UAlert v-else-if="page.version && page.listing.currentVersionId && page.version.id !== page.listing.currentVersionId" color="neutral" variant="subtle" icon="i-lucide-history" :title="`Version ${page.version.number}: an earlier one`" />
 				<p v-if="page.basedOn" class="text-sm text-muted">
 					Based on <NuxtLink :to="`/explore/${page.basedOn.id}`" class="text-primary">{{ page.basedOn.name }}</NuxtLink>.
 				</p>
@@ -253,12 +287,20 @@ async function get() {
 						Versions
 					</h2>
 					<ul class="flex flex-col divide-y divide-default rounded-md border border-default text-sm">
-						<li v-for="version in page.versions" :key="version.number" class="px-4 py-2 flex flex-col gap-0.5">
-							<p class="text-highlighted">
-								Version {{ version.number }} <span class="text-xs text-dimmed">{{ formatDistanceToNow(new Date(version.createdAt), { addSuffix: true }) }} · {{ fileSize(version.size) }}</span>
+						<li v-for="entry in page.versions" :key="entry.number" class="px-4 py-2 flex flex-col gap-0.5">
+							<p class="text-highlighted flex flex-wrap items-center gap-2">
+								<NuxtLink v-if="seesAll && entry.id !== page.version?.id" :to="{ query: { ...route.query, version: entry.id } }" class="hover:text-primary">
+									Version {{ entry.number }}
+								</NuxtLink>
+								<span v-else>Version {{ entry.number }}</span>
+								<UBadge v-if="entry.status !== 'approved'" :label="entry.status === 'pending' ? 'Waiting for review' : 'Rejected'" :color="entry.status === 'pending' ? 'info' : 'error'" variant="subtle" size="sm" />
+								<span class="text-xs text-dimmed">{{ formatDistanceToNow(new Date(entry.createdAt), { addSuffix: true }) }} · {{ fileSize(entry.size) }}</span>
 							</p>
-							<p v-if="version.notes" class="text-muted whitespace-pre-wrap">
-								{{ version.notes }}
+							<p v-if="entry.reason" class="text-xs" :class="entry.status === 'rejected' ? 'text-error' : 'text-dimmed'">
+								{{ entry.status === 'rejected' ? `Rejected: ${entry.reason}` : entry.reason }}
+							</p>
+							<p v-if="entry.notes" class="text-muted whitespace-pre-wrap">
+								{{ entry.notes }}
 							</p>
 						</li>
 					</ul>

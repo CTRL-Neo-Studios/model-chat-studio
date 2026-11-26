@@ -15,7 +15,13 @@ const listings = computed(() => data.value ?? [])
 type Row = (typeof listings.value)[number]
 
 // The form fills in from the server, and again from each save's answer.
-const form = reactive({ publishing: true, categories: [] as string[], maxSizeMb: 25 })
+const form = reactive({ publishing: 'open' as 'open' | 'reviewed' | 'off', categories: [] as string[], maxSizeMb: 25 })
+// Switching modes leaves what is listed as it is, and what waits still waits: each is approved or rejected.
+const MODES = [
+	{ label: 'Open', value: 'open', description: 'Published at once.' },
+	{ label: 'Reviewed', value: 'reviewed', description: 'Each publication and update waits for an admin or moderator to approve it (never their own).' },
+	{ label: 'Off', value: 'off', description: 'Only admins and moderators publish.' },
+]
 watch(settings, (value) => {
 	if (value) Object.assign(form, { publishing: value.publishing, categories: [...value.categories], maxSizeMb: value.maxSizeMb })
 }, { immediate: true })
@@ -64,9 +70,9 @@ const actions = (row: Row): DropdownMenuItem[][] => [[
 
 <template>
 	<AdminPanel title="Explore">
-		<UPageCard title="Publishing" description="Members browse and get either way. With publishing off, only admins and moderators publish." variant="subtle">
+		<UPageCard title="Publishing" description="Members browse and get in every mode." variant="subtle">
 			<div v-if="settings" class="flex flex-col gap-4">
-				<USwitch v-model="form.publishing" label="Members may publish to Explore" />
+				<URadioGroup v-model="form.publishing" :items="MODES" legend="Mode" />
 				<UFormField label="Categories" help="A listing may pick one. Removing one leaves the listings that use it as they are.">
 					<UInputTags v-model="form.categories" placeholder="Add a category" :max="30" :max-length="40" add-on-blur class="w-full" />
 				</UFormField>

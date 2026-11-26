@@ -1,3 +1,4 @@
+import { createError } from 'nuxt/server'
 import { and, asc, count, desc, eq, ilike, lte, or, type SQL, sql } from 'drizzle-orm'
 import { z } from 'zod'
 // Relative, not `#shared` or `hub:db`, so this module also loads in `bun test`.
@@ -97,33 +98,42 @@ async function versionFiles(db: Db, versionId: string) {
 }
 
 /**
- * A listing's page: its texts, publisher and counts, its current version's whole package for the preview with each
- * file's id, its versions and their notes, the listing it is based on when that is shown, and which version the
- * member got, if any. Never the publisher's own `source`.
+ * A listing's page: its texts, publisher and counts, a version's whole package for the preview with each file's id,
+ * its versions and their notes, the listing it is based on when that is shown, and which version the member got, if
+ * any. Never the publisher's own `source`. Members see approved versions only, and the current one; its publisher and
+ * admins and moderators see every version with its state, and may ask for one (`versionId`): the review is read on
+ * the page members will see. A listing with no approved version yet shows them its newest.
  */
-export async function listingPage(db: Db, listing: Listing, userId: string) {
+export async function listingPage(db: Db, listing: Listing, viewer: { id: string, staff: boolean }, versionId?: string) {
+	const seesAll = viewer.staff || listing.ownerId === viewer.id
 	const [[publisher], versions, [got], [basedOn], [starred]] = await Promise.all([
 		db.select({ username: tables.user.username, name: tables.user.name, avatarUrl: tables.user.avatarUrl }).from(tables.user).where(eq(tables.user.id, listing.ownerId)),
-		db.select({ id: tables.listingVersion.id, number: tables.listingVersion.number, notes: tables.listingVersion.notes, size: tables.listingVersion.size, createdAt: tables.listingVersion.createdAt })
+		db.select({ id: tables.listingVersion.id, number: tables.listingVersion.number, notes: tables.listingVersion.notes, size: tables.listingVersion.size, status: tables.listingVersion.status, reason: tables.listingVersion.reason, createdAt: tables.listingVersion.createdAt })
 			.from(tables.listingVersion).where(eq(tables.listingVersion.listingId, listing.id)).orderBy(desc(tables.listingVersion.number)),
 		db.select({ number: tables.listingVersion.number }).from(tables.acquisition)
 			.leftJoin(tables.listingVersion, eq(tables.listingVersion.id, tables.acquisition.versionId))
-			.where(and(eq(tables.acquisition.userId, userId), eq(tables.acquisition.listingId, listing.id)))
+			.where(and(eq(tables.acquisition.userId, viewer.id), eq(tables.acquisition.listingId, listing.id)))
 			.orderBy(desc(tables.acquisition.createdAt)).limit(1),
 		listing.basedOnId
 			? db.select({ id: tables.listing.id, name: tables.listing.name }).from(tables.listing).innerJoin(tables.user, eq(tables.user.id, tables.listing.ownerId)).where(and(eq(tables.listing.id, listing.basedOnId), shown))
 			: [],
-		db.select({ listingId: tables.star.listingId }).from(tables.star).where(and(eq(tables.star.userId, userId), eq(tables.star.listingId, listing.id))),
+		db.select({ listingId: tables.star.listingId }).from(tables.star).where(and(eq(tables.star.userId, viewer.id), eq(tables.star.listingId, listing.id))),
 	])
-	const [current] = listing.currentVersionId ? await db.select().from(tables.listingVersion).where(eq(tables.listingVersion.id, listing.currentVersionId)) : []
-	const files = current ? await versionFiles(db, current.id) : {}
+	const shownId = (seesAll && versionId && versions.some(version => version.id === versionId) ? versionId : null)
+		?? listing.currentVersionId
+		?? (seesAll ? versions[0]?.id : undefined)
+	const [version] = shownId ? await db.select().from(tables.listingVersion).where(eq(tables.listingVersion.id, shownId)) : []
+	const files = version ? await versionFiles(db, version.id) : {}
 	const { source: _source, ...visible } = listing
 	return {
 		listing: visible,
 		publisher: publisher!,
-		version: current && { number: current.number, createdAt: current.createdAt, content: current.content },
+		version: version && { id: version.id, number: version.number, status: version.status, reason: version.reason, notes: version.notes, createdAt: version.createdAt, content: version.content },
+		/** The version shown waits for review, and this viewer may review it: staff, not its publisher. */
+		reviewable: version?.status === 'pending' && viewer.staff && listing.ownerId !== viewer.id,
 		fileIds: Object.fromEntries(Object.entries(files).map(([key, file]) => [key, file.id])),
-		versions: versions.map(({ id: _id, ...version }) => version),
+		// An approved version's only reason is the note that nobody could review it, which members see too.
+		versions: seesAll ? versions : versions.filter(entry => entry.status === 'approved'),
 		basedOn: basedOn ?? null,
 		/** The version number the member got last; `null` when they never got it (a version since deleted reads 0). */
 		got: got ? got.number ?? 0 : null,
@@ -137,7 +147,7 @@ export async function listingPage(db: Db, listing: Listing, userId: string) {
  * listing counts once.
  */
 export async function getListing(db: Db, store: Store, listing: Listing, userId: string) {
-	if (!listing.currentVersionId) throw new Error('A listing without a version')
+	if (!listing.currentVersionId) throw createError({ status: 409, statusText: 'This listing is not on Explore yet: it waits for review' })
 	const [version] = await db.select().from(tables.listingVersion).where(eq(tables.listingVersion.id, listing.currentVersionId))
 	const files = await versionFiles(db, version!.id)
 	const made = await givePackage(db, store, {

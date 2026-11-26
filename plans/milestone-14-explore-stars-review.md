@@ -1,6 +1,6 @@
 # Milestone 14: Explore's stars, star lists and moderation
 
-Status: 14.1 built (2026-11-26); 14.2 next. Part of `roadmap-milestones-7-14.md`. One migration (`0024_explore_stars`, written in 14.1). Needs milestone 13.
+Status: 14.1 and 14.2 built (2026-11-26); 14.3 next. Part of `roadmap-milestones-7-14.md`. One migration (`0024_explore_stars`, written in 14.1). Needs milestone 13.
 
 Goal: members keep what they like on Explore and find it again, as stars and lists work on GitHub; and admins and moderators can require a review before anything is published, and act on what members report.
 
@@ -80,6 +80,17 @@ Built (14.1):
 
 Check in Chromium on the dev instance: two Characters published as the admin, "Alpha planner" first and "Beta writer" after. A member, on Alpha's card, chose "Add to a list…", made "Productivity" and saved: Alpha showed one star, its own. Beta added to "Productivity" too showed its star at once; unstarred again from its card, it left the list. On "Your stars", "All stars" and "Productivity" each held Alpha; with "Most starred", Alpha (1) came before the newer Beta (0). The listings, Characters and the member were deleted.
 
+Built (14.2):
+- The setting's publishing mode: `open`, `reviewed`, `off` (`PUBLISHING_MODES`); a value stored as a boolean before reads as `open` or `off`. `/admin/explore` offers the three as choices.
+- Version states (`server/utils/explore/listings.ts`): a version starts `approved` in open and off mode; in reviewed mode `pending`, unless nobody but its publisher could review it (no other active admin or moderator), when it goes up approved with the note "Not reviewed: there was no other admin or moderator to review it." (`NOT_REVIEWED`). A listing's current version is its newest approved one: a new listing waiting has none, and is `published: false`. While a version waits, another update is refused (409). Publishing and updates say whether they wait.
+- `exploreAbilities`: `readListing` hides a listing not yet approved from members, as an unlisted one; `review`: admins and moderators, never on their own publication ("Nobody reviews their own publication").
+- `server/utils/explore/reviews.ts`: `pendingReviews` (oldest first, each a new listing or an update, with the publisher's note and the reason an earlier submission was rejected) and `reviewVersion` (approve: the version becomes current, a listing's first approval dating its publication; reject with a reason: Explore stays as it was; a version not waiting is refused, 409). Routes: `GET /explore/reviews`, `POST /explore/versions/:id/review` (`{ approve: true }` or `{ reject: true, reason }`).
+- A listing's page: members see the current version and approved ones only; its publisher and admins and moderators see every version with its state, open any of them (`?version=`), and a reviewer reads a waiting one there with "Approve" and "Reject…" (the reason asked for). "Get" only once a version is on Explore. `myListings` carries every version's state for the publisher.
+- Screens: the publish and update dialogs say publications are reviewed; the toast says "Sent for review". `/explore/mine`: "Waiting for review" (with what stays on Explore meanwhile, and "Rejected before:" the earlier reason), "Rejected: the reason" with "Publish again…", "not on Explore yet", "not reviewed". `/admin/review` ("Review" among the admin tabs, for admins and moderators): the queue, each opening the listing's page on its version, a reviewer's own marked "Yours: another reviews it".
+- Tests: the ability table gained reviewed mode, a listing not yet approved, and reviewing (a moderator refused on their own); `test/review.test.ts`, against the database: open mode published at once; reviewed mode: a new listing waits unseen in the grid and refused to another member, read by a reviewer on its page as reviewable (not by its publisher), in the queue; approval puts it on Explore, dated anew; a rejection keeps it off with its reason, publishing again waits beside it, the queue showing both, and approval shows it; an update waits while version 1 stays for members, a second update is refused, a rejected one changes nothing, the next approved becomes current, and a decision on a version not waiting is refused; a moderator's publication waits for the admin and not for themselves; with the admin banned, the moderator's next goes up not reviewed, a member's still waits; back to open, what waits still waits; the boolean setting reads as a mode.
+
+Check in Chromium with three accounts (the admin, a publisher and a viewer): the admin chose "Reviewed" on `/admin/explore`. The publisher published a group folder: the dialog said publications are reviewed, the toast "Sent for review", "Your listings" showed it waiting. The viewer did not find it on Explore, and its address answered 404. The admin opened it from "Review" on the listing's page ("Version 1 waits for review", Approve, Reject…) and rejected it: "Say in the summary what the team helps with." The publisher read "Rejected:" with the reason and "Publish again…", published again with a note, and saw version 2 waiting with "Rejected before:" and the reason; the queue showed the note and the earlier reason. The admin approved version 2, and the viewer found the pack on Explore, its page showing version 2 only. The mode was set back to open; the listing and both members were deleted.
+
 ## 7. Ceilings and things left out
 
 - Lists are private: no public lists, no following someone's stars.
@@ -87,3 +98,6 @@ Check in Chromium on the dev instance: two Characters published as the admin, "A
 - A review approves or rejects a whole publication; a reviewer cannot edit it.
 - No automatic screening of content: review and reports are done by people.
 - No appeal other than publishing again.
+- Review covers what a listing holds (its versions), not its texts: a publisher changes the name, summary, description, tags and category of a listed listing without review. Reports (14.3) are the answer to a text that should not be there.
+- "Publish again" makes a new version; texts a rejection asked about are changed with "Edit…", and are not part of the submission.
+- One submission at a time: while a version waits, another update is refused, not queued.

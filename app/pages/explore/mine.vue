@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { DropdownMenuItem } from '@nuxt/ui'
-import { formatDistanceToNow } from 'date-fns'
 
 useHead({ title: 'Your listings' })
 
@@ -15,13 +14,25 @@ const STATUS = {
 	removed: { label: 'Removed', color: 'error' },
 } as const
 
-// A removed listing can only be deleted: a moderator took it off Explore.
+/** Its status, or, until a version is approved, where its review stands. */
+function badge(listing: Listing): { label: string, color: 'success' | 'neutral' | 'error' | 'info' } {
+	if (listing.status === 'removed' || listing.version) return STATUS[listing.status]
+	return listing.versions[0]?.status === 'rejected' ? { label: 'Rejected', color: 'error' } : { label: 'Waiting for review', color: 'info' }
+}
+/** A waiting version's earlier rejection, kept beside it. */
+const earlierReason = (listing: Listing) => listing.versions[1]?.status === 'rejected' ? listing.versions[1].reason : null
+
+// A removed listing can only be deleted: a moderator took it off Explore. While a version waits, no other is taken.
 const actions = (listing: Listing): DropdownMenuItem[][] => [
 	...(listing.status === 'removed'
 		? []
 		: [[
 				{ label: 'Edit…', icon: 'i-lucide-pencil', onSelect: () => edit(listing) },
-				{ label: 'Publish an update…', icon: 'i-lucide-telescope', onSelect: () => update(listing) },
+				...(listing.versions[0]?.status === 'pending'
+					? []
+					: listing.versions[0]?.status === 'rejected'
+						? [{ label: 'Publish again…', icon: 'i-lucide-telescope', onSelect: () => update(listing, true) }]
+						: [{ label: 'Publish an update…', icon: 'i-lucide-telescope', onSelect: () => update(listing) }]),
 				listing.status === 'listed'
 					? { label: 'Unlist', icon: 'i-lucide-eye-off', onSelect: () => setListed(listing, false) }
 					: { label: 'List on Explore', icon: 'i-lucide-eye', onSelect: () => setListed(listing, true) },
@@ -55,16 +66,19 @@ const actions = (listing: Listing): DropdownMenuItem[][] => [
 						<div class="flex items-center gap-3">
 							<UIcon :name="LISTING_KINDS[listing.kind].icon" class="size-5 text-muted shrink-0" />
 							<div class="flex-1 min-w-0">
-								<p class="font-medium text-highlighted truncate">
+								<NuxtLink :to="`/explore/${listing.id}`" class="block font-medium text-highlighted truncate hover:text-primary">
 									{{ listing.name }}
-								</p>
+								</NuxtLink>
 								<p class="text-xs text-muted truncate">
-									{{ LISTING_KINDS[listing.kind].label }} · version {{ listing.version }} · got by {{ listing.gets }} · published {{ formatDistanceToNow(new Date(listing.publishedAt), { addSuffix: true }) }}<template v-if="listing.category">
+									{{ LISTING_KINDS[listing.kind].label }} · {{ listing.version ? `version ${listing.version}` : 'not on Explore yet' }} · got by {{ listing.gets }} · {{ listing.stars }} {{ listing.stars === 1 ? 'star' : 'stars' }}<template v-if="listing.category">
 										· {{ listing.category }}
+									</template>
+									<template v-if="listing.versions[0]?.status === 'approved' && listing.versions[0].reason">
+										· not reviewed
 									</template>
 								</p>
 							</div>
-							<UBadge :label="STATUS[listing.status].label" :color="STATUS[listing.status].color" variant="subtle" />
+							<UBadge :label="badge(listing).label" :color="badge(listing).color" variant="subtle" />
 							<UDropdownMenu :items="actions(listing)" :content="{ align: 'end' }">
 								<UButton icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="sm" :aria-label="`Actions for ${listing.name}`" />
 							</UDropdownMenu>
@@ -73,6 +87,23 @@ const actions = (listing: Listing): DropdownMenuItem[][] => [
 							{{ listing.summary }}
 						</p>
 						<UAlert v-if="listing.status === 'removed'" color="error" variant="subtle" icon="i-lucide-shield-alert" title="Removed by a moderator" :description="listing.statusReason ?? undefined" />
+						<UAlert
+							v-else-if="listing.versions[0]?.status === 'pending'"
+							color="info"
+							variant="subtle"
+							icon="i-lucide-hourglass"
+							:title="`Version ${listing.versions[0].number} is waiting for review`"
+							:description="[listing.version ? `Version ${listing.version} stays on Explore meanwhile.` : 'It shows on Explore once an admin or moderator approves it.', earlierReason(listing) ? `Rejected before: ${earlierReason(listing)}` : ''].join(' ').trim()"
+						/>
+						<UAlert
+							v-else-if="listing.versions[0]?.status === 'rejected'"
+							color="error"
+							variant="subtle"
+							icon="i-lucide-circle-x"
+							:title="`Rejected: ${listing.versions[0].reason}`"
+							:description="listing.version ? `Version ${listing.version} stays on Explore. Change what is needed and publish again.` : 'It is not on Explore. Change what is needed and publish again.'"
+							:actions="[{ label: 'Publish again…', icon: 'i-lucide-telescope', color: 'error', variant: 'subtle', onClick: () => update(listing, true) }]"
+						/>
 					</li>
 				</ul>
 			</div>

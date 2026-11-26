@@ -109,7 +109,7 @@ test('each sort, with featured listings first', async () => {
 
 test('a listing\'s page holds what is in it; "Get" makes the member\'s copies, counts once, and the page says which version they have', async () => {
 	const team = (await findListing(db, ids.team))!
-	const page = await listingPage(db, team, users.bob)
+	const page = await listingPage(db, team, { id: users.bob, staff: false })
 	expect(page.got).toBeNull()
 	expect(page.publisher.username).toBe('alice')
 	expect('source' in page.listing).toBe(false)
@@ -127,7 +127,7 @@ test('a listing\'s page holds what is in it; "Get" makes the member\'s copies, c
 
 	// A new version: the member has version 1 of 2.
 	await publishUpdate(db, store, { listing: team, notes: 'A reviewer joins', settings })
-	const later = await listingPage(db, (await findListing(db, ids.team))!, users.bob)
+	const later = await listingPage(db, (await findListing(db, ids.team))!, { id: users.bob, staff: false })
 	expect([later.got, later.version!.number]).toEqual([1, 2])
 	expect(later.versions.map(version => [version.number, version.notes])).toEqual([[2, 'A reviewer joins'], [1, '']])
 })

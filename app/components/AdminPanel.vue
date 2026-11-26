@@ -9,6 +9,7 @@ const { user } = useUserSession()
 const links = computed(() => [
 	{ label: 'Users', icon: 'i-lucide-users', to: '/admin/users' },
 	{ label: 'Explore', icon: 'i-lucide-telescope', to: '/admin/explore' },
+	{ label: 'Review', icon: 'i-lucide-shield-check', to: '/admin/review' },
 	...(user.value?.role === 'admin'
 		? [
 				{ label: 'Invites', icon: 'i-lucide-ticket', to: '/admin/invites' },
