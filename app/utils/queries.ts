@@ -102,6 +102,12 @@ export const exploreListingQuery = defineQueryOptions((id: string) => ({
 	query: () => useRequestFetch()(`/api/v1/explore/listings/${id}`),
 }))
 
+/** Admins and moderators: every listing, whatever its status. */
+export const adminListingsQuery = defineQueryOptions({
+	key: ['admin', 'listings'],
+	query: () => useRequestFetch()('/api/v1/admin/listings'),
+})
+
 export const modelProfilesQuery = defineQueryOptions({
 	key: ['model-profiles'],
 	query: () => useRequestFetch()('/api/v1/model-profiles'),

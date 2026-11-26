@@ -5,9 +5,10 @@ defineProps<{
 
 const { user } = useUserSession()
 
-// Moderators manage users only; the rest is for admins. The API enforces the same.
+// Moderators manage users and Explore; the rest is for admins. The API enforces the same.
 const links = computed(() => [
 	{ label: 'Users', icon: 'i-lucide-users', to: '/admin/users' },
+	{ label: 'Explore', icon: 'i-lucide-telescope', to: '/admin/explore' },
 	...(user.value?.role === 'admin'
 		? [
 				{ label: 'Invites', icon: 'i-lucide-ticket', to: '/admin/invites' },

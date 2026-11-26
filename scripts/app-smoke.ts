@@ -1,7 +1,7 @@
-// Milestone 12 smoke run: drives a running instance through its own API, as the browser does, on each platform
+// Milestone 13 smoke run: drives a running instance through its own API, as the browser does, on each platform
 // that has an instance key. Run it as an admin: it switches the active platform and switches it back.
 //
-//   SESSION=<value of the nuxt-auth-session cookie> [BASE_URL=http://localhost:3000] bun scripts/app-smoke.ts [--search]
+//   SESSION=<value of the nuxt-auth-session cookie> [SECOND_SESSION=<another member's>] [BASE_URL=http://localhost:3000] bun scripts/app-smoke.ts [--search]
 //
 // Per platform: a plain turn, an image and a PDF, a regenerate, switching to the earlier version and a branch from
 // the first message, two models answering one message at once, a library note found and read with the file tools,
@@ -10,11 +10,13 @@
 // defaults are a group (the second speaker reads the first one's chart), a message refused after an older tip and
 // answered after the tip, dictation, a piece read aloud in the platform's default voice, an image drawn by the
 // model's tool call and one by `/image` (each about $0.01, once an image model is set), the chat exported with its
-// attachments, imported and answering as a new chat, and found in the all-chats download, the spend ledger, and deleting
-// the chat. `--search` adds web search to the library question and a web search turn (on OpenRouter each costs about
-// $0.02). The test files come from `scripts/smoke-files.ts` (macOS makes them; elsewhere `--wav`, `--image`, `--pdf`).
+// attachments, imported and answering as a new chat, and found in the all-chats download, a pack published to Explore,
+// found and got by the second member and one round of its group chat (with SECOND_SESSION), the spend ledger, and
+// deleting the chat. `--search` adds web search to the library question and a web search turn (on OpenRouter each
+// costs about $0.02). The test files come from `scripts/smoke-files.ts` (macOS makes them; elsewhere `--wav`,
+// `--image`, `--pdf`).
 import { IMAGE_WORD, makeSmokeFiles, PDF_WORD, SENTENCE } from './smoke-files'
-import { api, BASE, cookieHeader, csrf, turn, type Turn } from './smoke-client'
+import { api, BASE, cookieHeader, csrf, signIn, turn, type Turn } from './smoke-client'
 
 let failures = 0
 async function step(name: string, run: () => Promise<string>) {
@@ -34,6 +36,8 @@ interface Settings { inferencePlatform: PlatformId | null, platforms: Record<Pla
 interface Catalog { platform: { id: PlatformId } | null, defaultModel: string | null, models: { id: string, inputModalities: string[], webSearch: boolean }[], images: { available: boolean, reason: string | null } }
 
 const files = makeSmokeFiles()
+// A second member, for Explore's step: they get what the admin publishes.
+const second = process.env.SECOND_SESSION ? await signIn(process.env.SECOND_SESSION, 'SECOND_SESSION') : null
 const settings = await api<Settings>('GET', '/admin/settings')
 const original = settings.inferencePlatform
 const platforms = (['openrouter', 'deepseek'] as const).filter(id => settings.platforms[id].hasKey)
@@ -358,6 +362,45 @@ try {
 			}
 			finally {
 				await api('DELETE', `/chats/${imported.id}`)
+			}
+		})
+
+		await step('explore', async () => {
+			if (!second) return 'skipped: set SECOND_SESSION to a second member\'s session to get the pack as them'
+			// The admin publishes a pack: a folder whose defaults are a group of two Characters, each with a word to say.
+			const word = `smoke${Date.now().toString(36)}`
+			const blank = { color: null, libraryIds: [], greetings: [], examples: '', note: '', creatorNotes: '', tags: [] }
+			const [engineer, designer] = await Promise.all(['engineer', 'designer'].map(name => api<{ id: string }>('POST', '/characters', { ...blank, name: `${name[0]!.toUpperCase()}${name.slice(1)}`, instructions: `Whatever you are asked, reply with the single word: ${name}` })))
+			const folder = await api<{ id: string }>('POST', '/folders', { name: 'Smoke team', parentId: null })
+			let listingId: string | undefined
+			let made: { characterIds: string[], folderId: string | null } | undefined
+			try {
+				await api('PATCH', `/folders/${folder.id}`, { defaults: { libraryIds: [], structureProfileId: null, mode: 'group', models: [{ modelId: model.id, characterId: engineer!.id }, { modelId: model.id, characterId: designer!.id }] } })
+				listingId = (await api<{ listing: { id: string } }>('POST', '/explore/listings', { name: 'Smoke team', summary: `A smoke run's pack, ${word}`, description: '', tags: [], category: null, source: { folderId: folder.id } })).listing.id
+				// The second member finds it by a word in its summary, gets it, and starts a chat in the folder they got.
+				const found = await second.api<{ listings: { id: string }[] }>('GET', `/explore/listings?q=${word}`)
+				if (found.listings[0]?.id !== listingId) throw new Error(`searching "${word}" found ${found.listings.length} listings, not the pack`)
+				made = await second.api<{ characterIds: string[], folderId: string | null }>('POST', `/explore/listings/${listingId}/get`)
+				const chatId = crypto.randomUUID()
+				await second.api('POST', '/chats', { id: chatId, folderId: made.folderId, message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'Hello, both of you.' }] } })
+				const chat = await second.api<{ mode: string, models: { id: string, characterId: string | null }[] }>('GET', `/chats/${chatId}`)
+				if (chat.mode !== 'group' || chat.models.map(lane => lane.characterId).join() !== made.characterIds.join()) throw new Error(`the chat started as ${chat.mode} with ${chat.models.length} lanes, not the pack's`)
+				// One round of its group, in lane order.
+				const message = { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'Who are you?' }] }
+				const answers: Turn[] = []
+				for (const lane of chat.models) answers.push(await second.turn(chatId, lane.id, { trigger: 'submit-message', message }))
+				if (!/engineer/i.test(answers[0]!.text) || !/designer/i.test(answers[1]!.text)) throw new Error(`the round answered ${summary(answers[0]!)} and ${summary(answers[1]!)}`)
+				return `found by "${word}", got as ${made.characterIds.length} Characters and a folder; the round: ${summary(answers[0]!)}, then ${summary(answers[1]!)}`
+			}
+			finally {
+				if (made?.folderId) {
+					for (const { id } of (await second.api<{ id: string, folderId: string | null }[]>('GET', '/chats')).filter(entry => entry.folderId === made!.folderId)) await second.api('DELETE', `/chats/${id}`)
+					await second.api('DELETE', `/folders/${made.folderId}`)
+				}
+				for (const id of made?.characterIds ?? []) await second.api('DELETE', `/characters/${id}`)
+				if (listingId) await api('DELETE', `/explore/listings/${listingId}`)
+				await api('DELETE', `/folders/${folder.id}`)
+				for (const { id } of [engineer!, designer!]) await api('DELETE', `/characters/${id}`)
 			}
 		})
 

@@ -138,3 +138,26 @@ export async function getListing(db: Db, store: Store, listing: Listing, userId:
 	})
 	return { ...made, version: version!.number }
 }
+
+/**
+ * Every listing, whatever its status, for admins and moderators: featured first, then newest, with its publisher and
+ * current version.
+ */
+// ponytail: one list, not paged; page it when an instance has thousands of listings.
+export async function allListings(db: Db) {
+	return await db.select({
+		id: tables.listing.id,
+		kind: tables.listing.kind,
+		name: tables.listing.name,
+		status: tables.listing.status,
+		statusReason: tables.listing.statusReason,
+		featured: tables.listing.featured,
+		gets: tables.listing.gets,
+		publishedAt: tables.listing.publishedAt,
+		version: tables.listingVersion.number,
+		publisher: { username: tables.user.username, name: tables.user.name, avatarUrl: tables.user.avatarUrl },
+	}).from(tables.listing)
+		.innerJoin(tables.user, eq(tables.user.id, tables.listing.ownerId))
+		.leftJoin(tables.listingVersion, eq(tables.listingVersion.id, tables.listing.currentVersionId))
+		.orderBy(desc(tables.listing.featured), desc(tables.listing.publishedAt))
+}

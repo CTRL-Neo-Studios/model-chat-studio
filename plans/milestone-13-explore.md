@@ -1,6 +1,6 @@
 # Milestone 13: Explore, a place to publish and get content
 
-Status: spike O and 13.1 to 13.3 built (2026-11-26); 13.4 next. Part of `roadmap-milestones-7-14.md`. One migration (`0023_explore`, written in 13.2). Needs 7.1 (folder defaults, built) and milestone 9 (so a published Character carries its avatar, greetings and lorebook). It does not need 10 to 12 and can be built right after 9.
+Status: complete (2026-11-26): spike O and phases 13.1 to 13.4 built, the live run passed. Part of `roadmap-milestones-7-14.md`. One migration (`0023_explore`, written in 13.2). Needs 7.1 (folder defaults, built) and milestone 9 (so a published Character carries its avatar, greetings and lorebook). It does not need 10 to 12 and can be built right after 9.
 
 Goal: members publish what they have made (Characters, libraries, structure profiles, and whole setups such as a "Full-stack Dev Team") to a page everyone on the instance can browse, and get what others published. No money changes hands. Inspired by nuxt.com/modules: a searchable grid of cards with a kind, tags and counts, and a page per entry. Stars, star lists, review before publishing and reports are milestone 14.
 
@@ -114,6 +114,15 @@ Built (13.3):
 Check in Chromium with two accounts against a fixture (DeepSeek faked, requests recorded): the admin published a pack from a folder of an Engineer and a Designer, each with a marker in its instructions, summary "An Engineer and a Designer answering in turn." A second member typed "turn" on Explore and found it; on its page read the Engineer's instructions, marker included, before getting it; "Get" made 2 Characters and a folder with its setup, the page then showing "You have this" and "got by 1"; "Open the folder", "New chat here", and one message started a group chat ("2 models in a group") whose two requests held the Engineer's instructions and then the Designer's. The listing, the Characters, the folders and the member were deleted.
 
 Seen once while seeding the check, not reproduced: publishing a folder's setup right after saving it answered "There is nothing to publish"; the same request a moment later published, and six more tries (publish and preview right after the save) all worked. Noted in case it is the database's read-after-write.
+
+Built (13.4):
+- `/admin/explore` ("Explore" among the admin tabs, for admins and moderators): publishing on or off, the categories, the largest listing in MB (at most 25), saved through `PATCH /explore/settings`; every listing whatever its status (`GET /admin/listings`, featured first, then newest; not paged), each with its publisher, version, status and a removed one's reason, and Open, Feature or Stop featuring, Remove… (asking the reason the publisher sees), Restore, Delete.
+- `scripts/smoke-client.ts`: `signIn(session, name)` makes a client for any session; the admin's client from `SESSION` is made with it, so the scripts that use it are unchanged.
+- `scripts/app-smoke.ts`, step "explore", with `SECOND_SESSION` (another member's session; skipped without it): the admin publishes a pack (a group folder of an Engineer and a Designer, each told to answer with its own name, on the platform's model); the second member finds it by a word in its summary, gets it, starts a chat in the folder they got, which starts as a group of their copies, and runs one round, Engineer then Designer; both sides' items are deleted after.
+
+Check in Chromium on the dev instance: two Characters published as the admin, "Alpha guide" first and "Beta critic" after. On `/admin/explore` the admin turned publishing off, added the category "Roleplay", saved, and featured "Alpha guide", which the table then listed first with its star. A member then saw "Alpha guide" (marked Featured) before the newer "Beta critic" on Explore, got "Beta critic" ("You have this"), and on "Publish to Explore…" for that copy saw "Publishing is turned off" with Publish disabled; the same request sent to the server was refused, 403 "Publishing to Explore is turned off on this instance". The settings were set back and the listings and Characters deleted.
+
+Live run (2026-11-26, both platforms with real keys, about $0.0074 in all): `scripts/app-smoke.ts` with the admin and a second member made for the run. Every step passed on OpenRouter and on DeepSeek. "Explore" on each: the pack found by its word, got as 2 Characters and a folder, and the round answered "engineer", then "designer" (OpenRouter $0.00016 and $0.00014, DeepSeek $0.00015 and $0.00016). Images were skipped (no image model chosen), read-aloud on OpenRouter too (not set up there). The member, its copies and its usage ($0.00068) were deleted; nothing of Explore was left, the setting at its defaults.
 
 ## 7. To verify before building
 
