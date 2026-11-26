@@ -4,6 +4,6 @@ import { eq } from 'drizzle-orm'
 import { requireChat } from '#server/utils/chat/access'
 
 export default defineEventHandler(async (event) => {
-	const chat = await requireChat(event, 'manageChat')
+	const chat = await requireChat(event, 'writeChat')
 	return await db.select().from(schema.vote).where(eq(schema.vote.chatId, chat.id))
 })

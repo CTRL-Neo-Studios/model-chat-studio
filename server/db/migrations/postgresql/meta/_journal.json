@@ -148,6 +148,34 @@
       "when": 1795451570534,
       "tag": "0020_character_cards",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1795618144923,
+      "tag": "0021_lorebooks",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1795633330341,
+      "tag": "0022_shared_editing",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1795713432755,
+      "tag": "0023_explore",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1795726180150,
+      "tag": "0024_explore_stars",
+      "breakpoints": true
     }
   ]
 }

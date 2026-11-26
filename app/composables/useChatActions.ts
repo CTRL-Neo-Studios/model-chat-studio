@@ -1,4 +1,4 @@
-import { LazyModalConfirm, LazyModalRename } from '#components'
+import { LazyModalConfirm, LazyModalExportChat, LazyModalRename } from '#components'
 
 export function useChatActions() {
 	const route = useRoute()
@@ -8,6 +8,7 @@ export function useChatActions() {
 	const { csrf, headerName } = useCsrf()
 
 	const renameModal = overlay.create(LazyModalRename)
+	const exportModal = overlay.create(LazyModalExportChat)
 	const deleteModal = overlay.create(LazyModalConfirm, {
 		props: {
 			title: 'Delete chat',
@@ -68,5 +69,43 @@ export function useChatActions() {
 		return true
 	}
 
-	return { renameChat, deleteChat }
+	/** "Export…": the dialog that picks the format and downloads it. */
+	function exportChat(id: string) {
+		exportModal.open({ chatId: id })
+	}
+
+	/**
+	 * "Import chat…": a chat file (or a format a reader takes) becomes a new chat, in `folderId` when given, which then
+	 * opens; what the import changed is noted.
+	 */
+	const picker = useFileDialog({ accept: '.json,application/json', multiple: false, reset: true })
+	let importFolder: string | undefined
+	function importChat(folderId?: string) {
+		importFolder = folderId
+		picker.open()
+	}
+	picker.onChange(async (files) => {
+		const file = files?.[0]
+		if (!file) return
+		const form = new FormData()
+		form.append('file', file)
+		if (importFolder) form.append('folderId', importFolder)
+		try {
+			const imported = await $fetch<{ id: string, notes: string[] }>('/api/v1/chats/import', { method: 'POST', headers: { [headerName]: csrf }, body: form })
+			await queryCache.invalidateQueries({ key: chatsQuery.key, exact: true })
+			await navigateTo(`/chat/${imported.id}`)
+			toast.add({
+				title: 'Chat imported',
+				description: imported.notes.length ? imported.notes.join('. ').concat('.').replace(/^./, letter => letter.toUpperCase()) : undefined,
+				icon: 'i-lucide-file-up',
+				color: imported.notes.length ? 'warning' : 'success',
+				duration: imported.notes.length ? 15_000 : undefined,
+			})
+		}
+		catch (error) {
+			toast.add({ title: 'The chat could not be imported', description: serverMessage(error), icon: 'i-lucide-alert-circle', color: 'error' })
+		}
+	})
+
+	return { renameChat, deleteChat, exportChat, importChat }
 }

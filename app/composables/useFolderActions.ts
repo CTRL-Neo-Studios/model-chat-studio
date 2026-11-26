@@ -14,7 +14,7 @@ export function useFolderActions(chats: () => UIChat[]) {
 	const overlay = useOverlay()
 	const queryCache = useQueryCache()
 	const act = useApiAction()
-	const { renameChat, deleteChat } = useChatActions()
+	const { renameChat, deleteChat, exportChat, importChat } = useChatActions()
 	const { pinnedFirst, pinItem } = usePins()
 
 	const { data: folderList } = useQuery(foldersQuery)
@@ -25,6 +25,7 @@ export function useFolderActions(chats: () => UIChat[]) {
 	const moveModal = overlay.create(LazyModalMoveTo)
 	const confirmModal = overlay.create(LazyModalConfirm)
 	const defaultsModal = overlay.create(LazyModalFolderDefaults)
+	const { publish } = useListingActions()
 
 	// Open folders in the sidebar, kept across visits; a cookie so the server renders them open too.
 	const expanded = useCookie<string[]>('sidebar-folders', { default: () => [], sameSite: 'lax' })
@@ -169,7 +170,10 @@ export function useFolderActions(chats: () => UIChat[]) {
 		return [[
 			...(route.path !== page ? [{ label: 'Open folder', icon: 'i-lucide-folder-open', to: page }] : []),
 			{ label: 'New chat here', icon: 'i-lucide-circle-plus', onSelect: () => navigateTo({ path: '/', query: { folder: folder.id } }) },
+			{ label: 'Import a chat here…', icon: 'i-lucide-file-up', onSelect: () => importChat(folder.id) },
 			{ label: 'Defaults…', icon: 'i-lucide-library-big', onSelect: () => editDefaults(folder) },
+			// A folder's setup, with what it names, as a pack.
+			...(folder.defaults ? [{ label: 'Publish to Explore…', icon: 'i-lucide-telescope', onSelect: () => publish({ folderId: folder.id }, folder.name) }] : []),
 		], [
 			pinItem('chatFolder', folder.id),
 			{ label: 'New folder', icon: 'i-lucide-folder-plus', onSelect: () => createFolder(folder.id) },
@@ -186,6 +190,7 @@ export function useFolderActions(chats: () => UIChat[]) {
 			pinItem('chat', chat.id),
 			{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => renameChat(chat.id, chat.label === 'Untitled' ? '' : chat.label) },
 			{ label: 'Move to…', icon: 'i-lucide-folder-input', onSelect: () => moveTo('chat', chat.id, chat.label) },
+			{ label: 'Export…', icon: 'i-lucide-download', onSelect: () => exportChat(chat.id) },
 			...(folder ? [{ label: 'Use as the folder\'s defaults…', icon: 'i-lucide-folder-cog', onSelect: () => setupAsDefaults(chat.id, folder) }] : []),
 		], [
 			{ label: 'Delete', icon: 'i-lucide-trash', color: 'error' as const, onSelect: () => deleteChat(chat.id) },

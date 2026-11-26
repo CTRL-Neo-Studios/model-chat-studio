@@ -91,3 +91,22 @@ test('0019 chains each user message and summary to the user message before it, a
 	expect(await db.select({ id: schema.chat.id, leafId: schema.chat.leafId }).from(schema.chat).orderBy(asc(schema.chat.id)))
 		.toEqual([{ id: u(2), leafId: 'u3' }, { id: u(3), leafId: null }])
 })
+
+test('0022 makes existing shares viewers and the chat\'s owner the sender of its user messages', async () => {
+	const u = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
+	const db = await createTestDb({
+		tag: '0022_shared_editing',
+		seed: client => client.exec(`
+			INSERT INTO "user" ("id", "githubId", "username") VALUES ('${u(1)}', 1, 'owner'), ('${u(2)}', 2, 'reader');
+			INSERT INTO "chat" ("id", "userId") VALUES ('${u(3)}', '${u(1)}');
+			INSERT INTO "chatShare" ("chatId", "userId") VALUES ('${u(3)}', '${u(2)}');
+			INSERT INTO "message" ("id", "chatId", "role", "parts", "parentId") VALUES
+				('u1', '${u(3)}', 'user', '[]', NULL),
+				('a1', '${u(3)}', 'assistant', '[]', 'u1'),
+				('s1', '${u(3)}', 'system', '[]', 'u1');
+		`),
+	})
+	expect(await db.select({ role: schema.chatShare.role }).from(schema.chatShare)).toEqual([{ role: 'viewer' }])
+	expect(Object.fromEntries((await db.select({ id: schema.message.id, userId: schema.message.userId }).from(schema.message)).map(row => [row.id, row.userId])))
+		.toEqual({ u1: u(1), a1: null, s1: null })
+})

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { EditorToolbarItem } from '@nuxt/ui'
 import { FILE_UPLOAD } from '#shared/utils/file'
+import type { Lore } from '#shared/utils/lorebook'
 
 /** The open entry of a library: a note to edit, a file to preview, a folder; each with its tags. */
 const props = defineProps<{
@@ -57,6 +58,16 @@ onBeforeUnmount(() => {
 })
 const unsaved = computed(() => saving.value || (text.value !== undefined && text.value !== saved))
 
+// In a lorebook, a note's tags are its keywords, and its options are under "Advanced".
+const { data: library } = useQuery(() => libraryQuery(props.libraryId))
+const isLorebook = computed(() => props.entry.kind === 'note' && !!library.value?.lorebook?.on)
+async function saveLore(lore: Lore) {
+	if (!await act(url.value, { method: 'PATCH', body: { lore } })) return
+	const key = libraryEntryQuery({ libraryId: props.libraryId, entryId: props.entry.id }).key
+	const cached = queryCache.getQueryData(key)
+	if (cached) queryCache.setQueryData(key, { ...cached, lore: { ...lore, ...(cached.lore?.kept && { kept: cached.lore.kept }) } })
+}
+
 const toolbar: EditorToolbarItem[][] = [[
 	{ kind: 'undo', icon: 'i-lucide-undo', tooltip: { text: 'Undo' } },
 	{ kind: 'redo', icon: 'i-lucide-redo', tooltip: { text: 'Redo' } },
@@ -81,10 +92,7 @@ const toolbar: EditorToolbarItem[][] = [[
 const fileUrl = computed(() => props.entry.fileId ? `/api/v1/files/${props.entry.fileId}` : '')
 const isImage = computed(() => (FILE_UPLOAD.imageTypes as readonly string[]).includes(props.entry.mediaType ?? ''))
 const isPdf = computed(() => props.entry.mediaType === FILE_UPLOAD.pdfType)
-const size = computed(() => {
-	const bytes = props.entry.size ?? 0
-	return bytes < 1024 ? `${bytes} B` : bytes < 1024 ** 2 ? `${(bytes / 1024).toFixed(1)} kB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`
-})
+const size = computed(() => fileSize(props.entry.size ?? 0))
 </script>
 
 <template>
@@ -97,7 +105,7 @@ const size = computed(() => {
 			<span v-else-if="entry.kind === 'file'" class="text-xs text-muted">{{ size }}</span>
 			<UInputTags
 				:model-value="entry.tags"
-				placeholder="Add tags"
+				:placeholder="isLorebook ? 'Add keywords' : 'Add tags'"
 				:max="20"
 				:max-length="50"
 				add-on-blur
@@ -106,12 +114,14 @@ const size = computed(() => {
 				size="sm"
 				variant="subtle"
 				icon="i-lucide-tag"
-				aria-label="Tags"
+				:aria-label="isLorebook ? 'Keywords' : 'Tags'"
 				:disabled="readonly"
 				class="ms-auto min-w-56"
 				@update:model-value="saveTags"
 			/>
 		</div>
+
+		<LibraryLoreOptions v-if="isLorebook && full" :lore="full.lore" :readonly="readonly" @save="saveLore" />
 
 		<!-- The editor is the browser's; the server shows the placeholder, so an entry opened from a link hydrates cleanly. -->
 		<ClientOnly v-if="entry.kind === 'note'">

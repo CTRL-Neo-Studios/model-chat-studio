@@ -18,9 +18,11 @@ import {
 import {relations, sql} from "drizzle-orm";
 import type {UIMessage} from "ai";
 import {type ChatSettings, type ContextBlock, LANE_COLORS, type MessageMetadata, type ModelParams} from "../../shared/utils/chat";
+import type {Lore, Lorebook} from "../../shared/utils/lorebook";
 import type {UserPreferences} from "../../shared/utils/preferences";
 import type {ProfileBlock} from "../../shared/utils/structureProfile";
 import type {FolderDefaults} from "../../shared/utils/folderDefaults";
+import type {Package, PackageCopies, PackageSource} from "../../shared/utils/package";
 
 const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' })
 
@@ -194,6 +196,8 @@ export const chatModel = pgTable("chatModel", {
 export const chatShare = pgTable("chatShare", {
 	chatId: uuid().notNull().references(() => chat.id, { onDelete: "cascade" }),
 	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	/** `viewer` reads the chat; `editor` also takes part: sends, edits, votes, switches (milestone 11). */
+	role: text({ enum: ["viewer", "editor"] }).notNull().default("viewer"),
 	createdAt,
 }, (t) => [
 	primaryKey({ columns: [t.chatId, t.userId] }),
@@ -215,6 +219,8 @@ export const message = pgTable("message", {
 	metadata: jsonb().$type<MessageMetadata>(),
 	/** The lane that wrote an answer; `null` on user messages and on answers of a deleted lane. */
 	chatModelId: uuid().references(() => chatModel.id, { onDelete: "set null" }),
+	/** Who sent a user message: the owner or an editor; `null` on answers and summaries, and once the sender is gone. */
+	userId: uuid().references(() => user.id, { onDelete: "set null" }),
 	/** On answers, the version shown: a lane's other answers to the same message are its earlier versions. */
 	active: boolean().notNull().default(true),
 	createdAt,
@@ -260,6 +266,8 @@ export const library = pgTable("library", {
 	ownerId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
 	name: text().notNull(),
 	description: text(),
+	/** The lorebook switch and the book's options (milestone 9 plan, section 2b); `null` for an ordinary library. */
+	lorebook: jsonb().$type<Lorebook>(),
 
 	...createdUpdatedAtColumns
 }, (t) => [
@@ -353,6 +361,8 @@ export const libraryEntry = pgTable("libraryEntry", {
 	fileId: uuid().references(() => file.id, { onDelete: "cascade" }),
 	/** Markdown, for a note. */
 	content: text(),
+	/** A note's lorebook options (section 2b); `null` when it has none. Kept when the library's switch is off. */
+	lore: jsonb().$type<Lore>(),
 	/**
 	 * The name and text of a note or text file, with words split by the app (`Intl.Segmenter`, so Chinese words are
 	 * separate) for full-text search. `null` until filled: search fills what is missing, and a change of name or text
@@ -388,7 +398,7 @@ export const usageEvent = pgTable("usageEvent", {
 	id: uuid().primaryKey().defaultRandom(),
 	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
 	chatId: uuid().references(() => chat.id, { onDelete: "set null" }),
-	kind: text({ enum: ["chat", "title", "stt", "parse", "compact", "decision"] }).notNull(),
+	kind: text({ enum: ["chat", "title", "stt", "tts", "image", "parse", "compact", "decision"] }).notNull(),
 	platform: text({ enum: inferencePlatforms }).notNull(),
 	model: text(),
 	provider: text(),
@@ -418,6 +428,132 @@ export const pin = pgTable("pin", {
 	createdAt,
 }, (t) => [
 	primaryKey({ columns: [t.userId, t.kind, t.targetId] }),
+]);
+
+export const listingKinds = ["character", "library", "structureProfile", "pack"] as const
+export const listingStatuses = ["listed", "unlisted", "removed"] as const
+export const versionStatuses = ["approved", "pending", "rejected"] as const
+
+/** What a member published to Explore (milestone 13): its texts, and its content as versions of a package. */
+export const listing = pgTable("listing", {
+	id: uuid().primaryKey().defaultRandom(),
+	ownerId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	kind: text({ enum: listingKinds }).notNull(),
+	name: text().notNull(),
+	summary: text().notNull().default(""),
+	/** Markdown, shown with the answers' renderer. */
+	description: text().notNull().default(""),
+	tags: jsonb().$type<string[]>().notNull().default([]),
+	/** One of the instance's categories, or none. */
+	category: text(),
+	/** `unlisted`: hidden by its publisher. `removed`: by an admin or moderator, with `statusReason`. */
+	status: text({ enum: listingStatuses }).notNull().default("listed"),
+	statusReason: text(),
+	featured: boolean().notNull().default(false),
+	currentVersionId: uuid().references((): AnyPgColumn => listingVersion.id, { onDelete: "set null" }),
+	/** The listing this one was published from a copy of. */
+	basedOnId: uuid().references((): AnyPgColumn => listing.id, { onDelete: "set null" }),
+	/** The publisher's own items the latest version was taken from, for "Publish an update". Never shown to others. */
+	source: jsonb().$type<PackageSource>().notNull(),
+	/** Members who got it, counted at their first get. */
+	gets: integer().notNull().default(0),
+	/** Members who starred it, kept with each star and unstar. */
+	stars: integer().notNull().default(0),
+	publishedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+
+	...createdUpdatedAtColumns
+}, (t) => [
+	index().on(t.ownerId),
+	index().on(t.status, t.publishedAt),
+]);
+
+/** One snapshot of a listing's content: a package, numbered from 1, with a note on what changed. */
+export const listingVersion = pgTable("listingVersion", {
+	id: uuid().primaryKey().defaultRandom(),
+	listingId: uuid().notNull().references(() => listing.id, { onDelete: "cascade" }),
+	number: integer().notNull(),
+	notes: text().notNull().default(""),
+	content: jsonb().$type<Package>().notNull(),
+	/** Bytes, the package's JSON with its files. */
+	size: integer().notNull(),
+	/** `approved` is on Explore (the newest approved is the listing's current version); `pending` waits for review. */
+	status: text({ enum: versionStatuses }).notNull().default("approved"),
+	/** A rejection's reason, for its publisher. */
+	reason: text(),
+	reviewedBy: uuid().references(() => user.id, { onDelete: "set null" }),
+	reviewedAt: timestamp({ withTimezone: true }),
+	createdAt,
+}, (t) => [
+	unique().on(t.listingId, t.number),
+]);
+
+/** The files a version owns, by the package's keys: copies of the publisher's, removed with the listing. */
+export const listingFile = pgTable("listingFile", {
+	versionId: uuid().notNull().references(() => listingVersion.id, { onDelete: "cascade" }),
+	key: text().notNull(),
+	fileId: uuid().notNull().references(() => file.id, { onDelete: "cascade" }),
+}, (t) => [
+	primaryKey({ columns: [t.versionId, t.key] }),
+	index().on(t.fileId),
+]);
+
+/** What a member got from Explore, at which version, and the copies it made. */
+export const acquisition = pgTable("acquisition", {
+	id: uuid().primaryKey().defaultRandom(),
+	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	listingId: uuid().notNull().references(() => listing.id, { onDelete: "cascade" }),
+	versionId: uuid().references(() => listingVersion.id, { onDelete: "set null" }),
+	created: jsonb().$type<PackageCopies>().notNull(),
+	createdAt,
+}, (t) => [
+	index().on(t.userId, t.listingId),
+]);
+
+/** A member's star on a listing (milestone 14): one per member and listing, counted in `listing.stars`. */
+export const star = pgTable("star", {
+	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	listingId: uuid().notNull().references(() => listing.id, { onDelete: "cascade" }),
+	createdAt,
+}, (t) => [
+	primaryKey({ columns: [t.userId, t.listingId] }),
+	index().on(t.listingId),
+]);
+
+/** A member's named list of starred listings; only its owner sees it. */
+export const starList = pgTable("starList", {
+	id: uuid().primaryKey().defaultRandom(),
+	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	name: text().notNull(),
+	description: text().notNull().default(""),
+	createdAt,
+}, (t) => [
+	index().on(t.userId),
+]);
+
+/** A listing in a star list, once per list. Being in a list means the listing is starred. */
+export const starListItem = pgTable("starListItem", {
+	listId: uuid().notNull().references(() => starList.id, { onDelete: "cascade" }),
+	listingId: uuid().notNull().references(() => listing.id, { onDelete: "cascade" }),
+	createdAt,
+}, (t) => [
+	primaryKey({ columns: [t.listId, t.listingId] }),
+	index().on(t.listingId),
+]);
+
+export const reportStatuses = ["open", "dismissed", "acted"] as const
+
+/** A member's report of a listing, for admins and moderators; one open report per member and listing. */
+export const listingReport = pgTable("listingReport", {
+	id: uuid().primaryKey().defaultRandom(),
+	listingId: uuid().notNull().references(() => listing.id, { onDelete: "cascade" }),
+	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	reason: text().notNull(),
+	status: text({ enum: reportStatuses }).notNull().default("open"),
+	resolvedBy: uuid().references(() => user.id, { onDelete: "set null" }),
+	createdAt,
+}, (t) => [
+	index().on(t.status, t.createdAt),
+	uniqueIndex("listingReport_open_once").on(t.listingId, t.userId).where(sql`${t.status} = 'open'`),
 ]);
 
 // Relations

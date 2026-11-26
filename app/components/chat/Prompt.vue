@@ -7,7 +7,7 @@ import type { PromptUpload } from '~/composables/usePromptUploads'
 
 /** A "/" command the prompt offers; the parent runs it. */
 export interface PromptCommand {
-	kind: 'compact' | 'clear' | 'temp' | 'rename'
+	kind: 'compact' | 'clear' | 'temp' | 'rename' | 'image'
 	label: string
 	description: string
 	icon: string
@@ -28,6 +28,8 @@ const props = withDefaults(defineProps<{
 	commands?: PromptCommand[]
 	/** A library's files, notes and folders for "@"; none hides the menu. */
 	mentions?: EditorMentionMenuItem[]
+	/** The chat's switches in the "+" menu (web search, images); off for an editor, whose chat it is not. */
+	switches?: boolean
 }>(), {
 	status: 'ready',
 	error: undefined,
@@ -35,6 +37,7 @@ const props = withDefaults(defineProps<{
 	memoryMax: undefined,
 	commands: () => [],
 	mentions: () => [],
+	switches: true,
 })
 
 const emit = defineEmits<{
@@ -47,6 +50,8 @@ const emit = defineEmits<{
 const input = defineModel<string>({ default: '' })
 const files = defineModel<File[]>('files', { default: () => [] })
 const webSearch = defineModel<boolean | undefined>('webSearch')
+/** The chat's "Images" switch: the model may draw. */
+const images = defineModel<boolean | undefined>('images')
 /** How many messages each lane is sent; `null` is all. */
 const memoryLength = defineModel<number | null | undefined>('memoryLength')
 /** The ids of the library entries named with "@". */
@@ -180,7 +185,9 @@ const menuOptions = { strategy: 'fixed', placement: 'top-start', offset: 8, flip
 			<div class="flex items-center gap-1 min-w-0">
 				<ChatPromptMenu
 					v-model:web-search="webSearch"
+					v-model:images="images"
 					:web-search-available="models.some(model => model.webSearch)"
+					:switches="switches"
 					:open="open"
 				/>
 				<UPopover v-if="memoryMax !== undefined" :content="{ side: 'top', align: 'start' }" @update:open="open => !open && commitMemory()">

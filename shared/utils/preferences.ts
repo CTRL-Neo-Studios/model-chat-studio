@@ -8,6 +8,8 @@ export const userPreferencesSchema = z.object({
 	stoppedRegenerate: z.enum(STOPPED_REGENERATE_OPTIONS).catch('keep-previous'),
 	/** Who the member is in new chats, unless a chat picks another: one of their Characters or an instance one. */
 	characterId: z.uuid().nullable().catch(null),
+	/** The voice read-aloud uses, per platform (a voice id that platform offers); unset or gone: the platform's default. */
+	voices: z.object({ openrouter: z.string().optional(), deepseek: z.string().optional() }).catch({}),
 })
 
 export type UserPreferences = z.infer<typeof userPreferencesSchema>

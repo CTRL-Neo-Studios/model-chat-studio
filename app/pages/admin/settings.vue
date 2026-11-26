@@ -11,16 +11,17 @@ const { data: settings } = useQuery(adminSettingsQuery)
 const platformNames: Record<PlatformId, string> = { openrouter: 'OpenRouter', deepseek: 'DeepSeek' }
 const platformIds: PlatformId[] = ['openrouter', 'deepseek']
 
-type CatalogKind = 'chat' | 'stt' | 'decisions'
+type CatalogKind = 'chat' | 'stt' | 'decisions' | 'speech' | 'images'
+const kindCapability = { stt: 'sttModel', decisions: 'decisions', speech: 'speechModel', images: 'images' } as const
 // Each platform's catalog with its own key, active or not. Loaded in the browser: catalogs are large.
 function useAdminCatalog(platform: PlatformId, kind: CatalogKind) {
 	return useQuery(() => ({
 		...adminCatalogQuery({ platform, kind }),
 		enabled: import.meta.client && !!settings.value?.platforms[platform].hasKey
-			&& (kind === 'chat' || (kind === 'stt' ? settings.value.capabilities[platform].sttModel : settings.value.capabilities[platform].decisions)),
+			&& (kind === 'chat' || settings.value.capabilities[platform][kindCapability[kind]]),
 	}))
 }
-const catalogs = Object.fromEntries(platformIds.map(id => [id, { chat: useAdminCatalog(id, 'chat'), stt: useAdminCatalog(id, 'stt'), decisions: useAdminCatalog(id, 'decisions') }])) as Record<PlatformId, Record<CatalogKind, ReturnType<typeof useAdminCatalog>>>
+const catalogs = Object.fromEntries(platformIds.map(id => [id, { chat: useAdminCatalog(id, 'chat'), stt: useAdminCatalog(id, 'stt'), decisions: useAdminCatalog(id, 'decisions'), speech: useAdminCatalog(id, 'speech'), images: useAdminCatalog(id, 'images') }])) as Record<PlatformId, Record<CatalogKind, ReturnType<typeof useAdminCatalog>>>
 
 /** Props for a `ModelField` choosing from one platform's catalog. */
 function picker(id: PlatformId, kind: CatalogKind) {
@@ -37,8 +38,10 @@ function picker(id: PlatformId, kind: CatalogKind) {
 // Form state, filled from the server and refilled from each save's response.
 const general = reactive({ signupMode: 'invite' as 'invite' | 'open' | 'closed', defaultMonthlyBudgetUsd: null as number | null })
 const active = ref<PlatformId | 'none'>('none')
-type PlatformForm = { apiKey: string, defaultModel: string, titleModel: string, sttModel: string, decisionModel: string }
-const platformForms = reactive(Object.fromEntries(platformIds.map(id => [id, { apiKey: '', defaultModel: '', titleModel: '', sttModel: '', decisionModel: '' }])) as Record<PlatformId, PlatformForm>)
+type PlatformForm = { apiKey: string, defaultModel: string, titleModel: string, sttModel: string, speechModel: string, speechVoice: string, imageModel: string, decisionModel: string }
+const platformForms = reactive(Object.fromEntries(platformIds.map(id => [id, { apiKey: '', defaultModel: '', titleModel: '', sttModel: '', speechModel: '', speechVoice: '', imageModel: '', decisionModel: '' }])) as Record<PlatformId, PlatformForm>)
+/** The chosen speech model's voices, for the voice select; its first is the default. */
+const speechVoices = (id: PlatformId) => (catalogs[id].speech.data.value?.models.find(model => model.id === platformForms[id].speechModel)?.voices ?? []).map(voice => ({ label: voice, value: voice }))
 const safetyCheck = ref(false)
 const limits = reactive({ maxChatModels: 4, maxRegenerations: 50, maxRetries: 5 })
 
@@ -50,7 +53,7 @@ function fill(view: NonNullable<typeof settings.value>) {
 	safetyCheck.value = view.safetyCheck
 	for (const id of platformIds) {
 		const config = view.platforms[id]
-		Object.assign(platformForms[id], { apiKey: '', defaultModel: config.defaultModel ?? '', titleModel: config.titleModel ?? '', sttModel: config.sttModel ?? '', decisionModel: config.decisionModel ?? '' })
+		Object.assign(platformForms[id], { apiKey: '', defaultModel: config.defaultModel ?? '', titleModel: config.titleModel ?? '', sttModel: config.sttModel ?? '', speechModel: config.speechModel ?? '', speechVoice: config.speechVoice ?? '', imageModel: config.imageModel ?? '', decisionModel: config.decisionModel ?? '' })
 	}
 }
 // The form fills in once the settings arrive (the page shows skeletons until then); later refreshes leave edits alone.
@@ -83,6 +86,8 @@ function savePlatform(id: PlatformId) {
 				defaultModel: form.defaultModel.trim() || null,
 				...(!capabilities.nativeTitle && { titleModel: form.titleModel.trim() || null }),
 				...(capabilities.sttModel && { sttModel: form.sttModel.trim() || null }),
+				...(capabilities.speechModel && { speechModel: form.speechModel.trim() || null, speechVoice: form.speechModel.trim() && form.speechVoice.trim() ? form.speechVoice.trim() : null }),
+				...(capabilities.images && { imageModel: form.imageModel.trim() || null }),
 				...(capabilities.decisions && { decisionModel: form.decisionModel.trim() || null }),
 			},
 		},
@@ -194,6 +199,38 @@ const platformChoices = computed(() => [
 						clearable
 						@update:model-value="platformForms[id].sttModel = $event ?? ''"
 						@retry="catalogs[id].stt.refetch()"
+					/>
+				</UFormField>
+
+				<UFormField v-if="settings.capabilities[id].speechModel" label="Text-to-speech model" description="Reads answers aloud for whoever listens, billed to them. Read-aloud is off until one is set.">
+					<ModelField
+						v-bind="picker(id, 'speech')"
+						:model-value="platformForms[id].speechModel || null"
+						placeholder="None: read-aloud is off"
+						clearable
+						@update:model-value="platformForms[id].speechModel = $event ?? ''; platformForms[id].speechVoice = ''"
+						@retry="catalogs[id].speech.refetch()"
+					/>
+				</UFormField>
+
+				<UFormField v-if="settings.capabilities[id].speechModel && platformForms[id].speechModel" label="Default voice" description="For members who have not chosen their own.">
+					<USelect
+						:model-value="platformForms[id].speechVoice || speechVoices(id)[0]?.value"
+						:items="speechVoices(id)"
+						placeholder="The model's first voice"
+						class="w-64"
+						@update:model-value="platformForms[id].speechVoice = $event ?? ''"
+					/>
+				</UFormField>
+
+				<UFormField v-if="settings.capabilities[id].images" label="Image model" description="Draws the images models make, whichever platform answers, billed to the member. Images are off until one is set.">
+					<ModelField
+						v-bind="picker(id, 'images')"
+						:model-value="platformForms[id].imageModel || null"
+						placeholder="None: images are off"
+						clearable
+						@update:model-value="platformForms[id].imageModel = $event ?? ''"
+						@retry="catalogs[id].images.refetch()"
 					/>
 				</UFormField>
 

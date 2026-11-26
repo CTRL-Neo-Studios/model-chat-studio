@@ -31,6 +31,15 @@ const PEAK_PRICES: Record<string, Required<Pricing>> = {
 /** List price of speech to text (the ASR guide also shows a limited-time half price with no end date). */
 const ASR_USD_PER_HOUR = 0.116
 
+/** List price of text to speech, per 10,000 billed characters (the TTS guide also shows a limited-time half price). */
+const TTS_USD_PER_10K_CHARS = 0.45
+
+/** What one piece of speech costs: a Chinese character counts as two, any other character as one. */
+export function deepseekSpeechCost(text: string) {
+	const chinese = text.match(/\p{Script=Han}/gu)?.length ?? 0
+	return (text.length + chinese) * TTS_USD_PER_10K_CHARS / 10_000
+}
+
 /** Uploaded PDFs expire after 30 days, the longest DeepSeek allows, so a lost delete cleans itself up. */
 const PDF_LIFETIME_SECONDS = 30 * 24 * 3600
 
@@ -149,7 +158,8 @@ function deepseekModel(input: TurnInput) {
 
 export const deepseekPlatform: InferencePlatform = {
 	id: 'deepseek',
-	capabilities: { providerRouting: false, safetyCheck: true, nativeTitle: true, sttModel: false, decisions: false },
+	capabilities: { providerRouting: false, safetyCheck: true, nativeTitle: true, sttModel: false, decisions: false, speechModel: false, images: false },
+	voices: [{ id: 'stella', name: 'Stella (female)' }, { id: 'tide', name: 'Tide (male)' }],
 
 	async checkKey(apiKey) {
 		const response = await fetch(`${BASE_URL}/models`, { headers: { Authorization: `Bearer ${apiKey}` } })
@@ -232,5 +242,17 @@ export const deepseekPlatform: InferencePlatform = {
 		if (!response.ok) throw new Error(`DeepSeek ASR answered ${response.status}: ${await response.text()}`)
 		const { text, duration_ms } = await response.json() as { text: string, duration_ms: number }
 		return { text, costUsd: Math.ceil(duration_ms / 1000) * ASR_USD_PER_HOUR / 3600 }
+	},
+
+	// https://api-docs.deepseek.com/guides/tts: WAV, with DeepSeek's own Markdown filter on (spike L). No cost comes
+	// back, so it is computed from the price.
+	async speak({ apiKey, text, voice }) {
+		const response = await fetch(`${BASE_URL}/v1/tools/tts`, {
+			method: 'POST',
+			headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+			body: JSON.stringify({ text, voice_id: voice, format: 'wav' }),
+		})
+		if (!response.ok) throw new Error(`DeepSeek TTS answered ${response.status}: ${await response.text()}`)
+		return { audio: new Uint8Array(await response.arrayBuffer()), mediaType: 'audio/wav', costUsd: deepseekSpeechCost(text) }
 	},
 }

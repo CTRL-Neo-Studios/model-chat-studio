@@ -8,6 +8,8 @@ export function useModels() {
 	const models = computed(() => data.value?.models ?? [])
 	/** How many models can answer in one chat. */
 	const maxChatModels = computed(() => data.value?.maxChatModels ?? 4)
+	/** Whether a chat's "Images" switch can draw, and if not, why. */
+	const images = computed(() => data.value?.images ?? { available: false, reason: null })
 
 	/** The model a chat uses: its own while still offered, else the platform's default. */
 	function resolveModel(id?: string) {
@@ -15,7 +17,7 @@ export function useModels() {
 			?? models.value.find(model => model.id === data.value?.defaultModel)
 	}
 
-	return { isPending, platform, models, maxChatModels, resolveModel }
+	return { isPending, platform, models, maxChatModels, images, resolveModel }
 }
 
 export type CatalogModelView = ReturnType<typeof useModels>['models']['value'][number]
@@ -24,4 +26,8 @@ export type CatalogModelView = ReturnType<typeof useModels>['models']['value'][n
 export type BrowsableModel = Pick<CatalogModelView, 'id' | 'name' | 'vendor' | 'contextLength' | 'maxOutputTokens' | 'inputModalities' | 'outputModalities' | 'pricing'> & {
 	/** Speech-to-text models only. */
 	pricePerMinute?: number | null
+	/** Text-to-speech models only. */
+	pricePerMillionChars?: number | null
+	/** Image models only. */
+	pricePerImage?: number | null
 }

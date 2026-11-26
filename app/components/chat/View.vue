@@ -21,7 +21,9 @@ const { csrf, headerName } = useCsrf()
 
 // The page's state starts from the cached chat and is written back to it as it changes.
 const { data } = useQuery(chatQuery(chatId))
-const isOwner = computed(() => data.value?.isOwner ?? false)
+// The reader's role: the owner sets the chat up; editors take part (the prompt, the actions, the switches); viewers read.
+const isOwner = computed(() => data.value?.role === 'owner')
+const canWrite = computed(() => isOwner.value || data.value?.role === 'editor')
 const visibility = ref<'public' | 'private'>(data.value?.visibility ?? 'private')
 const sharedWith = ref(data.value?.sharedWith ?? [])
 // Renaming writes the cache (`useChatActions`), so the title is read from it.
@@ -33,7 +35,9 @@ const group = computed(() => data.value?.mode === 'group')
 const libraries = computed(() => data.value?.libraries ?? [])
 // "Add to library" copies into a library, which only its owner and editors change.
 const editableLibraries = computed(() => libraries.value.filter(library => library.role === 'owner' || library.role === 'editor'))
-const { items: libraryMentions, partsFor } = useLibraryMentions(() => isOwner.value ? libraries.value.filter(library => library.role) : [])
+// Images in answers can be added to these; the chat's owner only.
+provide(chatLibrariesKey, computed(() => isOwner.value ? editableLibraries.value : []))
+const { items: libraryMentions, partsFor } = useLibraryMentions(() => canWrite.value ? libraries.value.filter(library => library.role) : [])
 const references = ref<string[]>([])
 const { data: libraryList } = useQuery(() => ({ ...librariesQuery, enabled: import.meta.client && isOwner.value }))
 /** Attaches and detaches libraries; shown at once, and read again from the server if it refuses one. */
@@ -82,11 +86,11 @@ async function keep() {
 
 useHead({ title: () => title.value || 'Chat' })
 
-const { data: votesData } = useQuery(() => ({ ...chatVotesQuery(chatId), enabled: import.meta.client && isOwner.value }))
+const { data: votesData } = useQuery(() => ({ ...chatVotesQuery(chatId), enabled: import.meta.client && canWrite.value }))
 const votes = computed(() => votesData.value ?? [])
 
 // The member's preferences; until they load, the server's defaults apply.
-const { data: me } = useQuery(() => ({ ...meQuery, enabled: import.meta.client && isOwner.value }))
+const { data: me } = useQuery(() => ({ ...meQuery, enabled: import.meta.client && canWrite.value }))
 
 const chatLanes = useChatLanes(data.value ?? undefined)
 const { lanes, enabledLanes, settings, laneModel, laneName, laneColor, laneAvatar } = chatLanes
@@ -112,6 +116,13 @@ const messages = shallowRef<ChatMessage[]>((data.value?.messages ?? []) as ChatM
 const versions = shallowRef<Record<string, string[]>>({ ...data.value?.versions })
 // Every branch's first message at the places that have several, keyed by the one shown (owner only).
 const branches = shallowRef<Record<string, string[]>>({ ...data.value?.branches })
+// Who sent the user messages, by id (milestone 11). A message sent from this page has no sender yet: it is the reader's.
+const authors = shallowRef<Record<string, { name: string, avatarUrl: string | null }>>({ ...data.value?.authors })
+const { user: reader } = useUserSession()
+const senderOf = (message: ChatMessage) => message.userId ?? reader.value?.id ?? ''
+const authorOf = (message: ChatMessage) => authors.value[senderOf(message)] ?? (senderOf(message) === reader.value?.id ? { name: reader.value?.name || reader.value?.username || 'You', avatarUrl: reader.value?.avatar ?? null } : { name: 'Someone', avatarUrl: null })
+// Names on messages only once more than one person writes in the branch shown.
+const severalAuthors = computed(() => Object.keys(Object.fromEntries(messages.value.flatMap(message => message.role === 'user' ? [[senderOf(message), true]] : []))).length > 1)
 const answers = useLaneAnswers(chatId, messages, {
 	onAnswered: refreshTitle,
 	keepPreviousOnStop: () => (me.value?.preferences.stoppedRegenerate ?? 'keep-previous') === 'keep-previous',
@@ -120,6 +131,7 @@ const answers = useLaneAnswers(chatId, messages, {
 		const { [previousId]: list, ...rest } = versions.value
 		versions.value = { ...rest, [id]: [...(list ?? [previousId]), id] }
 	},
+	onMovedOn: question => handBack(question),
 })
 
 // The memory slider's range: the longest lane thread after its latest summary, in messages that count. A group
@@ -144,9 +156,10 @@ function writeBack() {
 		messages: messages.value as typeof chat.messages,
 		versions: versions.value,
 		branches: branches.value,
+		authors: authors.value,
 	})
 }
-watch([messages, versions, branches], writeBack)
+watch([messages, versions, branches, authors], writeBack)
 watch([visibility, sharedWith, settings, lanes], writeBack, { deep: true })
 
 /**
@@ -171,14 +184,21 @@ function summariesFrom(firstId: string) {
 const { renameChat } = useChatActions()
 const lastLanes = useCookie<{ profileId?: string, modelId?: string | null }[]>('chat-lanes', { default: () => [], sameSite: 'lax' })
 const lastSettings = useCookie<ChatSettings>('chat-settings', { default: () => ({}), sameSite: 'lax' })
-const commands: PromptCommand[] = [
+const { images: imagesState } = useModels()
+// `rename` is the owner's; `/image` while images are set up: picking it leaves "/image " in the prompt for the words to draw.
+const commands = computed<PromptCommand[]>(() => [
 	{ kind: 'compact', label: 'compact', description: 'Summarise the chat so far; each model is sent the summary from now on', icon: 'i-lucide-fold-vertical' },
 	{ kind: 'clear', label: 'clear', description: 'Start a new chat with the same models and settings', icon: 'i-lucide-eraser' },
-	{ kind: 'rename', label: 'rename', description: 'Rename this chat', icon: 'i-lucide-pencil' },
-]
+	...(isOwner.value ? [{ kind: 'rename' as const, label: 'rename', description: 'Rename this chat', icon: 'i-lucide-pencil' }] : []),
+	...(imagesState.value.available ? [{ kind: 'image' as const, label: 'image', description: 'Draw an image from your words, with no model turn', icon: 'i-lucide-image' }] : []),
+])
 const compacting = ref(false)
 async function runCommand(kind: PromptCommand['kind']) {
 	if (kind === 'rename') return renameChat(chatId, title.value)
+	if (kind === 'image') {
+		input.value = '/image '
+		return
+	}
 	if (kind === 'clear') {
 		// The new chat starts from these models: profiles by id, other models by model id, as the home page keeps them.
 		lastLanes.value = enabledLanes.value.map(lane => lane.profileId ? { profileId: lane.profileId } : { modelId: lane.modelId })
@@ -232,17 +252,31 @@ function slotsFor(questionId: string) {
 const cards = (questionId: string) => lanes.value.length > 1 || slotsFor(questionId).length > 1
 const question = (id: string) => messages.value.find(message => message.id === id)!
 
-// "Answer" in a group chat: a lane answers the last message after the others, reading their answers.
-const lastQuestion = computed(() => messages.value.findLast(message => message.role === 'user'))
+// "Answer" in a group chat: a lane answers the last message after the others, reading their answers. A `/image`
+// message gets no model answer.
+const lastQuestion = computed(() => messages.value.findLast(message => message.role === 'user' && message.metadata?.kind !== 'image'))
 function answerLast(lane: { id: string }) {
 	if (lastQuestion.value) answers.regenerate(lane.id, lastQuestion.value)
+}
+
+/** `/image`: the server draws and returns the exchange, which joins the chat at its end. */
+const drawing = ref(false)
+async function drawImage(prompt: string) {
+	drawing.value = true
+	input.value = ''
+	const drawn = await act<{ asked: ChatMessage, drawn: ChatMessage }>(`/api/v1/chats/${chatId}/images`, { method: 'POST', body: { prompt } })
+	drawing.value = false
+	if (drawn) messages.value = [...messages.value, drawn.asked, drawn.drawn]
+	else input.value = `/image ${prompt}`
 }
 
 function handleSubmit(e: Event) {
 	e.preventDefault()
 	const text = input.value
 	const files = fileParts.value
-	if ((!text.trim() && !files.length) || uploading.value || answers.busy.value) return
+	if ((!text.trim() && !files.length) || uploading.value || answers.busy.value || drawing.value) return
+	const imagePrompt = /^\/image\s+(\S[\s\S]*)$/.exec(text.trim())?.[1]
+	if (imagePrompt && imagesState.value.available) return drawImage(imagePrompt)
 	if (!enabledLanes.value.length) {
 		toast.add({ description: 'Turn on a model first', icon: 'i-lucide-alert-circle', color: 'warning' })
 		return
@@ -251,7 +285,8 @@ function handleSubmit(e: Event) {
 	clearFiles()
 	const parts = [...(text.trim() ? [{ type: 'text' as const, text }] : []), ...files, ...partsFor(references.value), ...participants.partsFor(references.value)]
 	references.value = []
-	answers.send({ id: crypto.randomUUID(), role: 'user', parts }, roundOrder(parts))
+	// Written after the last message shown: if someone else wrote since, the server refuses it (`handBack`).
+	answers.send({ id: crypto.randomUUID(), role: 'user', parts }, roundOrder(parts), messages.value.findLast(message => message.role === 'user')?.id ?? null)
 }
 
 /** Who answers a group round, in order, as the server chooses; nobody when it cannot be asked. */
@@ -303,10 +338,36 @@ async function saveEdit(message: UIMessage, text: string, resend: boolean) {
 }
 
 /** The thread as the server shows it now: after a deletion or a switch of branch. */
-function setThread(thread: { messages: unknown[], versions: Record<string, string[]>, branches: Record<string, string[]> }) {
+function setThread(thread: { messages: unknown[], versions: Record<string, string[]>, branches: Record<string, string[]>, authors: Record<string, { name: string, avatarUrl: string | null }> }) {
 	messages.value = thread.messages as ChatMessage[]
 	versions.value = thread.versions
 	branches.value = thread.branches
+	authors.value = thread.authors
+}
+
+/**
+ * Keeping in step (milestone 11): while others may write here, the page takes in the server's thread when nothing
+ * is being written, drawn, compacted or edited on it, every 10 s while it is visible and when the window gets
+ * focus. Where the two differ, the server's wins.
+ */
+const othersWrite = computed(() => isOwner.value ? sharedWith.value.some(person => person.role === 'editor') : !!data.value?.hasEditors)
+const pageVisibility = useDocumentVisibility()
+const idle = () => !answers.busy.value && !drawing.value && !compacting.value && !editingMessageId.value
+async function takeIn(force = false) {
+	if (!force && (!othersWrite.value || pageVisibility.value === 'hidden' || !idle())) return
+	const fresh = await $fetch(`/api/v1/chats/${chatId}`).catch(() => undefined)
+	if (!fresh || !idle()) return
+	if (JSON.stringify(fresh.messages) !== JSON.stringify(messages.value)) setThread(fresh)
+}
+useIntervalFn(() => takeIn(), 10_000)
+useEventListener('focus', () => takeIn())
+
+/** Someone else wrote first: the message comes back to the prompt and the page takes in what is new. */
+function handBack(question: ChatMessage) {
+	const text = question.parts.map(part => part.type === 'text' ? part.text : '').join('')
+	if (!input.value.trim()) input.value = text
+	toast.add({ title: 'The chat moved on', description: 'Someone else wrote in it meanwhile. Your message is back in the prompt to send again.', icon: 'i-lucide-git-merge', color: 'warning' })
+	takeIn(true)
 }
 
 const deleteModal = useOverlay().create(LazyModalConfirm)
@@ -440,7 +501,7 @@ onMounted(() => {
 						should-auto-scroll
 						:messages="shown"
 						:status="answers.busy.value ? 'streaming' : 'ready'"
-						:class="['pt-(--ui-header-height)', !isOwner && 'pb-4 sm:pb-6']"
+						:class="['pt-(--ui-header-height)', !canWrite && 'pb-4 sm:pb-6']"
 						:ui="{ footer: 'pt-4 sm:pt-6' }"
 					>
 						<template #files="{ message, parts }">
@@ -467,7 +528,7 @@ onMounted(() => {
 									:message="slot.message"
 									:pending="slot.pending"
 									:card="cards(message.id.slice(8))"
-									:is-owner="isOwner"
+									:can-write="canWrite"
 									:editing="!!slot.message && editingMessageId === slot.message.id"
 									:vote="slot.message ? getVote(slot.message.id) : null"
 									:regenerable="!!slot.lane && message.id !== 'answers:'"
@@ -503,17 +564,23 @@ onMounted(() => {
 									</template>
 								</UCollapsible>
 							</div>
-							<ChatMessageContent
-								v-else
-								:message="message"
-								:streaming="false"
-								:editing="isOwner && editingMessageId === message.id"
-								@save="saveEdit"
-								@cancel-edit="editingMessageId = null"
-							/>
+							<template v-else>
+								<!-- The sender, once more than one person writes here. -->
+								<div v-if="severalAuthors && message.role === 'user'" class="flex items-center gap-1.5 mb-1 text-xs text-muted">
+									<UAvatar :src="authorOf(message).avatarUrl || undefined" :alt="authorOf(message).name" size="3xs" />
+									<span class="truncate">{{ authorOf(message).name }}</span>
+								</div>
+								<ChatMessageContent
+									:message="message"
+									:streaming="false"
+									:editing="canWrite && editingMessageId === message.id"
+									@save="saveEdit"
+									@cancel-edit="editingMessageId = null"
+								/>
+							</template>
 						</template>
 
-						<template v-if="isOwner" #actions="{ message }">
+						<template v-if="canWrite" #actions="{ message }">
 							<template v-if="message.role === 'user'">
 								<!-- The message's branches: the conversation continues from the one shown. -->
 								<ChatSwitch v-if="branches[message.id] && editingMessageId !== message.id" :ids="branches[message.id]!" :current="message.id" noun="branch" :disabled="answers.busy.value" @show="showBranch" />
@@ -529,29 +596,32 @@ onMounted(() => {
 							</template>
 						</template>
 
-						<template v-if="isOwner" #footer>
+						<template v-if="canWrite" #footer>
 							<ChatPrompt
 								v-model="input"
 								v-model:files="promptFiles"
 								v-model:references="references"
 								:mentions="mentions"
 								:web-search="settings.webSearch"
+								:images="settings.images"
 								:models="answeringModels"
 								:uploads="uploads"
 								:uploading="uploading"
-								:status="answers.busy.value ? 'streaming' : 'ready'"
-								:disabled="compacting"
+								:status="answers.busy.value ? 'streaming' : drawing ? 'submitted' : 'ready'"
+								:disabled="compacting || drawing"
 								:commands="commands"
 								class="[view-transition-name:chat-prompt] rounded-b-none backdrop-blur-sm"
-								:memory-max="memoryMax"
+								:memory-max="isOwner ? memoryMax : undefined"
+								:switches="isOwner"
 								:memory-length="settings.memoryLength"
 								@update:web-search="chatLanes.setSettings({ webSearch: $event })"
+								@update:images="chatLanes.setSettings({ images: $event })"
 								@update:memory-length="chatLanes.setSettings({ memoryLength: $event ?? null })"
 								@submit="handleSubmit"
 								@stop="answers.stop()"
 								@command="runCommand"
 							>
-								<template #tools>
+								<template v-if="isOwner" #tools>
 									<ChatContextSettings
 										:settings="settings"
 										:library-ids="libraries.map(library => library.id)"

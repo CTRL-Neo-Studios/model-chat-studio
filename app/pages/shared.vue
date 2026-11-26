@@ -5,6 +5,15 @@ useHead({ title: 'Shared with me' })
 
 const { data, isPending } = useQuery(sharedChatsQuery)
 const chats = computed(() => data.value ?? [])
+
+// "Leave": the chat is no longer shared with the member; shown at once, back if the server refuses.
+const act = useApiAction()
+const queryCache = useQueryCache()
+async function leave(chatId: string) {
+	const before = chats.value
+	queryCache.setQueryData(sharedChatsQuery.key, chats.value.filter(chat => chat.id !== chatId))
+	if (!await act(`/api/v1/chats/${chatId}/shares/me`, { method: 'DELETE', success: 'You left the chat' })) queryCache.setQueryData(sharedChatsQuery.key, before)
+}
 </script>
 
 <template>
@@ -16,7 +25,7 @@ const chats = computed(() => data.value ?? [])
 		<template #body>
 			<div class="w-full max-w-3xl mx-auto flex flex-col gap-4">
 				<p class="text-sm text-muted">
-					Chats other people shared with you by name. You can read them; only their owner writes in them.
+					Chats other people shared with you by name. As a viewer you read them; as an editor you also take part, paying for what you send.
 				</p>
 				<div v-if="isPending" class="flex flex-col gap-2" aria-busy="true" aria-label="Loading shared chats">
 					<USkeleton v-for="n in 4" :key="n" class="h-14 w-full" />
@@ -39,6 +48,9 @@ const chats = computed(() => data.value ?? [])
 								{{ chat.owner.name || chat.owner.username }} · updated {{ formatDistanceToNow(new Date(chat.updatedAt), { addSuffix: true }) }}
 							</p>
 						</div>
+						<UBadge :label="chat.role === 'editor' ? 'Editor' : 'Viewer'" color="neutral" variant="subtle" />
+						<!-- Above the row's link, which covers the row. -->
+						<UButton label="Leave" icon="i-lucide-log-out" size="xs" color="neutral" variant="ghost" class="relative" :aria-label="`Leave ${chat.title || 'Untitled'}`" @click="leave(chat.id)" />
 					</li>
 				</ul>
 			</div>

@@ -1,29 +1,35 @@
 import { createError, defineEventHandler, readValidatedBody } from 'nuxt/server'
 import { convertToModelMessages, createUIMessageStreamResponse, generateId, generateText, isStepCount, smoothStream, streamText, toUIMessageStream, type TextStreamPart, type ToolSet, type UIMessage } from 'ai'
 import { db, schema } from 'hub:db'
-import { and, eq, isNull } from 'drizzle-orm'
-import type { MessageMetadata } from '#shared/utils/chat'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
+import { AUTO_FETCH_DEFAULTS, type ChatSettings, type MessageMetadata } from '#shared/utils/chat'
+import type { Lorebook } from '#shared/utils/lorebook'
 import { chartTool } from '#shared/utils/tools/chart'
 import { userPreferencesSchema } from '#shared/utils/preferences'
 import { getInstanceSettings } from '#server/utils/core/settings'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { assertRateLimit } from '#server/utils/core/rateLimit'
-import { requireChat } from '#server/utils/chat/access'
-import { answerAttempt, applyTurnTrigger, assertWithinBudget, fallbackTitle, listChatMessages, monthlyBudgetStatus, saveAnswer, turnRequestSchema } from '#server/utils/chat/turns'
+import { chatOwner, requireChat } from '#server/utils/chat/access'
+import { answerAttempt, applyTurnTrigger, assertWithinBudget, chatAuthors, fallbackTitle, listChatMessages, monthlyBudgetStatus, saveAnswer, turnRequestSchema } from '#server/utils/chat/turns'
 import { listChatModels } from '#server/utils/chat/lanes'
-import { resolveAttachments } from '#server/utils/chat/files'
+import { deleteStoredFiles, resolveAttachments } from '#server/utils/chat/files'
+import { imageSetup, makeImage } from '#server/utils/chat/images'
+import { imagesForModel, imageTool } from '#server/utils/chat/imageTool'
 import { getCatalog, getEndpoints, getPriceOverride, useInference } from '#server/utils/inference'
-import { buildContext } from '#server/utils/chat/context'
+import { buildContext, type LoreNoteSent } from '#server/utils/chat/context'
 import { expandReferences } from '#server/utils/library/references'
 import { autoFetch } from '#server/utils/library/autoFetch'
 import { fileTools } from '#server/utils/library/fileTools'
 import { chatLibraries, listSpace } from '#server/utils/library/libraries'
+import { lorebookHistory, lorebookNotes, matchLorebook } from '#server/utils/library/lorebook'
+import { searchEntryTexts } from '#server/utils/library/search'
+import { fillSearchText } from '#server/utils/library/searchIndex'
 import { spaceResolver } from '#shared/utils/librarySpace'
 import { findStructureProfile } from '#server/utils/chat/structureProfiles'
 import { charactersById, laneLibraries } from '#server/utils/chat/characters'
 import { fillPlaceholders, laneIdentity } from '#shared/utils/character'
-import { groupInstructions, groupThread } from '#server/utils/chat/group'
-import { shownThread, threadTo } from '#server/utils/chat/thread'
+import { groupInstructions, groupThread, namedSenders } from '#server/utils/chat/group'
+import { shownThread, threadTo, withoutImageExchanges } from '#server/utils/chat/thread'
 import type { FinishedStep, Pricing } from '#server/utils/inference/types'
 
 const TITLE_INSTRUCTIONS = `Write a title for a chat that starts with the user's message below.
@@ -32,6 +38,53 @@ const TITLE_INSTRUCTIONS = `Write a title for a chat that starts with the user's
 
 const REFUSAL = 'This answer was withheld by the content safety check.'
 
+const textOf = (message: UIMessage) => message.parts.map(part => part.type === 'text' ? part.text : '').join('\n')
+
+/**
+ * The lorebook notes one lane's answer is sent (milestone 9 plan, section 2b), with `{{char}}` and `{{user}}` filled:
+ * matched in what the lane reads (the user's messages and the answers), sticky and cooldown read from its earlier
+ * answers' traces, the chat's auto-fetch settings as the books' defaults.
+ */
+async function lorebookFor(books: { id: string, lorebook: Lorebook | null }[], input: {
+	history: UIMessage[]
+	/** The thread up to the message answered, as stored: places in it count messages for the timed options. */
+	upTo: { id: string, role: string, chatModelId: string | null }[]
+	laneId: string
+	names: { char: string, user: string }
+	instructions: string | null
+	userCharacter: string | null
+	autoFetch: ChatSettings['autoFetch']
+}): Promise<LoreNoteSent[]> {
+	const ids = books.map(book => book.id)
+	const notes = (await lorebookNotes(db, ids)).map(note => ({ ...note, text: fillPlaceholders(note.text, input.names) }))
+	if (!notes.length) return []
+	const settings = { ...AUTO_FETCH_DEFAULTS, ...input.autoFetch }
+	const messages = input.history.filter(message => message.role === 'user' || message.role === 'assistant').map(textOf)
+	const answers = input.upTo.flatMap((message, at) => message.role === 'assistant' && message.chatModelId === input.laneId ? [{ id: message.id, at }] : [])
+	// Entries matched by meaning in SillyTavern are found here by the words of their text, in what the books scan.
+	const fuzzyHits = async () => {
+		const depth = Math.max(settings.scanMessages, ...books.map(book => book.lorebook?.scanDepth ?? 0))
+		await fillSearchText(db, ids)
+		const found = await Promise.all(messages.slice(-depth).filter(text => text.trim()).map(text => searchEntryTexts(db, ids, text, 20)))
+		return Object.fromEntries(found.flat().map(row => [row.id, true as const]))
+	}
+	const [sent, hits] = await Promise.all([
+		lorebookHistory(db, answers, notes, input.upTo.length),
+		notes.some(note => note.lore.fuzzy) ? fuzzyHits() : undefined,
+	])
+	return matchLorebook({
+		books: books.map(book => ({ id: book.id, scanDepth: book.lorebook?.scanDepth, maxChars: book.lorebook?.maxChars, recursive: book.lorebook?.recursive })),
+		notes,
+		messages,
+		instructions: input.instructions,
+		userCharacter: input.userCharacter,
+		defaults: { scanDepth: settings.scanMessages, maxChars: settings.maxChars },
+		length: input.upTo.length,
+		sent,
+		fuzzyHits: hits,
+	}).map(({ note, sticky }) => ({ entryId: note.id, name: note.name, text: note.text, sticky, position: note.lore.position, depth: note.lore.depth, role: note.lore.role }))
+}
+
 /**
  * Streams one lane's answer. The client sends only the new message (or the regenerate target) and the lane,
  * never the history. A lane sees its own thread; in a group chat, the shared thread, and its answer joins the round's
@@ -39,7 +92,7 @@ const REFUSAL = 'This answer was withheld by the content safety check.'
  */
 export default defineEventHandler(async (event) => {
 	// Reads run in a few parallel groups, each one database round trip, before the model is called.
-	const [chat, { values: settings }] = await Promise.all([requireChat(event, 'manageChat'), getInstanceSettings(db)])
+	const [chat, { values: settings }] = await Promise.all([requireChat(event, 'writeChat'), getInstanceSettings(db)])
 	const user = await useServerAuth().requireUser(event)
 	const request = await readValidatedBody(event, turnRequestSchema)
 	// Each answer costs money; a stuck client or script should not be able to run up the bill.
@@ -79,11 +132,11 @@ export default defineEventHandler(async (event) => {
 
 	assertWithinBudget(budget, byok)
 
-	const parentId = await applyTurnTrigger(db, chatId, request)
+	const parentId = await applyTurnTrigger(db, chatId, request, user.id)
 	const [previousAttempt, thread] = await Promise.all([
 		answerAttempt(db, lane.id, parentId),
 		// Every branch: the one read is picked below. A group speaker reads every lane's answers; a separate lane only its own.
-		listChatMessages(db, chatId, group ? undefined : lane.id) as Promise<(UIMessage<MessageMetadata> & { parentId: string | null, chatModelId: string | null })[]>,
+		listChatMessages(db, chatId, group ? undefined : lane.id) as Promise<(UIMessage<MessageMetadata> & { parentId: string | null, chatModelId: string | null, userId: string | null })[]>,
 	])
 	// Each regenerate is one more attempt at the lane's answer to this message; past the admin's cap it is refused.
 	const attempt = previousAttempt + 1
@@ -91,7 +144,8 @@ export default defineEventHandler(async (event) => {
 		throw createError({ status: 429, statusText: `This answer was regenerated ${maxRegenerations === 1 ? 'once' : `${maxRegenerations} times`}, the most allowed.` })
 	}
 	// The branch up to the message being answered: a regenerated answer does not see what came after, on any branch.
-	const upTo = threadTo(thread, parentId)
+	// `/image` exchanges are not sent.
+	const upTo = withoutImageExchanges(threadTo(thread, parentId))
 	const firstText = upTo.find(message => message.role === 'user')?.parts.map(part => part.type === 'text' ? part.text : '').join(' ') ?? ''
 
 	// The first enabled lane names the chat, so a chat answered by several lanes is named once.
@@ -130,20 +184,34 @@ export default defineEventHandler(async (event) => {
 	// Who the lane is (its Character, else its own name and prompt) and who the user is, with `{{char}}` and `{{user}}` filled.
 	// A group speaker is also told who else answers in the chat.
 	const answering = lanes.filter(entry => entry.enabled).slice(0, maxChatModels)
-	const characters = await charactersById(db, [...(group ? answering : [lane]).map(entry => entry.characterId), chat.userCharacterId])
-	const userName = user.name ?? user.username
+	// The chat is the owner's whoever sends: `{{user}}` is the owner, and a Character's libraries are those the owner may read.
+	const [characters, owner, authors] = await Promise.all([
+		charactersById(db, [...(group ? answering : [lane]).map(entry => entry.characterId), chat.userCharacterId]),
+		chatOwner(chat, user),
+		chatAuthors(db, thread),
+	])
+	const userName = owner.name ?? owner.username
 	const userCharacter = chat.userCharacterId ? characters[chat.userCharacterId] : undefined
 	const identityOf = (entry: typeof lane, modelName: string) => laneIdentity({ lane: entry, character: entry.characterId ? characters[entry.characterId] : undefined, userCharacter, modelName, userName })
 	const identity = identityOf(lane, model.name)
 	const character = lane.characterId ? characters[lane.characterId] : undefined
 	const modelNameOf = (entry: typeof lane) => ((entry.platform === platform.id ? catalog.find(item => item.id === entry.modelId) : undefined) ?? catalog.find(item => item.id === config.defaultModel))?.name ?? 'Model'
 	const others = group ? answering.filter(entry => entry.id !== lane.id).map(entry => identityOf(entry, modelNameOf(entry)).names.char) : []
-	// A group speaker reads the shared thread, the others' answers under their names; otherwise the lane's own thread.
-	const history = group ? groupThread(shownThread(thread, parentId), { laneId: lane.id, questionId: parentId, userName: identity.names.user }) : upTo
+	// A group speaker reads the shared thread, the others' answers under their names (their images too, if it reads
+	// images); otherwise the lane's own thread. Each user message is under its sender's name in a group, and in a
+	// lane's thread once more than one person writes; the owner's name is `{{user}}`. Images the model drew earlier
+	// come as lines of text, the latest also shown again to a model that reads images.
+	const seesImages = model.inputModalities.includes('image')
+	const names = { ...Object.fromEntries(Object.entries(authors).map(([id, author]) => [id, author.name])), [chat.userId]: identity.names.user }
+	const history = imagesForModel(group ? groupThread(withoutImageExchanges(shownThread(thread, parentId)), { laneId: lane.id, questionId: parentId, userName: identity.names.user, names, seesImages }) : namedSenders(upTo, names), seesImages)
 	// The chat's libraries, then its Character's (those the chat's owner may read): this lane only.
-	const libraries = await laneLibraries(db, user, (await chatLibraries(db, chatId)).map(({ id, name }) => ({ id, name })), character?.libraryIds ?? [])
+	const libraries = await laneLibraries(db, owner, (await chatLibraries(db, chatId)).map(({ id, name, lorebook }) => ({ id, name, lorebook })), character?.libraryIds ?? [])
+	// Lorebooks send their notes by keyword and are never offered to the file tools; the other libraries ("shelves")
+	// are auto-fetched and searched by the tools.
+	const lorebooks = libraries.filter(library => library.lorebook?.on)
+	const shelves = libraries.filter(library => !library.lorebook?.on)
 	// The file tools: with libraries, unless turned off, for models that take tools, where the platform allows app tools.
-	const withFileTools = libraries.length > 0 && chat.settings.fileTools !== false && model.supportedParameters.includes('tools') && prepared.appTools !== false
+	const withFileTools = shelves.length > 0 && chat.settings.fileTools !== false && model.supportedParameters.includes('tools') && prepared.appTools !== false
 	// The chat's structure profile wraps the thread in its blocks; its `files` paths are looked up in the libraries.
 	const profile = await findStructureProfile(db, chat.structureProfileId)
 	const profileBlocks = profile?.blocks.map(block => block.kind === 'message' ? { ...block, text: fillPlaceholders(block.text, identity.names) } : block)
@@ -152,18 +220,20 @@ export default defineEventHandler(async (event) => {
 		const entry = find(path)
 		return entry && { entryId: entry.id, kind: entry.kind }
 	})
+	const lore = lorebooks.length ? await lorebookFor(lorebooks, { history, upTo, laneId: lane.id, names: identity.names, instructions: identity.systemPrompt, userCharacter: identity.aboutUser ?? null, autoFetch: chat.settings.autoFetch }) : []
 	const built = buildContext({
 		thread: history, systemPrompt: identity.systemPrompt, promptLabel: identity.promptLabel, examples: identity.examples, closingNote: identity.closingNote, aboutUser: identity.aboutUser,
 		group: group ? groupInstructions({ speaker: identity.names.char, others, user: identity.names.user }) : undefined,
 		webSearch, memoryLength: chat.settings.memoryLength ?? null, fileTools: withFileTools, profile: profileBlocks, resolvePath,
+		lore: lore.length ? { heading: character ? `What ${identity.names.char} knows that bears on this conversation:` : 'Background that bears on this conversation:', notes: lore } : undefined,
 	})
 	// "@" references (and the profile's files) become the libraries' files and notes, read now, where they stand.
 	const referenced = { ...built, ...await expandReferences(db, libraries, built.messages, built.blocks) }
 	// Auto-fetch adds the libraries' matching files and notes as one message, not stored: where the profile puts it,
 	// else after the conversation. Its `system` scan covers the profile's system blocks too.
-	const fetched = libraries.length
+	const fetched = shelves.length
 		? await autoFetch(db, {
-				libraries,
+				libraries: shelves,
 				settings: chat.settings.autoFetch,
 				thread: history,
 				systemPrompt: [identity.systemPrompt, ...(profileBlocks ?? []).flatMap(block => block.kind === 'message' && block.role === 'system' ? [block.text] : [])].filter(Boolean).join('\n\n') || null,
@@ -178,9 +248,27 @@ export default defineEventHandler(async (event) => {
 				blocks: placeholder === -1 ? [...referenced.blocks, ...fetched.blocks] : referenced.blocks.toSpliced(placeholder, 1, ...fetched.blocks),
 			}
 		: referenced
+	// Images: with the chat's switch on, an image model set and an OpenRouter key stored, where app tools are allowed.
+	const drawing = chat.settings.images && prepared.appTools !== false && model.supportedParameters.includes('tools') ? await imageSetup(db, user.id) : null
+	/** The images this answer drew: linked to it once it is saved, deleted if it is not. */
+	const drawn: string[] = []
 	const tools: ToolSet = prepared.appTools === false
 		? prepared.tools
-		: { ...prepared.tools, chart: chartTool, ...(withFileTools && fileTools(db, libraries)) }
+		: {
+				...prepared.tools,
+				chart: chartTool,
+				...(withFileTools && fileTools(db, shelves)),
+				...(drawing && {
+					generate_image: imageTool({
+						userId: user.id,
+						make: async (prompt, aspectRatio) => {
+							const image = await makeImage(db, { user, chatId, prompt, aspectRatio, setup: drawing })
+							drawn.push(image.fileId)
+							return image
+						},
+					}),
+				}),
+			}
 	const price = await getPriceOverride(db, platform.id, model.id)
 	const modelHistory = await resolveAttachments({ db, inference, model, userId: user.id, chatId, libraryIds: libraries.map(library => library.id) }, context.messages).catch((error) => {
 		console.error('[chat] attachment failed', error)
@@ -243,6 +331,8 @@ export default defineEventHandler(async (event) => {
 						&& await saveAnswer(db, { id: responseMessage.id, chatId, parentId, chatModelId: lane.id, parts, metadata: stored }, keepPrevious, group)
 					// What the answer was given, for the conversation overview.
 					if (saved) await db.insert(schema.turnTrace).values({ messageId: responseMessage.id, blocks: context.blocks })
+					if (drawn.length && saved) await db.update(schema.file).set({ messageId: responseMessage.id }).where(inArray(schema.file.id, drawn))
+					else if (drawn.length) await deleteStoredFiles(db, drawn, user.id)
 					if (firstTurn) {
 						const title = (await titlePromise) ?? usage.title ?? fallbackTitle(firstText)
 						await db.update(schema.chat).set({ title }).where(and(eq(schema.chat.id, chatId), isNull(schema.chat.title)))

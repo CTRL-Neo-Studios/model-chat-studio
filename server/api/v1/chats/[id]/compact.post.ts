@@ -5,16 +5,16 @@ import type { MessageMetadata } from '#shared/utils/chat'
 import { getInstanceSettings } from '#server/utils/core/settings'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { assertRateLimit } from '#server/utils/core/rateLimit'
-import { requireChat } from '#server/utils/chat/access'
+import { chatOwner, requireChat } from '#server/utils/chat/access'
 import { buildContext } from '#server/utils/chat/context'
 import { resolveAttachments } from '#server/utils/chat/files'
 import { expandReferences } from '#server/utils/library/references'
 import { chatLibraries } from '#server/utils/library/libraries'
 import { listChatModels } from '#server/utils/chat/lanes'
-import { assertWithinBudget, chatTip, listChatMessages, monthlyBudgetStatus } from '#server/utils/chat/turns'
-import { shownThread } from '#server/utils/chat/thread'
+import { assertWithinBudget, chatAuthors, chatTip, listChatMessages, monthlyBudgetStatus } from '#server/utils/chat/turns'
+import { shownThread, withoutImageExchanges } from '#server/utils/chat/thread'
 import { getCatalog, getPriceOverride, useInference } from '#server/utils/inference'
-import { groupThread } from '#server/utils/chat/group'
+import { groupThread, namedSenders } from '#server/utils/chat/group'
 import { charactersById } from '#server/utils/chat/characters'
 
 const COMPACT_INSTRUCTIONS = `You write a summary of a conversation for yourself, so you can continue it later without the full history.
@@ -29,7 +29,7 @@ const COMPACT_INSTRUCTIONS = `You write a summary of a conversation for yourself
  * Summarised messages stay in the chat, readable, above a divider. Billed as `compact`.
  */
 export default defineEventHandler(async (event) => {
-	const [chat, { values: settings }] = await Promise.all([requireChat(event, 'manageChat'), getInstanceSettings(db)])
+	const [chat, { values: settings }] = await Promise.all([requireChat(event, 'writeChat'), getInstanceSettings(db)])
 	const user = await useServerAuth().requireUser(event)
 	assertRateLimit(`turn:${user.id}`, 20, 60_000, 'messages')
 
@@ -43,14 +43,18 @@ export default defineEventHandler(async (event) => {
 	// In a group chat one summary of the shared thread, written by the first lane's model, which every lane reads.
 	const group = chat.mode === 'group'
 	const answering = lanes.filter(lane => lane.enabled).slice(0, settings.maxChatModels)
-	const userName = (chat.userCharacterId && (await charactersById(db, [chat.userCharacterId]))[chat.userCharacterId]?.name) || user.name || user.username
+	// `{{user}}` is the chat's owner, whoever compacts.
+	const owner = await chatOwner(chat, user)
+	const userName = (chat.userCharacterId && (await charactersById(db, [chat.userCharacterId]))[chat.userCharacterId]?.name) || owner.name || owner.username
 	// The branch shown; a summary belongs to its tip, so a branch that leaves earlier does not get it.
 	const tip = await chatTip(db, chat.id)
 	const results = await Promise.allSettled((group ? answering.slice(0, 1) : answering).map(async (lane) => {
-		const shown = shownThread(await listChatMessages(db, chat.id, group ? undefined : lane.id), tip)
+		const shown = withoutImageExchanges(shownThread(await listChatMessages(db, chat.id, group ? undefined : lane.id), tip))
+		// Each user message under its sender's name, as in a turn; the owner's is `{{user}}`.
+		const names = { ...Object.fromEntries(Object.entries(await chatAuthors(db, shown)).map(([id, author]) => [id, author.name])), [chat.userId]: userName }
 		const thread = group
-			? groupThread(shown as UIMessage<MessageMetadata>[], { laneId: lane.id, userName })
-			: shown as UIMessage[]
+			? groupThread(shown as UIMessage<MessageMetadata>[], { laneId: lane.id, userName, names })
+			: namedSenders(shown as UIMessage<MessageMetadata>[], names)
 		const context = buildContext({ thread, systemPrompt: lane.systemPrompt, webSearch: false, memoryLength: null })
 		// Nothing new since the lane's last summary.
 		if (!context.blocks.some(block => block.kind === 'message')) return null

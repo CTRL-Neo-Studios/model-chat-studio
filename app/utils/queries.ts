@@ -66,9 +66,67 @@ export const meQuery = defineQueryOptions({
 	query: () => useRequestFetch()('/api/v1/users/me'),
 })
 
+/** Read-aloud on the active platform: whether it is set up, its voices and the member's. */
+export const speechVoicesQuery = defineQueryOptions({
+	key: ['speech', 'voices'],
+	query: () => useRequestFetch()('/api/v1/speech/voices'),
+	staleTime: FIVE_MINUTES,
+})
+
 export const usageQuery = defineQueryOptions({
 	key: ['me', 'usage'],
 	query: () => useRequestFetch()('/api/v1/me/usage'),
+})
+
+/** The member's own listings on Explore, whatever their status. */
+export const myListingsQuery = defineQueryOptions({
+	key: ['me', 'listings'],
+	query: () => useRequestFetch()('/api/v1/me/listings'),
+})
+
+/** Explore's settings: whether members may publish, the categories and the size limit. */
+export const exploreSettingsQuery = defineQueryOptions({
+	key: ['explore', 'settings'],
+	query: () => useRequestFetch()('/api/v1/explore/settings'),
+})
+
+/** Explore's grid for a search, filters, sort and page. */
+export const exploreListingsQuery = defineQueryOptions((params: { q?: string, kind?: string, category?: string, tag?: string, sort: string, page: number }) => ({
+	key: ['explore', 'listings', params],
+	query: () => useRequestFetch()('/api/v1/explore/listings', { query: params }),
+}))
+
+/**
+ * A listing's page: everything in its current version (or, for its publisher and admins and moderators, `version`),
+ * its versions, and which one the member has.
+ */
+export const exploreListingQuery = defineQueryOptions(({ id, version }: { id: string, version?: string }) => ({
+	key: ['explore', 'listing', id, version ?? 'current'],
+	query: () => useRequestFetch()(`/api/v1/explore/listings/${id}`, { query: version ? { version } : {} }),
+}))
+
+/** Admins and moderators: what waits for review. Under `explore`, so a decision anywhere refreshes it. */
+export const exploreReviewsQuery = defineQueryOptions({
+	key: ['explore', 'reviews'],
+	query: () => useRequestFetch()('/api/v1/explore/reviews'),
+})
+
+/** The counts beside "Explore": the member's listings rejected or removed; for reviewers, what waits for them. */
+export const exploreCountsQuery = defineQueryOptions({
+	key: ['explore', 'counts'],
+	query: () => useRequestFetch()('/api/v1/me/explore-counts'),
+})
+
+/** Admins and moderators: every listing, whatever its status. */
+export const adminListingsQuery = defineQueryOptions({
+	key: ['admin', 'listings'],
+	query: () => useRequestFetch()('/api/v1/admin/listings'),
+})
+
+/** The member's starred listings and their star lists. */
+export const myStarsQuery = defineQueryOptions({
+	key: ['me', 'stars'],
+	query: () => useRequestFetch()('/api/v1/me/stars'),
 })
 
 export const modelProfilesQuery = defineQueryOptions({
@@ -128,7 +186,7 @@ export const adminSettingsQuery = defineQueryOptions({
 })
 
 /** A platform's catalog with its instance key; without `platform`, the active one's. */
-export const adminCatalogQuery = defineQueryOptions(({ platform, kind = 'chat' }: { platform?: 'openrouter' | 'deepseek', kind?: 'chat' | 'stt' | 'decisions' }) => ({
+export const adminCatalogQuery = defineQueryOptions(({ platform, kind = 'chat' }: { platform?: 'openrouter' | 'deepseek', kind?: 'chat' | 'stt' | 'decisions' | 'speech' | 'images' }) => ({
 	key: ['admin', 'catalog', platform ?? 'active', kind],
 	query: () => useRequestFetch()('/api/v1/admin/models', { query: { platform, kind } }),
 	staleTime: FIVE_MINUTES,

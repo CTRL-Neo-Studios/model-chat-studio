@@ -49,6 +49,8 @@ export const chatSettingsSchema = z.object({
 	}).partial().optional(),
 	/** Chats with a library: the model may list, search and read its notes and text files. Absent: on. */
 	fileTools: z.boolean().optional(),
+	/** The model may draw images (`generate_image`), when an image model is set and an OpenRouter key is stored. Absent: off. */
+	images: z.boolean().optional(),
 })
 
 export type ChatSettings = z.infer<typeof chatSettingsSchema>
@@ -122,8 +124,11 @@ export interface MessageMetadata {
 	durationMs?: number
 	/** 1 for the first answer, then one more per regenerate (capped by `maxRegenerations`). */
 	attempt?: number
-	/** A `/compact` summary (role `system`): of a lane's thread up to it, or in a group chat of the shared thread. */
-	kind?: 'summary'
+	/**
+	 * `summary`: a `/compact` summary (role `system`): of a lane's thread up to it, or in a group chat of the shared
+	 * thread. `image`: both messages of a `/image` exchange, yours and the image; models are not sent them.
+	 */
+	kind?: 'summary' | 'image'
 	/** Library files and notes auto-fetched for this answer, by path. */
 	fetched?: { entryId: string, name: string }[]
 	/** A group chat's user message: the lanes that answered it, in speaking order. */
@@ -140,9 +145,10 @@ export interface ContextBlock {
 	/**
 	 * `reference`: a library file or note, named with "@" in the message before it or fetched by `autoFetch`, the
 	 * added message of auto-fetched files (or where a structure profile puts them). `profile`: a structure profile's
-	 * message or files block. `note`: the lane's Character's closing note.
+	 * message or files block. `note`: the lane's Character's closing note. `lore`: a lorebook note, where its position
+	 * put it; the lane's later answers read these for sticky and cooldown.
 	 */
-	kind: 'instructions' | 'omitted' | 'summary' | 'message' | 'reference' | 'autoFetch' | 'profile' | 'note'
+	kind: 'instructions' | 'omitted' | 'summary' | 'message' | 'reference' | 'autoFetch' | 'profile' | 'note' | 'lore'
 	role: 'system' | 'user' | 'assistant'
 	label: string
 	/** Characters of text; attachments are not counted. */
@@ -150,8 +156,10 @@ export interface ContextBlock {
 	/** Instructions and summaries. */
 	text?: string
 	messageId?: string
-	/** `reference`: the library entry. */
+	/** `reference` and `lore`: the library entry. */
 	entryId?: string
+	/** `lore`: kept by its `sticky` option rather than matched. */
+	sticky?: boolean
 	/** `omitted`: how many earlier messages the memory setting left out. */
 	count?: number
 }

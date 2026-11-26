@@ -25,6 +25,7 @@ const canEdit = computed(() => tab.value === 'mine' || isAdmin.value)
 
 const editor = overlay.create(LazyStructureProfileEditor)
 const confirm = overlay.create(LazyModalConfirm)
+const { publish } = useListingActions()
 
 async function create(template: (typeof PROFILE_TEMPLATES)[number]) {
 	const blocks = template.blocks.map(block => ({ ...block, id: crypto.randomUUID() }) as ProfileBlock)
@@ -61,7 +62,10 @@ function actions(profile: Profile): DropdownMenuItem[][] {
 	return [[
 		...(canEdit.value ? [{ label: 'Edit', icon: 'i-lucide-pencil', onSelect: () => edit(profile) }] : []),
 		...(mine
-			? (isAdmin.value ? [{ label: 'Publish for everyone', icon: 'i-lucide-share', onSelect: () => copy(profile, true) }] : [])
+			? [
+					{ label: 'Publish to Explore…', icon: 'i-lucide-telescope', onSelect: () => publish({ structureProfileIds: [profile.id] }, profile.name) },
+					...(isAdmin.value ? [{ label: 'Publish for everyone', icon: 'i-lucide-share', onSelect: () => copy(profile, true) }] : []),
+				]
 			: [{ label: 'Copy to my profiles', icon: 'i-lucide-copy', onSelect: () => copy(profile, false) }]),
 	], ...(canEdit.value ? [[{ label: 'Delete', icon: 'i-lucide-trash', color: 'error' as const, onSelect: () => remove(profile) }]] : [])]
 }

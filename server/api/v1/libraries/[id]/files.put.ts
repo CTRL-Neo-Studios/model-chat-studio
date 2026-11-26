@@ -7,7 +7,8 @@ import { libraryAbilities } from '#shared/abilities/libraryAbilities'
 import { authorize } from '#server/utils/core/authorize'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { readUpload } from '#server/utils/chat/files'
-import { assertEntryParent, entryColumns, entryNameSchema, findLibrary, listEntries, withUniqueName } from '#server/utils/library/libraries'
+import { assertEntryParent, entryColumns, findLibrary, listEntries, withUniqueName } from '#server/utils/library/libraries'
+import { entryNameSchema } from '#shared/utils/libraryFields'
 
 /**
  * Uploads one file (form field `file`) into the library, in the folder named by the form field `parentId` (absent:

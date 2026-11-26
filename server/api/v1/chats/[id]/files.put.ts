@@ -18,7 +18,7 @@ export default defineEventHandler(async (event) => {
 	const chatId = getRouterParam(event, 'id', { decode: true })
 	if (!z.uuid().safeParse(chatId).success) throw createError({ status: 404, statusText: 'Chat not found' })
 	const [user, chat] = await Promise.all([useServerAuth().requireUser(event), findChat(db, chatId)])
-	if (chat) await authorize(event, chatAbilities().manageChat, chat)
+	if (chat) await authorize(event, chatAbilities().writeChat, chat)
 
 	const { upload, mediaType, extension } = await readUpload(event)
 	const id = randomUUID()

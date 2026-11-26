@@ -24,10 +24,10 @@ const canEditFiles = computed(() => library.value?.role === 'owner' || library.v
 		<template #header>
 			<UDashboardNavbar :title="library?.name ?? ''">
 				<template #leading>
-					<UDashboardSidebarCollapse />
 					<UButton icon="i-lucide-arrow-left" color="neutral" variant="ghost" to="/libraries" aria-label="All libraries" />
 				</template>
 				<template #right>
+					<LibraryLorebook v-if="library" :library-id="libraryId" :lorebook="library.lorebook" :can-manage="isOwner" />
 					<LibraryPeople v-if="library" :library-id="libraryId" :can-manage="isOwner" />
 				</template>
 			</UDashboardNavbar>

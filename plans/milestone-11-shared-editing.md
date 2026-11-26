@@ -1,6 +1,6 @@
 # Milestone 11: edit access for people a chat is shared with
 
-Status: planned. Part of `roadmap-milestones-7-14.md`. One migration. Needs 8.2 (the chat's tip).
+Status: complete (2026-11-25): 11.1 to 11.3 and the live run on both platforms. Part of `roadmap-milestones-7-14.md`. One migration (`0022_shared_editing`, both columns, written in 11.1). Needs 8.2 (the chat's tip).
 
 Goal: someone a chat is shared with can take part in it, not only read it.
 
@@ -62,6 +62,52 @@ Goal: someone a chat is shared with can take part in it, not only read it.
 | 11.2 | Authors: the column, names in the threads, chips | tests for both thread builders with one and two authors; fixture: the request holds the editor's message under the editor's name and the owner's under the owner's |
 | 11.3 | Keeping in step: the tip check, taking in new messages, leaving; a smoke step | fixture with two accounts: the owner's open page shows the editor's message and answer within 10 s without a reload; two messages sent at once give one 409, and the second sender's text is still in the prompt; an editor who left gets 404 |
 
+Built (11.1):
+- Migration `0022_shared_editing` adds `chatShare.role` (`viewer` by default, so existing shares stay read-only) and `message.userId`, filled with the chat's owner on existing user messages. Both columns are written in 11.1, so the single migration of the plan holds. New user messages record their sender from now on (a sent message, "Save and resend", `/image`); 11.2 shows them.
+- `chatAbilities` has `readChat`, `writeChat` and `manageChat`. Someone who may read the chat but not do the thing is told 403; someone who may not read it, 404. `findChat` returns `editors` beside `sharedWith`. `writeChat` covers the turn, speakers, `/compact`, `/image`, uploads, message edit and delete, votes and the tip; everything else stays `manageChat`, the conversation overview included.
+- The turn and `/compact` pay as the sender: key, budget, rate limits and usage rows are the sender's, as they were. The chat's setup is the owner's: `chatOwner` gives `{{user}}` (the owner's name) and the libraries a Character brings (those the owner may read). Attachments must have been uploaded by the message's sender, no longer by the chat's owner.
+- `PATCH /chats/:id` takes `sharedWith: [{ userId, role }]`; `GET /chats/:id` gives the reader's `role` (`owner`, `editor`, `viewer`, `null`) in place of `isOwner`, and versions and branches to editors too; `GET /me/shared-chats` gives the role.
+- The share dialog has a role beside each person and for those being added, as the library's people dialog has. The chat page splits `isOwner` from `canWrite`: editors get the prompt (its "+" menu only with "Add files"; no web search or images switches, no memory slider, no Context popover), the actions on messages and answers, versions and branches, and the "/" commands but `rename`. "Shared with me" shows the role.
+- Tests: the role table (owner, editor, viewer, stranger, admin, guest, link access, a banned owner) against read, write and manage with their statuses; attachments from whoever uploaded them, with an editor's own upload and the sender recorded; the migration's backfill.
+
+Fixture check (DeepSeek faked; the admin as owner, three throwaway members):
+- Every chat route as owner, editor, viewer, stranger and guest, with bodies that fail validation (400 means past the access check): reads 200/200/200/404/404; the turn, speakers, compact, images, message edit and delete, tip, votes and uploads pass for owner and editor, 403 for the viewer, 404 for the stranger, 403 for the guest; title and settings, lanes, libraries and the overview pass only for the owner, 403 for editor and viewer. An upload with a JSON body answers 500 for those allowed (the upload parsing, unchanged here).
+- The owner's Character brought a private library with a note tagged "kestrel"; the editor, who gets 404 for that library, asked about the kestrel codename. The request held the note, and `{{user}}` was the owner's name. The usage rows were the editor's; the owner's spend did not move.
+- In Chromium: the owner's share dialog showed mc-editor as "Editor: also takes part" and mc-viewer as "Viewer: reads". The editor had the prompt without the owner's switches, sent a message and got its answer. The viewer had no prompt and no actions; "Shared with me" showed "Viewer".
+- The chat, library, Character, members and usage rows were deleted.
+
+Built (11.2):
+- The thread the chat page gets carries each user message's sender (`userId`) and `authors`, their names (else usernames) and avatars by id (`chatAuthors`), from every route that returns it: the chat, a deletion, a branch switch.
+- `namedSenders` (`group.ts`) puts each user message of a lane's thread under its sender's name, as a group thread does, once that thread holds messages from more than one person; with one sender it is returned as it is, so nothing changes on the wire. `groupThread` takes the same `names`. The owner's name is `{{user}}` (the user's Character, else the owner's name); a sender whose account is gone is "Someone". The turn and `/compact` both use them.
+- The chat page shows a chip (avatar and name) on each user message once the branch shown has more than one sender. A message just sent from the page counts as the reader's until the server's thread replaces it.
+- Tests: both thread builders with one sender and with two (and a gone sender), and the group thread with and without names.
+
+Fixture check (DeepSeek faked; the admin as owner, one throwaway editor):
+- Separate lanes, the owner alone: the request held "First from the owner." as it was. After the editor wrote and the owner again: "Wilson: First from the owner.", "mc-editor: Second from the editor.", "Wilson: Third from the owner." The chat's `authors` named both, and its messages carried their senders.
+- A group: "Wilson: Group hello from the owner." and "mc-editor: Group hello from the editor."
+- In Chromium the owner saw the chips, Wilson with his avatar and mc-editor with the letter avatar; an older chat of the owner's alone showed none.
+- The chats, the editor and the usage rows were deleted.
+
+Built (11.3):
+- The tip check. A new message carries `after`, the last user message the page shows (`null` before any). `applyTurnTrigger` refuses it with 409, "The chat has moved on", when the chat's tip is another, inside the transaction that locks the tip. Another lane's request for the same message still joins it. `after` is optional in the API: a client that leaves it out follows whatever the tip is, as before (the smoke client, scripts).
+- On the page, `useLaneAnswers` sends `after` with every lane's request for a new message. On a 409 it takes the message out again and hands it to the page (`onMovedOn`). The page puts its text back in the prompt (when the prompt is empty), says "The chat moved on", and takes in the thread.
+- Taking in new messages. While a chat has editors (`hasEditors` from `GET /chats/:id`; for the owner, an editor among the people), the page asks for the chat every 10 s while it is visible and when the window gets focus. It does so only when nothing is being written, drawn, compacted or edited. Where the server's messages differ from the page's, the server's thread wins.
+- Leaving: `DELETE /chats/:id/shares/me`, 404 for anyone the chat is not shared with. "Shared with me" has a Leave button on each chat.
+- Smoke step "the tip check": a message written after the first message is refused with 409, then the same message after the tip is answered.
+- Test: a message after an older tip is refused and nothing saved; another lane joining it is not refused.
+
+Fixture check (DeepSeek faked; the admin as owner in Chromium, a throwaway editor through the API):
+- With the owner's chat open and idle, the editor sent a message: the owner's page showed it and its answer 8.6 s later, without a reload.
+- The owner typed, then the editor sent, then the owner pressed Enter. The page's request named the old tip and was refused (409). "The chat moved on" showed, the owner's text was back in the prompt, and the editor's message and answer were on the page. Two requests sent at once through the API, after the same tip: 200 and 409.
+- Keys pressed through Puppeteer raise a window focus, which takes in the thread first, so the page's race had to be pressed from inside the page. Two earlier tries with Puppeteer's Enter sent after the right tip and were answered, as they should be.
+- The editor left: reading, writing and leaving again each answered 404. A viewer pressed Leave on "Shared with me": "You left the chat", the list empty, the chat 404 for them, and no one left in the owner's list.
+- The chat, the members and the usage rows were deleted.
+
+Live run (`scripts/app-smoke.ts`, 2026-11-25). With the OpenRouter speech and image models unset, the images step was skipped on both platforms and read aloud on OpenRouter:
+- OpenRouter (`deepseek/deepseek-v4.1-flash-1017`): every step passed. The tip check: 409, then "pong". $0.0033 for the run.
+- DeepSeek (`deepseek-flash`): every step passed but "image and PDF", which answered "pineapple" without "mango". The tip check: 409, then "pong". Read aloud: WAV in Stella. $0.0043 for the run.
+- The failed step was repeated three times on DeepSeek: "pineapple mango" once; once the model noted that the PDF's text read "mango" but gave only "pineapple"; once it said the PDF held no readable text. The PDF reaches the model; its reading varies from run to run. Nothing in this milestone touches that path, and the step passed on DeepSeek in milestone 10's live run.
+
 ## 7. Ceilings and things left out
 
 - No live typing, presence or streaming to the others; no notifications.
@@ -69,3 +115,4 @@ Goal: someone a chat is shared with can take part in it, not only read it.
 - No per-person `{{user}}`, and editors do not bring their own Character.
 - An editor cannot add models or libraries, and cannot share the chat on.
 - With several server instances the 10 s refresh still works (it reads the database); nothing here needs a shared store.
+- A message refused with 409 gets its text back in the prompt, not its attachments, "@" references or mentions. `/image` does not check the tip.

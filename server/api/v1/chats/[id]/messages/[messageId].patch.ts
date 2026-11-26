@@ -2,6 +2,7 @@ import { defineEventHandler, getRouterParam, readValidatedBody } from 'nuxt/serv
 import { db } from 'hub:db'
 import { z } from 'zod'
 import { requireChat } from '#server/utils/chat/access'
+import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { branchMessage, editMessage, showVersion } from '#server/utils/chat/turns'
 
 const bodySchema = z.union([
@@ -14,13 +15,13 @@ const bodySchema = z.union([
 	z.object({ active: z.literal(true) }).strict(),
 ])
 
-/** Owner only: replaces a message's text, starts a branch from it, or shows a version of an answer. Returns the message. */
+/** Owner and editors: replaces a message's text, starts a branch from it, or shows a version of an answer. Returns the message. */
 export default defineEventHandler(async (event) => {
-	const chat = await requireChat(event, 'manageChat')
+	const chat = await requireChat(event, 'writeChat')
 	const body = await readValidatedBody(event, bodySchema)
 	const messageId = getRouterParam(event, 'messageId', { decode: true })!
 
 	if ('active' in body) return await showVersion(db, chat.id, messageId)
-	if (body.branch) return await branchMessage(db, chat.id, messageId, body.text)
+	if (body.branch) return await branchMessage(db, chat.id, messageId, body.text, (await useServerAuth().requireUser(event)).id)
 	return await editMessage(db, chat.id, messageId, body.text)
 })

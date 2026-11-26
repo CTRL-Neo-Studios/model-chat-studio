@@ -62,6 +62,11 @@ const emit = defineEmits<{
 				:invocation="{ ...(part as ChartUIToolInvocation) }"
 			/>
 
+			<ChatToolImage
+				v-else-if="isToolUIPart(part) && getToolName(part) === 'generate_image'"
+				:invocation="{ ...(part as { state: string, input?: { prompt?: string }, output?: { fileId: string, url: string, mediaType: string, prompt: string }, errorText?: string }) }"
+			/>
+
 			<!-- The library file tools: one quiet line per call. -->
 			<p
 				v-else-if="isToolUIPart(part) && FILE_TOOL_LABELS[getToolName(part)]"

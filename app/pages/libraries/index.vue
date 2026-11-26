@@ -20,6 +20,7 @@ type Library = (typeof libraries.value)[number]
 const nameModal = overlay.create(LazyModalRename)
 const confirm = overlay.create(LazyModalConfirm)
 const deleteModal = overlay.create(LazyModalDeleteLibrary)
+const { publish } = useListingActions()
 const { user } = useUserSession()
 
 const nameProps = { heading: 'New library', description: 'A library holds files, notes and folders that chats can read.', placeholder: 'Library name', maxlength: 100 }
@@ -60,7 +61,10 @@ async function leave(library: Library) {
 const ROLE_LABELS = { owner: 'Owner', editor: 'Editor', viewer: 'Viewer' } as const
 const actions = (library: Library): DropdownMenuItem[][] => library.role === 'owner'
 	? [
-			[{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => rename(library) }],
+			[
+				{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => rename(library) },
+				{ label: 'Publish to Explore…', icon: 'i-lucide-telescope', onSelect: () => publish({ libraryIds: [library.id] }, library.name) },
+			],
 			[{ label: 'Delete', icon: 'i-lucide-trash', color: 'error', onSelect: () => remove(library) }],
 		]
 	: [[{ label: 'Leave library', icon: 'i-lucide-log-out', color: 'error', onSelect: () => leave(library) }]]
@@ -114,7 +118,8 @@ const actions = (library: Library): DropdownMenuItem[][] => library.role === 'ow
 						</p>
 						<div class="flex items-center gap-2 mt-auto">
 							<span class="text-xs text-dimmed">Created {{ formatDistanceToNow(new Date(library.createdAt), { addSuffix: true }) }}</span>
-							<UBadge v-if="library.role !== 'owner'" :label="`Shared · ${ROLE_LABELS[library.role]}`" color="neutral" variant="subtle" size="sm" class="ms-auto" />
+							<UBadge v-if="library.lorebook?.on" label="Lorebook" icon="i-lucide-book-open-text" color="neutral" variant="subtle" size="sm" class="ms-auto" />
+							<UBadge v-if="library.role !== 'owner'" :label="`Shared · ${ROLE_LABELS[library.role]}`" color="neutral" variant="subtle" size="sm" :class="!library.lorebook?.on && 'ms-auto'" />
 						</div>
 					</li>
 				</ul>

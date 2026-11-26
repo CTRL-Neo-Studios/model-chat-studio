@@ -1,9 +1,9 @@
 import { expect, test } from 'bun:test'
 import type { UIMessage } from 'ai'
 import type { MessageMetadata } from '../shared/utils/chat'
-import { MAX_SHARED_CHART, groupThread } from '../server/utils/chat/group'
+import { MAX_SHARED_CHART, groupThread, namedSenders } from '../server/utils/chat/group'
 
-type Stored = UIMessage<MessageMetadata> & { chatModelId?: string | null, parentId?: string | null }
+type Stored = UIMessage<MessageMetadata> & { chatModelId?: string | null, parentId?: string | null, userId?: string | null }
 
 const user = (id: string, text: string, speakers?: string[]): Stored => ({ id, role: 'user', parts: [{ type: 'text', text }], metadata: speakers && { speakers } })
 const answer = (id: string, parentId: string, lane: string, text: string): Stored => ({
@@ -93,8 +93,45 @@ test('the others\' charts come as JSON in place, cut when long; failed charts an
 	expect(critic).toBe(`user Critic: [chart] ${JSON.stringify(sales)}`)
 })
 
+test('another speaker\'s image: its prompt in the text, and the image itself for a speaker whose model reads images', () => {
+	const image = { fileId: 'f1', url: '/api/v1/files/f1', mediaType: 'image/webp', prompt: 'a red fox' }
+	const drew: Stored[] = [
+		user('u1', 'Draw a fox', ['Painter', 'Critic']),
+		{
+			...answer('p1', 'u1', 'Painter', ''),
+			parts: [
+				{ type: 'text', text: 'Done.' },
+				{ type: 'tool-generate_image', toolCallId: 'i1', state: 'output-available', input: { prompt: 'a red fox' }, output: image },
+				{ type: 'tool-generate_image', toolCallId: 'i2', state: 'output-error', input: { prompt: 'a blue fox' }, errorText: 'no' },
+			] as Stored['parts'],
+		},
+	]
+	const seeing = groupThread(drew, { laneId: 'Critic', questionId: 'u1', userName: 'Captain', seesImages: true })
+	expect(seeing[1]!.parts).toEqual([{ type: 'text', text: 'Painter: Done.\n\n[image: a red fox]' }, { type: 'file', url: '/api/v1/files/f1', mediaType: 'image/webp' }])
+	const blind = groupThread(drew, { laneId: 'Critic', questionId: 'u1', userName: 'Captain' })
+	expect(read(blind)).toEqual(['user Captain: Draw a fox', 'user Painter: Done.\n\n[image: a red fox]'])
+})
+
 test('a greeting opens the shared thread: the greeter\'s own, the others\' under its name', () => {
 	const greeted: Stored[] = [{ id: 'g', role: 'assistant', parentId: null, chatModelId: 'Bard', metadata: { greeting: true, lane: { name: 'Bard', color: null } }, parts: [{ type: 'text', text: 'Welcome, traveller.' }] }, user('u1', 'Hello', ['Bard', 'Guard'])]
 	expect(read(groupThread(greeted, { laneId: 'Bard', questionId: 'u1', userName: 'Captain' }))).toEqual(['assistant Welcome, traveller.', 'user Captain: Hello'])
 	expect(read(groupThread(greeted, { laneId: 'Guard', questionId: 'u1', userName: 'Captain' }))).toEqual(['user Bard: Welcome, traveller.', 'user Captain: Hello'])
+})
+
+test('a lane\'s thread names senders only once more than one person writes; the owner goes by `{{user}}`', () => {
+	const names = { owner: 'Captain', editor: 'Mira' }
+	const sent = (id: string, text: string, userId: string | null): Stored => ({ ...user(id, text), userId })
+	const alone = [sent('u1', 'Hi', 'owner'), answer('a1', 'u1', 'Designer', 'Hello'), sent('u2', 'More', 'owner')]
+	// One sender: unchanged, the same objects.
+	expect(namedSenders(alone, names)).toBe(alone)
+	const together = [sent('u1', 'Hi', 'owner'), answer('a1', 'u1', 'Designer', 'Hello'), sent('u2', 'And me', 'editor'), sent('u3', 'Old', null)]
+	expect(read(namedSenders(together, names))).toEqual(['user Captain: Hi', 'assistant [reasoning] Hello', 'user Mira: And me', 'user Someone: Old'])
+})
+
+test('a group thread names each user message by its sender when names are given, else as the user', () => {
+	const round = [{ ...user('u1', 'Plan it', ['Designer']), userId: 'owner' }, answer('d1', 'u1', 'Designer', 'Blue'), { ...user('u2', 'Agreed', ['Designer']), userId: 'editor' }]
+	expect(read(groupThread(round, { laneId: 'Designer', userName: 'Captain', names: { owner: 'Captain', editor: 'Mira' } })))
+		.toEqual(['user Captain: Plan it', 'assistant [reasoning] Blue', 'user Mira: Agreed'])
+	expect(read(groupThread(round, { laneId: 'Designer', userName: 'Captain' })))
+		.toEqual(['user Captain: Plan it', 'assistant [reasoning] Blue', 'user Captain: Agreed'])
 })

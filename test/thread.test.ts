@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { shownThread, threadTo } from '../server/utils/chat/thread'
+import { shownThread, threadTo, withoutImageExchanges } from '../server/utils/chat/thread'
 
 type Row = { id: string, role: 'user' | 'assistant' | 'system', parentId: string | null }
 const user = (id: string, parentId: string | null): Row => ({ id, role: 'user', parentId })
@@ -46,4 +46,10 @@ test('a greeting answers no message: it opens every branch, and the first messag
 	const greeted: Row[] = [{ id: 'g', role: 'assistant', parentId: null }, ...chat]
 	expect(ids(shownThread(greeted, 'u3b'))).toEqual(['g', 'u1', 'a1', 'u2b', 'a2b', 'u3b', 'a3b'])
 	expect(ids(threadTo(greeted, 'u1'))).toEqual(['g', 'u1'])
+})
+
+test('a /image exchange is left out of what models read, and the message after it still reads the whole branch', () => {
+	type Marked = Row & { metadata?: { kind: 'image' } }
+	const drawn: Marked[] = [...chat.slice(0, 7), { ...user('i1', 'u3'), metadata: { kind: 'image' } }, { ...answer('i2', 'i1'), metadata: { kind: 'image' } }, user('u4', 'i1')]
+	expect(ids(withoutImageExchanges(threadTo(drawn, 'u4')))).toEqual(['u1', 'a1', 'u2', 'a2', 's2', 'u3', 'a3', 'u4'])
 })

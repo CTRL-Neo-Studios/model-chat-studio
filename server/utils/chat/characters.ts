@@ -7,6 +7,7 @@ import type { Db } from '../core/settings'
 import { allows } from 'nuxt-authorization/utils'
 import { findLibrary } from '../library/libraries'
 import { libraryAbilities } from '../../../shared/abilities/libraryAbilities'
+import type { Lorebook } from '../../../shared/utils/lorebook'
 import type { LibraryRef } from '../../../shared/utils/librarySpace'
 import type { User } from '../../../shared/types/db'
 
@@ -68,12 +69,12 @@ export async function setCharacterLibraries(db: Db, characterId: string, library
 
 /**
  * The libraries one lane reads: the chat's, then its Character's that `reader` (the chat's owner) may read, each
- * once. A Character's libraries reach only the lane it is on.
+ * once, with their lorebook. A Character's libraries reach only the lane it is on.
  */
-export async function laneLibraries(db: Db, reader: User, chatLibraries: LibraryRef[], characterLibraryIds: string[]) {
+export async function laneLibraries(db: Db, reader: User, chatLibraries: (LibraryRef & { lorebook: Lorebook | null })[], characterLibraryIds: string[]) {
 	const extra = await Promise.all(characterLibraryIds.filter(id => !chatLibraries.some(library => library.id === id)).map(id => findLibrary(db, id)))
 	const readable = await Promise.all(extra.map(library => library ? allows(libraryAbilities().readLibrary, reader, library) : false))
-	return [...chatLibraries, ...extra.flatMap((library, index) => library && readable[index] ? [{ id: library.id, name: library.name }] : [])]
+	return [...chatLibraries, ...extra.flatMap((library, index) => library && readable[index] ? [{ id: library.id, name: library.name, lorebook: library.lorebook }] : [])]
 }
 
 /** Characters by id, for a turn: name, colour, instructions and libraries. */

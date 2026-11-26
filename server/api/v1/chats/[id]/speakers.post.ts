@@ -25,7 +25,7 @@ const bodySchema = z.object({
  * names in the text, else last round's speakers, else everyone. The client then asks them one after another.
  */
 export default defineEventHandler(async (event) => {
-	const [chat, { values: settings }] = await Promise.all([requireChat(event, 'manageChat'), getInstanceSettings(db)])
+	const [chat, { values: settings }] = await Promise.all([requireChat(event, 'writeChat'), getInstanceSettings(db)])
 	if (chat.mode !== 'group') throw createError({ status: 400, statusText: 'Only a group chat chooses who answers' })
 	const user = await useServerAuth().requireUser(event)
 	const { text, mentions } = await readValidatedBody(event, bodySchema)

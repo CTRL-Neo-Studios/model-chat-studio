@@ -236,6 +236,7 @@ const quickChats = [
 						v-model:references="references"
 						:mentions="mentions"
 						:web-search="settings.webSearch"
+						:images="settings.images"
 						:models="answeringModels"
 						:uploads="uploads"
 						:uploading="uploading"
@@ -243,6 +244,7 @@ const quickChats = [
 						:commands="temporary ? [] : [tempCommand]"
 						class="[view-transition-name:chat-prompt]"
 						@update:web-search="chatLanes.setSettings({ webSearch: $event })"
+						@update:images="chatLanes.setSettings({ images: $event })"
 						@submit="createChat(input)"
 						@command="startTemporary"
 					>

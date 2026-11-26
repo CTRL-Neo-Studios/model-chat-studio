@@ -15,8 +15,8 @@ const bodySchema = z.object({
 	title: z.string().trim().min(1).max(200),
 	visibility: z.enum(['private', 'public']),
 	settings: chatSettingsSchema,
-	/** Replaces the list of people the chat is shared with. */
-	sharedWith: z.array(z.uuid()).max(100),
+	/** Replaces the list of people the chat is shared with, each a `viewer` (reads) or an `editor` (also takes part). */
+	sharedWith: z.array(z.object({ userId: z.uuid(), role: z.enum(['viewer', 'editor']) }).strict()).max(100),
 	/** One of the owner's folders; `null` takes the chat out of its folder. */
 	folderId: z.uuid().nullable(),
 	/** "Keep this chat": a temporary chat becomes a normal one, named from its first message. */
@@ -67,9 +67,10 @@ export default defineEventHandler(async (event) => {
 		// Unknown ids and the owner are skipped.
 		const people = sharedWith.length
 			? await tx.select({ id: schema.user.id }).from(schema.user)
-					.where(and(inArray(schema.user.id, sharedWith), ne(schema.user.id, chat.userId)))
+					.where(and(inArray(schema.user.id, sharedWith.map(share => share.userId)), ne(schema.user.id, chat.userId)))
 			: []
-		if (people.length) await tx.insert(schema.chatShare).values(people.map(person => ({ chatId: chat.id, userId: person.id })))
+		const roles = Object.fromEntries(sharedWith.map(share => [share.userId, share.role]))
+		if (people.length) await tx.insert(schema.chatShare).values(people.map(person => ({ chatId: chat.id, userId: person.id, role: roles[person.id] })))
 		return rows
 	})
 	return view(row!, await listChatShares(db, chat.id))

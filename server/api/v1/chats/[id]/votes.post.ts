@@ -11,7 +11,7 @@ const bodySchema = z.object({
 })
 
 export default defineEventHandler(async (event) => {
-	const chat = await requireChat(event, 'manageChat')
+	const chat = await requireChat(event, 'writeChat')
 	const { messageId, isUpvoted } = await readValidatedBody(event, bodySchema)
 	const chatId = chat.id
 

@@ -3,6 +3,7 @@ import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
 import { z } from 'zod'
 // Relative, not `hub:db`, so this module also loads in `bun test`.
 import * as tables from '../../db/schema'
+import { EXPLORE_DEFAULTS, exploreSettingsSchema } from '../../../shared/utils/package'
 
 /** Any Drizzle Postgres database or transaction over this schema: `hub:db` in the app, PGlite in tests. */
 export type Db = PgDatabase<PgQueryResultHKT, typeof tables>
@@ -14,6 +15,12 @@ const platformConfigSchema = z.object({
 	defaultModel: z.string().optional(),
 	titleModel: z.string().optional(),
 	sttModel: z.string().optional(),
+	/** OpenRouter only: the text-to-speech model; empty is read-aloud off. */
+	speechModel: z.string().optional(),
+	/** OpenRouter only: the speech model's default voice; empty or gone is its first. */
+	speechVoice: z.string().optional(),
+	/** OpenRouter only: the model that draws images, whichever platform answers; empty is images off. */
+	imageModel: z.string().optional(),
 	/** OpenRouter only: the Decisions model that picks a group round's speakers; empty is off. */
 	decisionModel: z.string().optional(),
 })
@@ -35,6 +42,7 @@ const settingSchemas = {
 	maxRetries: z.number().int().min(0).max(10).catch(5),
 	'inference.openrouter': platformConfigSchema.catch({}),
 	'inference.deepseek': platformConfigSchema.catch({}),
+	explore: exploreSettingsSchema.catch(EXPLORE_DEFAULTS),
 }
 
 export type SettingKey = keyof typeof settingSchemas
