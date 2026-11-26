@@ -11,6 +11,7 @@ const { user } = useUserSession()
 const act = useApiAction()
 const toast = useToast()
 const queryCache = useQueryCache()
+const { addToLists } = useStarLists()
 
 const content = computed(() => page.value?.version?.content)
 const fileUrl = (key: string | null) => key && page.value?.fileIds[key] ? `/api/v1/files/${page.value.fileIds[key]}` : undefined
@@ -94,6 +95,10 @@ async function get() {
 						</div>
 					</div>
 					<div class="flex flex-col items-end gap-1">
+						<div class="flex items-center gap-1">
+							<StarButton :listing-id="page.listing.id" :starred="page.starred" :stars="page.listing.stars" size="sm" />
+							<UButton label="Add to a list…" icon="i-lucide-list-plus" size="sm" color="neutral" variant="ghost" @click="addToLists(page.listing.id, page.listing.name)" />
+						</div>
 						<UButton v-if="page.got === null" label="Get" icon="i-lucide-download" :loading="getting" @click="get" />
 						<template v-else>
 							<UBadge label="You have this" icon="i-lucide-check" color="success" variant="subtle" />

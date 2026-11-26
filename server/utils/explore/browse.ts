@@ -14,7 +14,7 @@ export const browseQuerySchema = z.object({
 	kind: z.enum(tables.listingKinds).optional(),
 	category: z.string().trim().min(1).max(40).optional(),
 	tag: z.string().trim().toLowerCase().min(1).max(30).optional(),
-	sort: z.enum(['newest', 'updated', 'gets']).default('newest'),
+	sort: z.enum(['newest', 'updated', 'gets', 'stars']).default('newest'),
 	page: z.coerce.number().int().min(1).max(1000).default(1),
 })
 
@@ -30,11 +30,39 @@ const shown = and(
 const pattern = (word: string) => `%${word.replace(/[\\%_]/g, '\\$&')}%`
 
 /**
- * One page of Explore: listed listings whose every word is in the name, summary or tags, of a kind, category and
- * tag when given; featured ones first, then by the sort. Each card carries its publisher and, when its first
- * Character has one, the avatar the version owns.
+ * Cards as the grid and the stars page show them, from `userId`'s side: each with its publisher, its star count and
+ * whether they starred it, whether it is still shown on Explore, and the avatar its version owns for its first
+ * Character. Callers add the filter and the order.
  */
-export async function browseListings(db: Db, query: BrowseQuery) {
+export function listingCards(db: Db, userId: string) {
+	return db.select({
+		id: tables.listing.id,
+		kind: tables.listing.kind,
+		name: tables.listing.name,
+		summary: tables.listing.summary,
+		tags: tables.listing.tags,
+		category: tables.listing.category,
+		featured: tables.listing.featured,
+		gets: tables.listing.gets,
+		stars: tables.listing.stars,
+		starred: sql<boolean>`${tables.star.userId} is not null`,
+		available: sql<boolean>`coalesce(${shown}, false)`,
+		publishedAt: tables.listing.publishedAt,
+		updatedAt: tables.listingVersion.createdAt,
+		avatarFileId: tables.listingFile.fileId,
+		publisher: { username: tables.user.username, name: tables.user.name, avatarUrl: tables.user.avatarUrl },
+	}).from(tables.listing)
+		.innerJoin(tables.user, eq(tables.user.id, tables.listing.ownerId))
+		.innerJoin(tables.listingVersion, eq(tables.listingVersion.id, tables.listing.currentVersionId))
+		.leftJoin(tables.listingFile, and(eq(tables.listingFile.versionId, tables.listing.currentVersionId), eq(tables.listingFile.key, sql`${tables.listingVersion.content}->'characters'->0->>'avatarKey'`)))
+		.leftJoin(tables.star, and(eq(tables.star.listingId, tables.listing.id), eq(tables.star.userId, userId)))
+}
+
+/**
+ * One page of Explore: listed listings whose every word is in the name, summary or tags, of a kind, category and
+ * tag when given; featured ones first, then by the sort.
+ */
+export async function browseListings(db: Db, query: BrowseQuery, userId: string) {
 	const words = (query.q ?? '').split(/\s+/).filter(Boolean).slice(0, 8)
 	const where = and(
 		shown,
@@ -47,25 +75,10 @@ export async function browseListings(db: Db, query: BrowseQuery) {
 		newest: [desc(tables.listing.publishedAt)],
 		updated: [desc(tables.listingVersion.createdAt)],
 		gets: [desc(tables.listing.gets), desc(tables.listing.publishedAt)],
+		stars: [desc(tables.listing.stars), desc(tables.listing.publishedAt)],
 	}[query.sort]
 	const [rows, [total]] = await Promise.all([
-		db.select({
-			id: tables.listing.id,
-			kind: tables.listing.kind,
-			name: tables.listing.name,
-			summary: tables.listing.summary,
-			tags: tables.listing.tags,
-			category: tables.listing.category,
-			featured: tables.listing.featured,
-			gets: tables.listing.gets,
-			publishedAt: tables.listing.publishedAt,
-			updatedAt: tables.listingVersion.createdAt,
-			avatarFileId: tables.listingFile.fileId,
-			publisher: { username: tables.user.username, name: tables.user.name, avatarUrl: tables.user.avatarUrl },
-		}).from(tables.listing)
-			.innerJoin(tables.user, eq(tables.user.id, tables.listing.ownerId))
-			.innerJoin(tables.listingVersion, eq(tables.listingVersion.id, tables.listing.currentVersionId))
-			.leftJoin(tables.listingFile, and(eq(tables.listingFile.versionId, tables.listing.currentVersionId), eq(tables.listingFile.key, sql`${tables.listingVersion.content}->'characters'->0->>'avatarKey'`)))
+		listingCards(db, userId)
 			.where(where)
 			.orderBy(desc(tables.listing.featured), ...order, asc(tables.listing.id))
 			.limit(PAGE_SIZE)
@@ -89,7 +102,7 @@ async function versionFiles(db: Db, versionId: string) {
  * member got, if any. Never the publisher's own `source`.
  */
 export async function listingPage(db: Db, listing: Listing, userId: string) {
-	const [[publisher], versions, [got], [basedOn]] = await Promise.all([
+	const [[publisher], versions, [got], [basedOn], [starred]] = await Promise.all([
 		db.select({ username: tables.user.username, name: tables.user.name, avatarUrl: tables.user.avatarUrl }).from(tables.user).where(eq(tables.user.id, listing.ownerId)),
 		db.select({ id: tables.listingVersion.id, number: tables.listingVersion.number, notes: tables.listingVersion.notes, size: tables.listingVersion.size, createdAt: tables.listingVersion.createdAt })
 			.from(tables.listingVersion).where(eq(tables.listingVersion.listingId, listing.id)).orderBy(desc(tables.listingVersion.number)),
@@ -100,6 +113,7 @@ export async function listingPage(db: Db, listing: Listing, userId: string) {
 		listing.basedOnId
 			? db.select({ id: tables.listing.id, name: tables.listing.name }).from(tables.listing).innerJoin(tables.user, eq(tables.user.id, tables.listing.ownerId)).where(and(eq(tables.listing.id, listing.basedOnId), shown))
 			: [],
+		db.select({ listingId: tables.star.listingId }).from(tables.star).where(and(eq(tables.star.userId, userId), eq(tables.star.listingId, listing.id))),
 	])
 	const [current] = listing.currentVersionId ? await db.select().from(tables.listingVersion).where(eq(tables.listingVersion.id, listing.currentVersionId)) : []
 	const files = current ? await versionFiles(db, current.id) : {}
@@ -113,6 +127,7 @@ export async function listingPage(db: Db, listing: Listing, userId: string) {
 		basedOn: basedOn ?? null,
 		/** The version number the member got last; `null` when they never got it (a version since deleted reads 0). */
 		got: got ? got.number ?? 0 : null,
+		starred: !!starred,
 	}
 }
 

@@ -108,6 +108,12 @@ export const adminListingsQuery = defineQueryOptions({
 	query: () => useRequestFetch()('/api/v1/admin/listings'),
 })
 
+/** The member's starred listings and their star lists. */
+export const myStarsQuery = defineQueryOptions({
+	key: ['me', 'stars'],
+	query: () => useRequestFetch()('/api/v1/me/stars'),
+})
+
 export const modelProfilesQuery = defineQueryOptions({
 	key: ['model-profiles'],
 	query: () => useRequestFetch()('/api/v1/model-profiles'),

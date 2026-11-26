@@ -27,7 +27,7 @@ async function publish(owner: string, name: string, summary: string, tags: strin
 	await db.update(schema.listing).set({ publishedAt: new Date(Date.UTC(2026, 10, day)) }).where(eq(schema.listing.id, listing.id))
 	return listing.id
 }
-const names = async (query: Record<string, unknown>) => (await browseListings(db, browseQuerySchema.parse(query))).listings.map(listing => listing.name)
+const names = async (query: Record<string, unknown>) => (await browseListings(db, browseQuerySchema.parse(query), users.bob)).listings.map(listing => listing.name)
 
 beforeEach(async () => {
 	db = await createTestDb()
@@ -73,7 +73,7 @@ beforeEach(async () => {
 
 test('the grid shows listed listings only, and none of a member whose ban lasts', async () => {
 	expect(await names({})).toEqual(['Notes', 'Dev Team', 'Seraphina', 'Forgiven one'])
-	expect((await browseListings(db, browseQuerySchema.parse({}))).total).toBe(4)
+	expect((await browseListings(db, browseQuerySchema.parse({}), users.bob)).total).toBe(4)
 })
 
 test('search: every word, in the name, summary or tags; % and _ are plain characters', async () => {
@@ -102,7 +102,7 @@ test('each sort, with featured listings first', async () => {
 	await db.update(schema.listing).set({ featured: true }).where(eq(schema.listing.id, ids.forgiven!))
 	expect(await names({ sort: 'newest' })).toEqual(['Forgiven one', 'Notes', 'Dev Team', 'Seraphina'])
 	// A card carries the avatar its version owns.
-	const cards = (await browseListings(db, browseQuerySchema.parse({ kind: 'character', q: 'Seraphina' }))).listings
+	const cards = (await browseListings(db, browseQuerySchema.parse({ kind: 'character', q: 'Seraphina' }), users.bob)).listings
 	const [owned] = await db.select().from(schema.listingFile).where(eq(schema.listingFile.fileId, cards[0]!.avatarFileId!))
 	expect(owned!.key).toBe('f1')
 })

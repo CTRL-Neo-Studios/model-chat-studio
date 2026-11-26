@@ -432,6 +432,7 @@ export const pin = pgTable("pin", {
 
 export const listingKinds = ["character", "library", "structureProfile", "pack"] as const
 export const listingStatuses = ["listed", "unlisted", "removed"] as const
+export const versionStatuses = ["approved", "pending", "rejected"] as const
 
 /** What a member published to Explore (milestone 13): its texts, and its content as versions of a package. */
 export const listing = pgTable("listing", {
@@ -456,6 +457,8 @@ export const listing = pgTable("listing", {
 	source: jsonb().$type<PackageSource>().notNull(),
 	/** Members who got it, counted at their first get. */
 	gets: integer().notNull().default(0),
+	/** Members who starred it, kept with each star and unstar. */
+	stars: integer().notNull().default(0),
 	publishedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 
 	...createdUpdatedAtColumns
@@ -473,6 +476,12 @@ export const listingVersion = pgTable("listingVersion", {
 	content: jsonb().$type<Package>().notNull(),
 	/** Bytes, the package's JSON with its files. */
 	size: integer().notNull(),
+	/** `approved` is on Explore (the newest approved is the listing's current version); `pending` waits for review. */
+	status: text({ enum: versionStatuses }).notNull().default("approved"),
+	/** A rejection's reason, for its publisher. */
+	reason: text(),
+	reviewedBy: uuid().references(() => user.id, { onDelete: "set null" }),
+	reviewedAt: timestamp({ withTimezone: true }),
 	createdAt,
 }, (t) => [
 	unique().on(t.listingId, t.number),
@@ -498,6 +507,53 @@ export const acquisition = pgTable("acquisition", {
 	createdAt,
 }, (t) => [
 	index().on(t.userId, t.listingId),
+]);
+
+/** A member's star on a listing (milestone 14): one per member and listing, counted in `listing.stars`. */
+export const star = pgTable("star", {
+	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	listingId: uuid().notNull().references(() => listing.id, { onDelete: "cascade" }),
+	createdAt,
+}, (t) => [
+	primaryKey({ columns: [t.userId, t.listingId] }),
+	index().on(t.listingId),
+]);
+
+/** A member's named list of starred listings; only its owner sees it. */
+export const starList = pgTable("starList", {
+	id: uuid().primaryKey().defaultRandom(),
+	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	name: text().notNull(),
+	description: text().notNull().default(""),
+	createdAt,
+}, (t) => [
+	index().on(t.userId),
+]);
+
+/** A listing in a star list, once per list. Being in a list means the listing is starred. */
+export const starListItem = pgTable("starListItem", {
+	listId: uuid().notNull().references(() => starList.id, { onDelete: "cascade" }),
+	listingId: uuid().notNull().references(() => listing.id, { onDelete: "cascade" }),
+	createdAt,
+}, (t) => [
+	primaryKey({ columns: [t.listId, t.listingId] }),
+	index().on(t.listingId),
+]);
+
+export const reportStatuses = ["open", "dismissed", "acted"] as const
+
+/** A member's report of a listing, for admins and moderators; one open report per member and listing. */
+export const listingReport = pgTable("listingReport", {
+	id: uuid().primaryKey().defaultRandom(),
+	listingId: uuid().notNull().references(() => listing.id, { onDelete: "cascade" }),
+	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	reason: text().notNull(),
+	status: text({ enum: reportStatuses }).notNull().default("open"),
+	resolvedBy: uuid().references(() => user.id, { onDelete: "set null" }),
+	createdAt,
+}, (t) => [
+	index().on(t.status, t.createdAt),
+	uniqueIndex("listingReport_open_once").on(t.listingId, t.userId).where(sql`${t.status} = 'open'`),
 ]);
 
 // Relations

@@ -1,6 +1,6 @@
 # Milestone 14: Explore's stars, star lists and moderation
 
-Status: planned. Part of `roadmap-milestones-7-14.md`. One migration. Needs milestone 13.
+Status: 14.1 built (2026-11-26); 14.2 next. Part of `roadmap-milestones-7-14.md`. One migration (`0024_explore_stars`, written in 14.1). Needs milestone 13.
 
 Goal: members keep what they like on Explore and find it again, as stars and lists work on GitHub; and admins and moderators can require a review before anything is published, and act on what members report.
 
@@ -69,6 +69,16 @@ Goal: members keep what they like on Explore and find it again, as stars and lis
 | 14.1 | Stars and lists: the tables, the routes, the buttons and the list dialog, `/explore/stars`, the "most starred" sort | tests: a star counts once, a list item stars, unstarring empties the lists, another member's lists are not reachable; in Chromium: a listing added to "Productivity" shows one star, appears under that list and under "All stars", and "most starred" puts it first |
 | 14.2 | Reviewed mode: version states, the queue, approve and reject with a reason, publishing again, updates that wait while the earlier version stays | tests for every transition (new listing and update, each mode, nobody reviewing their own, the last reviewer) and for what members see meanwhile; in Chromium with three accounts: a member's pack waits, is invisible to another member, is rejected with a reason the publisher reads, is published again and approved, and then appears |
 | 14.3 | Reports, the sidebar counts, a smoke step | tests for reporting once, dismissing, and removal from a report; in Chromium: a report shows in the queue, the moderator removes the listing, and the publisher sees the reason and the count |
+
+Built (14.1):
+- Migration `0024_explore_stars`, the milestone's one, written whole now: `star`, `starList`, `starListItem`, `listing.stars`, `listingVersion.status` (`approved` by default, so every existing version stays published), `reason`, `reviewedBy`, `reviewedAt`, and `listingReport` with one open report per member and listing (a partial unique index). The setting's publishing mode (open, reviewed, off) is code, in 14.2.
+- `server/utils/explore/stars.ts`: `starListing` and `unstarListing` keep `listing.stars` in the same transaction, once per member; unstarring takes the listing out of every list of the member's. Lists (`createList`, `changeList`, `deleteList`, `addToList` which stars, `removeFromList`) are the member's own, anyone else's not found. `myStars`: the starred listings newest first, and the lists in the order made, each with its listings.
+- `browse.ts`: `listingCards`, the card the grid and the stars page share, from the member's side: the star count, whether they starred it, whether it is still shown on Explore. `sort=stars` ("Most starred": stars, then newest). A listing's page says whether the member starred it.
+- Routes: `PUT` and `DELETE /explore/listings/:id/star`, `GET /me/stars`, `POST /me/star-lists`, `PATCH` and `DELETE /me/star-lists/:id`, `PUT` and `DELETE /me/star-lists/:id/listings/:listingId`. Starring and putting in a list need a listing the member can see; unstarring and taking out also work on one no longer shown.
+- Screens: `ListingCard` (taken out of the grid, shared with the stars page) with a star button and its count, shown at once and back if the server refuses; "Add to a list…" on cards and on a listing's page: the member's lists as checkboxes, and new ones by name. `/explore/stars` ("Your stars" on Explore): "All stars", then each list with Rename…, Describe…, Delete and "Take out"; a listing removed or unlisted since stays, greyed, as "No longer available on Explore", keeping only its name and kind.
+- Tests (`test/stars.test.ts`): a star counts once per member, unstarring twice too; putting in a list stars, in two lists still once; out of one list stays starred and in the other; unstarring empties every list and keeps the lists; deleting a list keeps its listings starred; another member's lists are not found for changing, deleting, adding or taking out, and stay out of their stars; "most starred" with each card's own star, and a removed listing in the stars as no longer available, without its summary or tags, still unstarrable.
+
+Check in Chromium on the dev instance: two Characters published as the admin, "Alpha planner" first and "Beta writer" after. A member, on Alpha's card, chose "Add to a list…", made "Productivity" and saved: Alpha showed one star, its own. Beta added to "Productivity" too showed its star at once; unstarred again from its card, it left the list. On "Your stars", "All stars" and "Productivity" each held Alpha; with "Most starred", Alpha (1) came before the newer Beta (0). The listings, Characters and the member were deleted.
 
 ## 7. Ceilings and things left out
 

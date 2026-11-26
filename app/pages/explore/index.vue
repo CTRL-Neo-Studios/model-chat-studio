@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { formatDistanceToNow } from 'date-fns'
-
 useHead({ title: 'Explore' })
 
 const route = useRoute()
@@ -29,7 +27,8 @@ const listings = computed(() => data.value?.listings ?? [])
 const ALL = 'all'
 const kinds = [{ label: 'All', value: ALL }, ...Object.entries(LISTING_KINDS).map(([value, kind]) => ({ label: kind.plural, value, icon: kind.icon }))]
 const kind = computed({ get: () => filters.value.kind ?? ALL, set: value => setFilters({ kind: value === ALL ? undefined : value }) })
-const sorts = [{ label: 'Newest', value: 'newest' }, { label: 'Recently updated', value: 'updated' }, { label: 'Most got', value: 'gets' }]
+const sorts = [{ label: 'Newest', value: 'newest' }, { label: 'Recently updated', value: 'updated' }, { label: 'Most got', value: 'gets' }, { label: 'Most starred', value: 'stars' }]
+const { addToLists } = useStarLists()
 const categories = computed(() => [{ label: 'All categories', value: ALL }, ...(settings.value?.categories ?? []).map(name => ({ label: name, value: name }))])
 const page = computed({ get: () => filters.value.page, set: value => setFilters({ page: value > 1 ? value : undefined }) })
 </script>
@@ -39,6 +38,7 @@ const page = computed({ get: () => filters.value.page, set: value => setFilters(
 		<template #header>
 			<UDashboardNavbar title="Explore">
 				<template #right>
+					<UButton icon="i-lucide-star" label="Your stars" color="neutral" variant="subtle" to="/explore/stars" />
 					<UButton icon="i-lucide-telescope" label="Your listings" color="neutral" variant="subtle" to="/explore/mine" />
 				</template>
 			</UDashboardNavbar>
@@ -73,33 +73,11 @@ const page = computed({ get: () => filters.value.page, set: value => setFilters(
 					:description="filters.q || filters.kind || filters.category || filters.tag ? 'Try other words or fewer filters.' : 'Publish a Character, a library, a structure profile or a folder\'s setup from its menu.'"
 				/>
 				<ul v-else class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-					<li v-for="listing in listings" :key="listing.id" class="relative flex flex-col gap-2 rounded-md border border-default p-4 hover:bg-elevated/50 has-focus-visible:ring-2 has-focus-visible:ring-primary">
-						<div class="flex items-center gap-3 min-w-0">
-							<UAvatar v-if="listing.avatarFileId" :src="`/api/v1/files/${listing.avatarFileId}`" :alt="listing.name" size="md" />
-							<div v-else class="size-8 rounded-full bg-elevated flex items-center justify-center shrink-0">
-								<UIcon :name="LISTING_KINDS[listing.kind].icon" class="size-4 text-muted" />
-							</div>
-							<!-- The link covers the card. -->
-							<NuxtLink :to="`/explore/${listing.id}`" class="font-medium text-highlighted truncate flex-1 outline-none after:absolute after:inset-0">
-								{{ listing.name }}
-							</NuxtLink>
-							<UBadge v-if="listing.featured" label="Featured" icon="i-lucide-star" color="warning" variant="subtle" size="sm" />
-						</div>
-						<p v-if="listing.summary" class="text-sm text-muted line-clamp-2">
-							{{ listing.summary }}
-						</p>
-						<div v-if="listing.tags.length" class="relative flex flex-wrap gap-1">
-							<UButton v-for="tag in listing.tags" :key="tag" :label="`#${tag}`" size="xs" color="neutral" variant="soft" @click="setFilters({ tag })" />
-						</div>
-						<div class="flex items-center gap-2 mt-auto text-xs text-dimmed min-w-0">
-							<UBadge :label="LISTING_KINDS[listing.kind].label" color="neutral" variant="outline" size="sm" />
-							<span class="truncate">{{ listing.publisher.name || listing.publisher.username }}</span>
-							<span class="ms-auto flex items-center gap-1 shrink-0" :title="`Got by ${listing.gets}`">
-								<UIcon name="i-lucide-download" class="size-3.5" />{{ listing.gets }}
-							</span>
-							<span class="shrink-0">{{ formatDistanceToNow(new Date(listing.publishedAt), { addSuffix: true }) }}</span>
-						</div>
-					</li>
+					<ListingCard v-for="listing in listings" :key="listing.id" :listing="listing" @tag="tag => setFilters({ tag })">
+						<template #actions>
+							<UButton icon="i-lucide-list-plus" size="xs" color="neutral" variant="ghost" :aria-label="`Add ${listing.name} to a list`" @click="addToLists(listing.id, listing.name)" />
+						</template>
+					</ListingCard>
 				</ul>
 				<UPagination v-if="data && data.total > data.pageSize" v-model:page="page" :total="data.total" :items-per-page="data.pageSize" class="self-center" />
 			</div>
