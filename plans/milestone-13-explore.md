@@ -1,6 +1,6 @@
 # Milestone 13: Explore, a place to publish and get content
 
-Status: planned. Part of `roadmap-milestones-7-14.md`. One migration. Needs 7.1 (folder defaults, built) and milestone 9 (so a published Character carries its avatar, greetings and lorebook). It does not need 10 to 12 and can be built right after 9.
+Status: spike O done (2026-11-26); 13.1 next. Part of `roadmap-milestones-7-14.md`. One migration. Needs 7.1 (folder defaults, built) and milestone 9 (so a published Character carries its avatar, greetings and lorebook). It does not need 10 to 12 and can be built right after 9.
 
 Goal: members publish what they have made (Characters, libraries, structure profiles, and whole setups such as a "Full-stack Dev Team") to a page everyone on the instance can browse, and get what others published. No money changes hands. Inspired by nuxt.com/modules: a searchable grid of cards with a kind, tags and counts, and a page per entry. Stars, star lists, review before publishing and reports are milestone 14.
 
@@ -82,6 +82,12 @@ A banned member's listings are hidden while the ban lasts. A deleted member's li
 ## 7. To verify before building
 
 - **Spike O, packages and copies.** A throwaway `takePackage` and `givePackage` over real data from the dev database: what a full Character of milestone 9 and a library with files weigh; how long copying a 20 MB library takes through the S3 driver (it has no server-side copy here: each file is read and written, as "Add to library" already does); whether one transaction can hold a pack of 12 Characters and 5 libraries with the database a quarter of a second away, or the copies must be made in steps with cleanup on failure.
+
+  Found (2026-11-26, `model-chat-studio-prep/scripts/spikes/m13/packages.ts`). The dev database holds no Characters, libraries, profiles or folder defaults (the smoke runs delete theirs), so the content is spike K's real card and lorebook, read through the app's card and lorebook readers and scaled to the limits:
+  - **Weights.** The Seraphina card as a Character, every field of milestone 9 with the card's leftover fields, is 4.0 KB of JSON; its avatar is 500 KB. The Eldoria lorebook's notes average 1.6 KB each (the largest 2.1 KB). A pack at the limits (12 Characters, 5 libraries of 500 notes, a setup of three lanes) is 3.9 MB of JSON before files, its 12 avatars 5.9 MB more. So the 25 MB limit is mostly files, and a version's package fits in `jsonb` comfortably.
+  - **Files.** Through the S3 driver on dev, a copy (read, then written) runs at 1.0 MB/s one file at a time and 2.4 MB/s four at a time: 20 MB of library files in 8.3 s, one 8 MB file in 2.8 s. Copies read back equal. A listing at 25 MB costs about 10 s to publish and again to get.
+  - **The transaction.** The database is 229 ms away (median of ten; the first, with the connection, 1.2 s). The limits' pack written in one transaction with a statement per table (2,500 notes in five statements, sent together), the package stored as a version's `jsonb`, took 6.2 s, and rolled back cleanly. Row by row, 100 notes took 21.8 s: 2,500 would take about 9 minutes.
+  - **So, for 13.1:** `givePackage` and publishing copy the files first, four at a time, then write every row in one transaction, one insert per table (the notes one per library, within Postgres's 65,535 parameters); if the transaction fails, the copied files are removed, as the chat import does. Never a statement per row. A listing's page carries the whole package for the preview; at the limits that is 3.9 MB, which is acceptable for a rare worst case.
 
 ## 8. Ceilings and things left out
 
