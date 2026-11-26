@@ -22,6 +22,7 @@ import type {Lore, Lorebook} from "../../shared/utils/lorebook";
 import type {UserPreferences} from "../../shared/utils/preferences";
 import type {ProfileBlock} from "../../shared/utils/structureProfile";
 import type {FolderDefaults} from "../../shared/utils/folderDefaults";
+import type {Package, PackageCopies, PackageSource} from "../../shared/utils/package";
 
 const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' })
 
@@ -427,6 +428,76 @@ export const pin = pgTable("pin", {
 	createdAt,
 }, (t) => [
 	primaryKey({ columns: [t.userId, t.kind, t.targetId] }),
+]);
+
+export const listingKinds = ["character", "library", "structureProfile", "pack"] as const
+export const listingStatuses = ["listed", "unlisted", "removed"] as const
+
+/** What a member published to Explore (milestone 13): its texts, and its content as versions of a package. */
+export const listing = pgTable("listing", {
+	id: uuid().primaryKey().defaultRandom(),
+	ownerId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	kind: text({ enum: listingKinds }).notNull(),
+	name: text().notNull(),
+	summary: text().notNull().default(""),
+	/** Markdown, shown with the answers' renderer. */
+	description: text().notNull().default(""),
+	tags: jsonb().$type<string[]>().notNull().default([]),
+	/** One of the instance's categories, or none. */
+	category: text(),
+	/** `unlisted`: hidden by its publisher. `removed`: by an admin or moderator, with `statusReason`. */
+	status: text({ enum: listingStatuses }).notNull().default("listed"),
+	statusReason: text(),
+	featured: boolean().notNull().default(false),
+	currentVersionId: uuid().references((): AnyPgColumn => listingVersion.id, { onDelete: "set null" }),
+	/** The listing this one was published from a copy of. */
+	basedOnId: uuid().references((): AnyPgColumn => listing.id, { onDelete: "set null" }),
+	/** The publisher's own items the latest version was taken from, for "Publish an update". Never shown to others. */
+	source: jsonb().$type<PackageSource>().notNull(),
+	/** Members who got it, counted at their first get. */
+	gets: integer().notNull().default(0),
+	publishedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
+
+	...createdUpdatedAtColumns
+}, (t) => [
+	index().on(t.ownerId),
+	index().on(t.status, t.publishedAt),
+]);
+
+/** One snapshot of a listing's content: a package, numbered from 1, with a note on what changed. */
+export const listingVersion = pgTable("listingVersion", {
+	id: uuid().primaryKey().defaultRandom(),
+	listingId: uuid().notNull().references(() => listing.id, { onDelete: "cascade" }),
+	number: integer().notNull(),
+	notes: text().notNull().default(""),
+	content: jsonb().$type<Package>().notNull(),
+	/** Bytes, the package's JSON with its files. */
+	size: integer().notNull(),
+	createdAt,
+}, (t) => [
+	unique().on(t.listingId, t.number),
+]);
+
+/** The files a version owns, by the package's keys: copies of the publisher's, removed with the listing. */
+export const listingFile = pgTable("listingFile", {
+	versionId: uuid().notNull().references(() => listingVersion.id, { onDelete: "cascade" }),
+	key: text().notNull(),
+	fileId: uuid().notNull().references(() => file.id, { onDelete: "cascade" }),
+}, (t) => [
+	primaryKey({ columns: [t.versionId, t.key] }),
+	index().on(t.fileId),
+]);
+
+/** What a member got from Explore, at which version, and the copies it made. */
+export const acquisition = pgTable("acquisition", {
+	id: uuid().primaryKey().defaultRandom(),
+	userId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	listingId: uuid().notNull().references(() => listing.id, { onDelete: "cascade" }),
+	versionId: uuid().references(() => listingVersion.id, { onDelete: "set null" }),
+	created: jsonb().$type<PackageCopies>().notNull(),
+	createdAt,
+}, (t) => [
+	index().on(t.userId, t.listingId),
 ]);
 
 // Relations

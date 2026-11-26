@@ -5,21 +5,13 @@ import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm'
 import * as tables from '../../db/schema'
 import type { Db } from '../core/settings'
 import { type FolderDefaults, folderDefaultsSchema } from '../../../shared/utils/folderDefaults'
-import { type Package, type PackageInput, PACKAGE_LIMITS, packageSchema, packageSize } from '../../../shared/utils/package'
+import { type Package, type PackageCopies, type PackageInput, PACKAGE_LIMITS, packageSchema, packageSize, type PackageSource } from '../../../shared/utils/package'
 
 /** Storage as `#server/utils/core/blob` has it; passed in, so tests bring their own. */
 export interface Store {
 	get: (path: string) => Promise<Blob | null>
 	put: (path: string, data: Blob, options: { contentType: string }) => Promise<unknown>
 	del: (path: string) => Promise<unknown>
-}
-
-/** What to take: items by id (they must be the member's), and/or a folder whose defaults become the setup. */
-export interface PackageSource {
-	characterIds?: string[]
-	libraryIds?: string[]
-	structureProfileIds?: string[]
-	folderId?: string
 }
 
 /**
@@ -49,7 +41,7 @@ export const removeFiles = (store: Store, paths: string[]) =>
 	Promise.all(paths.map(path => store.del(path).catch(error => console.error('[explore] blob delete failed', path, error))))
 
 /** A stored file's extension, kept on its copies. */
-const extension = (path: string) => /\.[a-z0-9]{1,8}$/i.exec(path)?.[0] ?? ''
+export const fileExtension = (path: string) => /\.[a-z0-9]{1,8}$/i.exec(path)?.[0] ?? ''
 
 /**
  * A package of the member's items (milestone 13 plan, section 2): the Characters, libraries and structure profiles
@@ -182,7 +174,7 @@ async function ownRows<T extends typeof tables.character | typeof tables.library
  * file is stored) first; then every row is written in one transaction, one insert per table; if that fails, the
  * copies are removed. Returns the ids made.
  */
-export async function givePackage(db: Db, store: Store, input: { userId: string, content: PackageInput, paths: Record<string, string>, folderName: string }) {
+export async function givePackage(db: Db, store: Store, input: { userId: string, content: PackageInput, paths: Record<string, string>, folderName: string }): Promise<PackageCopies> {
 	const content = packageSchema.parse(input.content)
 	const { userId } = input
 	const ids: Record<string, string> = {}
@@ -199,7 +191,7 @@ export async function givePackage(db: Db, store: Store, input: { userId: string,
 			if (entry.fileKey) destination[entry.fileKey] = `libraries/${id(library.key)}/${id(entry.fileKey)}`
 		}
 	}
-	const files = content.files.map(file => ({ ...file, from: input.paths[file.key]!, blobPath: `${destination[file.key]!}${extension(input.paths[file.key] ?? '')}` }))
+	const files = content.files.map(file => ({ ...file, from: input.paths[file.key]!, blobPath: `${destination[file.key]!}${fileExtension(input.paths[file.key] ?? '')}` }))
 	if (files.some(file => !file.from)) throw createError({ status: 404, statusText: 'A file of this listing is missing from storage' })
 	const copied = await copyFiles(store, files.map(file => ({ from: file.from, to: file.blobPath, mediaType: file.mediaType })))
 

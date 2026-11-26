@@ -25,6 +25,7 @@ const canEdit = computed(() => tab.value === 'mine' || isAdmin.value)
 
 const editor = overlay.create(LazyCharacterEditor)
 const confirm = overlay.create(LazyModalConfirm)
+const { publish } = useListingActions()
 const fields = ({ name, color, instructions, libraryIds, greetings, examples, note, creatorNotes, tags }: Character): CharacterFields => ({ name, color, instructions, libraryIds, greetings, examples, note, creatorNotes, tags })
 const blank: CharacterFields = { name: '', color: null, instructions: '', libraryIds: [], greetings: [], examples: '', note: '', creatorNotes: '', tags: [] }
 const store = (saved: Character) => queryCache.setQueryData(charactersQuery.key, characters.value.some(entry => entry.id === saved.id) ? characters.value.map(entry => entry.id === saved.id ? saved : entry) : [...characters.value, saved])
@@ -110,7 +111,10 @@ function actions(character: Character): DropdownMenuItem[][] {
 	return [[
 		...(canEdit.value ? [{ label: 'Edit', icon: 'i-lucide-pencil', onSelect: () => edit(character) }] : []),
 		...(mine
-			? (isAdmin.value ? [{ label: 'Publish for everyone', icon: 'i-lucide-share', onSelect: () => copy(character, true) }] : [])
+			? [
+					{ label: 'Publish to Explore…', icon: 'i-lucide-telescope', onSelect: () => publish({ characterIds: [character.id] }, character.name) },
+					...(isAdmin.value ? [{ label: 'Publish for everyone', icon: 'i-lucide-share', onSelect: () => copy(character, true) }] : []),
+				]
 			: [{ label: 'Copy to my Characters', icon: 'i-lucide-copy', onSelect: () => copy(character, false) }]),
 	], [
 		// A card in its picture when the Character has an avatar; only a PNG one can carry it, the server says so otherwise.

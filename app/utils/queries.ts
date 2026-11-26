@@ -78,6 +78,18 @@ export const usageQuery = defineQueryOptions({
 	query: () => useRequestFetch()('/api/v1/me/usage'),
 })
 
+/** The member's own listings on Explore, whatever their status. */
+export const myListingsQuery = defineQueryOptions({
+	key: ['me', 'listings'],
+	query: () => useRequestFetch()('/api/v1/me/listings'),
+})
+
+/** Explore's settings: whether members may publish, the categories and the size limit. */
+export const exploreSettingsQuery = defineQueryOptions({
+	key: ['explore', 'settings'],
+	query: () => useRequestFetch()('/api/v1/explore/settings'),
+})
+
 export const modelProfilesQuery = defineQueryOptions({
 	key: ['model-profiles'],
 	query: () => useRequestFetch()('/api/v1/model-profiles'),

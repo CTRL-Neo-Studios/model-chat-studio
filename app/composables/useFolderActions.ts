@@ -25,6 +25,7 @@ export function useFolderActions(chats: () => UIChat[]) {
 	const moveModal = overlay.create(LazyModalMoveTo)
 	const confirmModal = overlay.create(LazyModalConfirm)
 	const defaultsModal = overlay.create(LazyModalFolderDefaults)
+	const { publish } = useListingActions()
 
 	// Open folders in the sidebar, kept across visits; a cookie so the server renders them open too.
 	const expanded = useCookie<string[]>('sidebar-folders', { default: () => [], sameSite: 'lax' })
@@ -171,6 +172,8 @@ export function useFolderActions(chats: () => UIChat[]) {
 			{ label: 'New chat here', icon: 'i-lucide-circle-plus', onSelect: () => navigateTo({ path: '/', query: { folder: folder.id } }) },
 			{ label: 'Import a chat here…', icon: 'i-lucide-file-up', onSelect: () => importChat(folder.id) },
 			{ label: 'Defaults…', icon: 'i-lucide-library-big', onSelect: () => editDefaults(folder) },
+			// A folder's setup, with what it names, as a pack.
+			...(folder.defaults ? [{ label: 'Publish to Explore…', icon: 'i-lucide-telescope', onSelect: () => publish({ folderId: folder.id }, folder.name) }] : []),
 		], [
 			pinItem('chatFolder', folder.id),
 			{ label: 'New folder', icon: 'i-lucide-folder-plus', onSelect: () => createFolder(folder.id) },

@@ -32,6 +32,10 @@ const items = computed<DropdownMenuItem[][]>(() => ([[{
 	icon: 'i-lucide-layers',
 	to: '/structure-profiles',
 }, {
+	label: 'Your listings',
+	icon: 'i-lucide-telescope',
+	to: '/explore/mine',
+}, {
 	label: 'Settings',
 	icon: 'i-lucide-user-cog',
 	to: '/settings',

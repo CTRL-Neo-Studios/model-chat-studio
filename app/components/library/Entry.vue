@@ -92,10 +92,7 @@ const toolbar: EditorToolbarItem[][] = [[
 const fileUrl = computed(() => props.entry.fileId ? `/api/v1/files/${props.entry.fileId}` : '')
 const isImage = computed(() => (FILE_UPLOAD.imageTypes as readonly string[]).includes(props.entry.mediaType ?? ''))
 const isPdf = computed(() => props.entry.mediaType === FILE_UPLOAD.pdfType)
-const size = computed(() => {
-	const bytes = props.entry.size ?? 0
-	return bytes < 1024 ? `${bytes} B` : bytes < 1024 ** 2 ? `${(bytes / 1024).toFixed(1)} kB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`
-})
+const size = computed(() => fileSize(props.entry.size ?? 0))
 </script>
 
 <template>

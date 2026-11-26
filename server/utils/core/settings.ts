@@ -3,6 +3,7 @@ import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
 import { z } from 'zod'
 // Relative, not `hub:db`, so this module also loads in `bun test`.
 import * as tables from '../../db/schema'
+import { EXPLORE_DEFAULTS, exploreSettingsSchema } from '../../../shared/utils/package'
 
 /** Any Drizzle Postgres database or transaction over this schema: `hub:db` in the app, PGlite in tests. */
 export type Db = PgDatabase<PgQueryResultHKT, typeof tables>
@@ -41,6 +42,7 @@ const settingSchemas = {
 	maxRetries: z.number().int().min(0).max(10).catch(5),
 	'inference.openrouter': platformConfigSchema.catch({}),
 	'inference.deepseek': platformConfigSchema.catch({}),
+	explore: exploreSettingsSchema.catch(EXPLORE_DEFAULTS),
 }
 
 export type SettingKey = keyof typeof settingSchemas

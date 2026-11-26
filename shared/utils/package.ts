@@ -120,3 +120,50 @@ export type PackageInput = z.input<typeof packageSchema>
 export function packageSize(content: Pick<Package, 'files'>) {
 	return new TextEncoder().encode(JSON.stringify(content)).length + content.files.reduce((sum, file) => sum + file.size, 0)
 }
+
+/** What a package is taken from: the member's items by id, and/or a folder whose defaults become the setup. */
+export const packageSourceSchema = z.object({
+	characterIds: z.array(z.uuid()).max(PACKAGE_LIMITS.characters).optional(),
+	libraryIds: z.array(z.uuid()).max(PACKAGE_LIMITS.libraries).optional(),
+	structureProfileIds: z.array(z.uuid()).max(PACKAGE_LIMITS.structureProfiles).optional(),
+	folderId: z.uuid().optional(),
+}).strict()
+
+export type PackageSource = z.infer<typeof packageSourceSchema>
+
+/** The copies a member got from a package. */
+export interface PackageCopies {
+	characterIds: string[]
+	libraryIds: string[]
+	structureProfileIds: string[]
+	folderId: string | null
+}
+
+/** A listing's kind, by what it is taken from: one item is that item's kind; a folder or several items, a pack. */
+export function listingKind(source: PackageSource) {
+	const counts = [source.characterIds?.length ?? 0, source.libraryIds?.length ?? 0, source.structureProfileIds?.length ?? 0]
+	if (source.folderId || counts.reduce((sum, count) => sum + count, 0) !== 1) return 'pack' as const
+	return counts[0] ? 'character' as const : counts[1] ? 'library' as const : 'structureProfile' as const
+}
+
+/** A listing's texts, as its publisher writes them. */
+export const listingTextsSchema = z.object({
+	name: z.string().trim().min(1).max(80),
+	summary: z.string().trim().max(200),
+	description: z.string().trim().max(20_000),
+	tags: z.array(z.string().trim().toLowerCase().min(1).max(30)).max(5, 'At most 5 tags').transform(tags => [...new Set(tags)]),
+	category: z.string().trim().min(1).max(40).nullable(),
+})
+
+/** Explore's instance settings, kept by admins and moderators (milestone 13 plan, section 3). */
+export const exploreSettingsSchema = z.object({
+	/** Off: members browse and get, but only admins and moderators publish. */
+	publishing: z.boolean(),
+	/** The categories a listing may pick one of. */
+	categories: z.array(z.string().trim().min(1).max(40)).max(30).transform(names => [...new Set(names)]),
+	/** The most a listing may weigh with its files; at most the package limit. */
+	maxSizeMb: z.number().int().min(1).max(PACKAGE_LIMITS.bytes / 1024 / 1024),
+})
+
+export type ExploreSettings = z.infer<typeof exploreSettingsSchema>
+export const EXPLORE_DEFAULTS: ExploreSettings = { publishing: true, categories: [], maxSizeMb: PACKAGE_LIMITS.bytes / 1024 / 1024 }
