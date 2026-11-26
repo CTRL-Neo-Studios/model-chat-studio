@@ -124,7 +124,9 @@ test('a file over the limits, or one that does not hold together, is refused, an
 })
 
 test('a file that is not a chat file is refused', () => {
-	expect(() => readChatFile('not json')).toThrow('This file is not JSON: import takes a chat file')
-	expect(() => readChatFile('{"version":"orpg.3.0","messages":{}}')).toThrow('This is not a chat file')
+	expect(() => readChatFile('not json')).toThrow('This file is not JSON')
+	expect(() => readChatFile('{"title":"x","messages":[]}')).toThrow('This is neither a chat file nor an OpenRouter Chatroom export')
+	// A Chatroom export in name only: its reader says what it cannot read.
+	expect(() => readChatFile('{"version":"orpg.3.0","messages":{},"items":{}}')).toThrow('This OpenRouter export is not one this app reads: characters')
 	expect(() => readChatFile(JSON.stringify({ format: 'model-chat-studio.chat', version: 2 }))).toThrow(expect.objectContaining({ status: 400 }))
 })

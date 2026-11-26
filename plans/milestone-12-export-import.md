@@ -1,6 +1,6 @@
 # Milestone 12: export and import of chats
 
-Status: spike N, 12.1 and 12.2 built (2026-11-25); 12.3 next. Part of `roadmap-milestones-7-14.md`. No migration. Comes after milestones 8 to 11, so the file covers branches, versions, images and authors.
+Status: spike N, 12.1, 12.2 and 12.3 built (2026-11-25); 12.4 next. Part of `roadmap-milestones-7-14.md`. No migration. Comes after milestones 8 to 11, so the file covers branches, versions, images and authors.
 
 Goal: a chat can leave this instance and come back, or come in from OpenRouter's Chatroom.
 
@@ -72,6 +72,17 @@ Built (12.2):
 
 Round trip against a fixture (DeepSeek faked with reasoning): a chat of two lanes, an image, two rounds and a regenerated answer was exported with its attachments. The next message on the original and the same message on the imported copy's lane sent DeepSeek the same request, byte for byte (six messages, the image included). In Chromium the sidebar's "Import chat…" took the file: the new chat opened with both lanes, the image, the earlier version ("2/2"), and "Chat imported". The chats and the fixture's usage rows were deleted.
 
+Built (12.3):
+- `server/utils/chat/importers/openrouter.ts`: `openrouterToChatFile` makes a Chatroom export (`version: "orpg.…"`, with `messages` and `items` maps) a chat file. `readChatFile` recognises the format from the content and passes the result through the chat file's schema and the import's checks like any other; the route adds the reader's notes to the import's.
+- Each model (character) is a lane, in the order added: its short name, `openrouter` and its model, its description as the lane's prompt, the sampling settings it has (`top_p` as `topP` and the rest by name), on unless disabled or removed. The models then go through the import's check, so on another platform the lanes keep their names on the default model.
+- The user's messages follow one another in the order sent; each answer goes under its message in its model's lane, the newest of a model's answers to one message showing (a retry). An answer to a message the export lacks is left out and noted.
+- Images and files a message carried as data URLs are attachments (`image-N.png` and the like). Reasoning comes as reasoning, sent encrypted it is left out and noted; `output_text` as text, its URL citations and the web searches' and fetches' sources as sources, each once. Cost as `costUsd`, `tokensCount` as `outputTokens`, the model that answered (`variantSlug`) as the model, an edited answer as `edited`. Items of other kinds are left out and noted.
+- Shell calls (`openrouter:shell`) are a code block in the answer's text, each command with its output, and "# stopped before it finished" when one did not finish; not tool parts, as section 6 had it. The app runs no shell, and a call without its result, as a stopped answer leaves, makes a request no provider takes.
+- `importChat` showed the first of a lane's answers to a message when the file marked none; it now shows the newest, as its comment said.
+- Tests (`test/openrouterImport.test.ts`, an export made by hand in the samples' shape): two models, one with `top_p`; two images; an answer with reasoning, a citation and a web search, retried; a second message answered by both models, one with a shell call, encrypted reasoning and text, the other stopped in a call; an edited message; an item of an unknown kind. The file passes its schema with every lane, part, source, cost and note as above; imported, the shown messages read in the Chatroom's order, the first answer the earlier version, the images stored.
+
+Check with the sample of 2026-11-25 on the dev instance (DeepSeek faked): "Import chat…" took the export as it was; the chat opened with DeepSeek and Kimi side by side, the shell calls as code blocks with their output, Kimi's stopped answer, cost on DeepSeek's, and the notes (encrypted reasoning, both models not offered on DeepSeek). The next message went to both lanes on the default model, each request plain text and the two images, without tool calls. The chat and the fixture's usage rows were deleted.
+
 ## 6. To verify before building
 
 - **Spike N, the OpenRouter export.** From the sample you provide: which fields it has; how several models' answers to one message are stored and whether they map onto lanes; whether a retry or an edit leaves earlier versions in the file, and if so whether they map onto versions and branches; how attachments, reasoning and costs appear; which of its model ids exist here when OpenRouter is the active platform, and what a DeepSeek-only instance should do with them.
@@ -90,7 +101,7 @@ Spike N result (2026-11-25). The sample: the four newest exports in `~/Downloads
 Second sample (2026-11-25, `OpenRouter Chat Wed Nov 25 2026.json`, which you exported for this: one model answering a message with two images, then a second model added and both answering the next message, one stopped). It settles what the first sample left open:
 - **Several models** are several `characters`; the second message has one answer from each, told apart by `characterId`. A model added after the first message is simply absent from it: lanes, as inferred. `samplingParameters` held `top_p` for one of them, a lane setting here.
 - **Images** are `input_image` parts of the user's message item, `image_url` a `data:image/jpeg;base64,…` or `data:image/png;base64,…` URL (up to 1.2 MB of text), with `detail`. They become attachments, through the upload checks.
-- **Tool calls** are not `function_call`, as inferred, but `openrouter:shell` items: `action.commands`, `arguments` (the call's JSON), `call_id`, `container_id`, `status`, and `output` (each with `stdout`, `stderr`, `outcome.exit_code`). They become tool parts named `shell`, input the commands and output the results; a call `in_progress` becomes one that did not finish.
+- **Tool calls** are not `function_call`, as inferred, but `openrouter:shell` items: `action.commands`, `arguments` (the call's JSON), `call_id`, `container_id`, `status`, and `output` (each with `stdout`, `stderr`, `outcome.exit_code`). They become code blocks in the answer's text (12.3: tool parts would make the next request fail), a call `in_progress` one marked as not finished.
 - **Reasoning** can also be an item with only `encrypted_content` (a server tool round): unreadable, left out.
 - **A stopped answer** has no `cost` and no `tokensCount` in its metadata, and ends with a call still `in_progress` and no message item. It imports as the stopped answer it was: its reasoning and the unfinished call, no text, no cost.
 

@@ -7,6 +7,7 @@ import type { Db } from '../core/settings'
 import { chatFileSchema, CHAT_FILE_FORMAT, type ChatFile, type ChatFileMessage } from '../../../shared/utils/chatFile'
 import { FILE_UPLOAD_TYPES, FILE_URL_PATTERN } from '../../../shared/utils/file'
 import type { MessageMetadata } from '../../../shared/utils/chat'
+import { isOpenrouterExport, openrouterToChatFile } from './importers/openrouter'
 
 /** The most one attachment may weigh, as for uploads. */
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
@@ -43,21 +44,33 @@ export interface Offered {
 }
 
 /**
- * Reads a chat file's text: JSON in the chat file's shape, within its limits. A file of another kind is refused here;
- * readers of other formats (12.3) turn theirs into a chat file first.
+ * Reads an imported file's text, recognising its format from its content: a chat file, or an OpenRouter Chatroom
+ * export, which its reader turns into a chat file first. Either way the result is checked as a chat file, within its
+ * limits. Returns it, with what a reader left out.
  */
-export function readChatFile(text: string): ChatFile {
+export function readChatFile(text: string): { file: ChatFile, notes: string[] } {
 	let json: unknown
 	try {
 		json = JSON.parse(text)
 	}
 	catch {
-		throw createError({ status: 400, statusText: 'This file is not JSON: import takes a chat file' })
+		throw createError({ status: 400, statusText: 'This file is not JSON: import takes a chat file or an OpenRouter Chatroom export' })
 	}
-	if ((json as { format?: unknown } | null)?.format !== CHAT_FILE_FORMAT) throw createError({ status: 400, statusText: 'This is not a chat file' })
+	let notes: string[] = []
+	if (isOpenrouterExport(json)) {
+		try {
+			({ file: json, notes } = openrouterToChatFile(json))
+		}
+		catch (error) {
+			throw createError({ status: 400, statusText: (error as Error).message })
+		}
+	}
+	else if ((json as { format?: unknown } | null)?.format !== CHAT_FILE_FORMAT) {
+		throw createError({ status: 400, statusText: 'This is neither a chat file nor an OpenRouter Chatroom export' })
+	}
 	const parsed = chatFileSchema.safeParse(json)
 	if (!parsed.success) throw createError({ status: 400, statusText: `This chat file is not valid: ${parsed.error.issues[0]?.path.join('.')} ${parsed.error.issues[0]?.message}` })
-	return parsed.data
+	return { file: parsed.data, notes }
 }
 
 /** The file's links between messages and lanes, all pointing backwards in the order written; a file that does not hold together is refused. */
@@ -186,12 +199,12 @@ export async function importChat(db: Db, input: {
 				params: kept ? lane.params : portable,
 			}
 		})
-		// The version that shows, one per lane and message: the file's, else the newest.
-		const shown: Record<string, string> = {}
+		// The version that shows, one per lane and message: the file's (the last it marks), else the newest.
+		const shown: Record<string, { id: string, marked: boolean }> = {}
 		for (const message of file.messages) {
 			if (message.role !== 'assistant' || message.laneId === null) continue
 			const key = `${message.parentId}:${message.laneId}`
-			if (message.active || !shown[key]) shown[key] = message.id
+			if (message.active || !shown[key]?.marked) shown[key] = { id: message.id, marked: message.active }
 		}
 		const firstUse: Record<string, string> = {}
 		const messages = file.messages.map((message) => {
@@ -210,7 +223,7 @@ export async function importChat(db: Db, input: {
 				chatModelId: message.laneId ? laneIds[message.laneId]! : null,
 				// The chat is the importer's: the messages it holds are theirs.
 				userId: message.role === 'user' ? userId : null,
-				active: message.role !== 'assistant' || message.laneId === null || shown[`${message.parentId}:${message.laneId}`] === message.id,
+				active: message.role !== 'assistant' || message.laneId === null || shown[`${message.parentId}:${message.laneId}`]?.id === message.id,
 				createdAt: new Date(message.createdAt),
 			}
 		})

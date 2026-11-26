@@ -11,8 +11,9 @@ import { getCatalog, useInference } from '#server/utils/inference'
 import { importChat, readChatFile } from '#server/utils/chat/import'
 
 /**
- * Import (milestone 12 plan, section 3): a file in the form field `file`, and an optional `folderId`, one of the
- * member's folders. Always a new chat of the member's. Returns its id and a note of what was changed.
+ * Import (milestone 12 plan, section 3): a chat file or an OpenRouter Chatroom export in the form field `file`, and an
+ * optional `folderId`, one of the member's folders. Always a new chat of the member's. Returns its id and a note of
+ * what was changed or left out.
  */
 export default defineEventHandler(async (event) => {
 	const user = await useServerAuth().requireUser(event)
@@ -26,7 +27,8 @@ export default defineEventHandler(async (event) => {
 	const folderId = typeof folderField === 'string' && folderField ? folderField : null
 	if (folderId && !z.uuid().safeParse(folderId).success) throw createError({ status: 404, statusText: 'Folder not found' })
 
-	const file = readChatFile(await upload.text())
+	// A chat file, or an OpenRouter Chatroom export made into one; `left` is what its reader left out.
+	const { file, notes: left } = readChatFile(await upload.text())
 	// A lane keeps its model when this member may pick it on the active platform.
 	const inference = await useInference(db, user.id)
 	const models = inference ? await getCatalog(db, inference) : []
@@ -42,5 +44,5 @@ export default defineEventHandler(async (event) => {
 		},
 		removeFile: path => blob.del(path).catch(error => console.error('[import] blob delete failed', path, error)),
 	})
-	return { id: chatId, notes }
+	return { id: chatId, notes: [...left, ...notes] }
 })
