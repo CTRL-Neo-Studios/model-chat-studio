@@ -1,6 +1,6 @@
 # Milestone 12: export and import of chats
 
-Status: spike N done (2026-11-25); 12.1 next. Part of `roadmap-milestones-7-14.md`. No migration. Comes after milestones 8 to 11, so the file covers branches, versions, images and authors.
+Status: spike N and 12.1 built (2026-11-25); 12.2 next. Part of `roadmap-milestones-7-14.md`. No migration. Comes after milestones 8 to 11, so the file covers branches, versions, images and authors.
 
 Goal: a chat can leave this instance and come back, or come in from OpenRouter's Chatroom.
 
@@ -52,6 +52,15 @@ Goal: a chat can leave this instance and come back, or come in from OpenRouter's
 | 12.3 | The OpenRouter reader | tests on your sample (and any variants it has: several models, an attachment, reasoning); the imported chat reads as the Chatroom showed it |
 | 12.4 | All chats in one download, a smoke step, the live run | the download holds one valid chat file per chat; live: a chat exported from one account imports into another and continues on each platform |
 
+Built (12.1):
+- `shared/utils/chatFile.ts`: `chatFileSchema`, the file's one description, `format: "model-chat-studio.chat"`, `version: 1`, with `CHAT_FILE_LIMITS` (25 MB, 5,000 messages). It holds the chat (title, mode, settings, the user's Character as text, the structure profile's name and blocks and the libraries' names as information), the lanes (position, on or off, name, colour, platform, model, system prompt, settings, the Character as text: name, instructions, examples, closing note), every message of every branch and version in the order written (role, parent, lane, whether it is the version shown, author by name, parts, metadata, time), the tip, votes, and attachments (name, type, size, the bytes in base64 when asked). Parts are described only by their type; import checks those it takes (12.2).
+- `server/utils/chat/export.ts`: `exportChat` reads the whole chat, not the thread shown, with its lanes' and the user's Characters as they are now; the files of its messages (attachments, drawn images) are its attachments, their bytes read through a function the route passes. `chatMarkdown` makes the branch that shows into a document: the title and models, then a heading per message (the author; the lane's name and model), each user message followed by its answers in speaking order for a group round, else lane order, reasoning in `<details>`, attachments, library picks, charts and drawn images by name, other tool calls as "Used …", sources listed after.
+- `GET /chats/:id/export?format=json|markdown&files=true`, the owner's: the file as a download named from the title.
+- "Export…" in a chat's menu in the sidebar and under its title: a dialog with the two formats and "Include attachments" for the chat file.
+- Tests: a chat with two lanes, a Character, an image and a PDF, a regenerated answer, a branch and a vote: the file passes its schema, holds all eight messages in order with the earlier version marked, the tip, the vote, the lanes with the Character as text, and the attachments with or without their bytes; its Markdown has the shown branch only, in page order, reasoning folded. A group round's Markdown follows `speakers`, not the order saved.
+
+Check against the dev database: all eight of the admin's chats exported through the route with their attachments, each passing the schema (one carried its image), and as Markdown. In Chromium the title menu's "Export…" opened the dialog; Markdown downloaded as `Alpha reply.md`, reading as the page does.
+
 ## 6. To verify before building
 
 - **Spike N, the OpenRouter export.** From the sample you provide: which fields it has; how several models' answers to one message are stored and whether they map onto lanes; whether a retry or an edit leaves earlier versions in the file, and if so whether they map onto versions and branches; how attachments, reasoning and costs appear; which of its model ids exist here when OpenRouter is the active platform, and what a DeepSeek-only instance should do with them.
@@ -66,6 +75,13 @@ Spike N result (2026-11-25). The sample: the four newest exports in `~/Downloads
 - **Costs and tokens.** On each answer, `metadata.cost` (USD as a string) to `costUsd`; `metadata.variantSlug` to the answer's model; `tokensCount` is about 2.2 to 3 characters of answer and reasoning per token, so output tokens [INFERENCE], to `outputTokens`. No input tokens. `generationId`, `routerMetadata` (the provider chosen, the endpoints tried), `serverTools` and `plugins` are dropped.
 - **Model ids.** `anthropic/claude-fable-5.1`, the one model in the sample, is offered by OpenRouter today. With OpenRouter active, a lane keeps an offered model id; one not offered, or any on a DeepSeek-only instance, becomes the default model, and the lane keeps the model's name from `modelInfo.short_name`, as the plan decided for chat files.
 - **What is lost.** Artifacts (empty in the sample; their shape unknown), the router and plugin metadata, input tokens, earlier texts of edited messages, `isCollapsed`, and the per-model settings beyond `description` (none were set). Web fetches keep their URL and title, not the page.
+
+Second sample (2026-11-25, `OpenRouter Chat Wed Nov 25 2026.json`, which you exported for this: one model answering a message with two images, then a second model added and both answering the next message, one stopped). It settles what the first sample left open:
+- **Several models** are several `characters`; the second message has one answer from each, told apart by `characterId`. A model added after the first message is simply absent from it: lanes, as inferred. `samplingParameters` held `top_p` for one of them, a lane setting here.
+- **Images** are `input_image` parts of the user's message item, `image_url` a `data:image/jpeg;base64,…` or `data:image/png;base64,…` URL (up to 1.2 MB of text), with `detail`. They become attachments, through the upload checks.
+- **Tool calls** are not `function_call`, as inferred, but `openrouter:shell` items: `action.commands`, `arguments` (the call's JSON), `call_id`, `container_id`, `status`, and `output` (each with `stdout`, `stderr`, `outcome.exit_code`). They become tool parts named `shell`, input the commands and output the results; a call `in_progress` becomes one that did not finish.
+- **Reasoning** can also be an item with only `encrypted_content` (a server tool round): unreadable, left out.
+- **A stopped answer** has no `cost` and no `tokensCount` in its metadata, and ends with a call still `in_progress` and no message item. It imports as the stopped answer it was: its reasoning and the unfinished call, no text, no cost.
 
 ## 7. Ceilings and things left out
 

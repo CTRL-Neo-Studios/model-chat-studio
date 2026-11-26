@@ -7,7 +7,7 @@ const props = defineProps<{
 	isOwner: boolean
 }>()
 
-const { renameChat, deleteChat } = useChatActions()
+const { renameChat, deleteChat, exportChat } = useChatActions()
 
 const displayTitle = computed(() => props.title || 'Untitled')
 
@@ -16,6 +16,7 @@ const rename = () => renameChat(props.chatId, props.title)
 
 const items: DropdownMenuItem[][] = [[
 	{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: rename },
+	{ label: 'Export…', icon: 'i-lucide-download', onSelect: () => exportChat(props.chatId) },
 ], [
 	{ label: 'Delete', icon: 'i-lucide-trash', color: 'error', onSelect: () => deleteChat(props.chatId) },
 ]]

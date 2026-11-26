@@ -1,4 +1,4 @@
-import { LazyModalConfirm, LazyModalRename } from '#components'
+import { LazyModalConfirm, LazyModalExportChat, LazyModalRename } from '#components'
 
 export function useChatActions() {
 	const route = useRoute()
@@ -8,6 +8,7 @@ export function useChatActions() {
 	const { csrf, headerName } = useCsrf()
 
 	const renameModal = overlay.create(LazyModalRename)
+	const exportModal = overlay.create(LazyModalExportChat)
 	const deleteModal = overlay.create(LazyModalConfirm, {
 		props: {
 			title: 'Delete chat',
@@ -68,5 +69,10 @@ export function useChatActions() {
 		return true
 	}
 
-	return { renameChat, deleteChat }
+	/** "Export…": the dialog that picks the format and downloads it. */
+	function exportChat(id: string) {
+		exportModal.open({ chatId: id })
+	}
+
+	return { renameChat, deleteChat, exportChat }
 }

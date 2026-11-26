@@ -14,7 +14,7 @@ export function useFolderActions(chats: () => UIChat[]) {
 	const overlay = useOverlay()
 	const queryCache = useQueryCache()
 	const act = useApiAction()
-	const { renameChat, deleteChat } = useChatActions()
+	const { renameChat, deleteChat, exportChat } = useChatActions()
 	const { pinnedFirst, pinItem } = usePins()
 
 	const { data: folderList } = useQuery(foldersQuery)
@@ -186,6 +186,7 @@ export function useFolderActions(chats: () => UIChat[]) {
 			pinItem('chat', chat.id),
 			{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => renameChat(chat.id, chat.label === 'Untitled' ? '' : chat.label) },
 			{ label: 'Move to…', icon: 'i-lucide-folder-input', onSelect: () => moveTo('chat', chat.id, chat.label) },
+			{ label: 'Export…', icon: 'i-lucide-download', onSelect: () => exportChat(chat.id) },
 			...(folder ? [{ label: 'Use as the folder\'s defaults…', icon: 'i-lucide-folder-cog', onSelect: () => setupAsDefaults(chat.id, folder) }] : []),
 		], [
 			{ label: 'Delete', icon: 'i-lucide-trash', color: 'error' as const, onSelect: () => deleteChat(chat.id) },
