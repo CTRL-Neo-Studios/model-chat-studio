@@ -1,5 +1,6 @@
 <script setup lang="ts">
 const { loggedIn } = useUserSession()
+const { importChat } = useChatActions()
 const siteName = useRuntimeConfig().public.siteName as string || 'Chat'
 
 const sidebarOpen = ref(false)
@@ -86,6 +87,10 @@ defineShortcuts({
 						label: 'Temporary chat',
 						to: '/temporary',
 						icon: 'i-lucide-ghost',
+					}, {
+						label: 'Import chat…',
+						icon: 'i-lucide-file-up',
+						onSelect: () => importChat(),
 					}, {
 						label: 'Libraries',
 						to: '/libraries',

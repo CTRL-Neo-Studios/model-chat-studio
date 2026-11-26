@@ -74,5 +74,38 @@ export function useChatActions() {
 		exportModal.open({ chatId: id })
 	}
 
-	return { renameChat, deleteChat, exportChat }
+	/**
+	 * "Import chat…": a chat file (or a format a reader takes) becomes a new chat, in `folderId` when given, which then
+	 * opens; what the import changed is noted.
+	 */
+	const picker = useFileDialog({ accept: '.json,application/json', multiple: false, reset: true })
+	let importFolder: string | undefined
+	function importChat(folderId?: string) {
+		importFolder = folderId
+		picker.open()
+	}
+	picker.onChange(async (files) => {
+		const file = files?.[0]
+		if (!file) return
+		const form = new FormData()
+		form.append('file', file)
+		if (importFolder) form.append('folderId', importFolder)
+		try {
+			const imported = await $fetch<{ id: string, notes: string[] }>('/api/v1/chats/import', { method: 'POST', headers: { [headerName]: csrf }, body: form })
+			await queryCache.invalidateQueries({ key: chatsQuery.key, exact: true })
+			await navigateTo(`/chat/${imported.id}`)
+			toast.add({
+				title: 'Chat imported',
+				description: imported.notes.length ? imported.notes.join('. ').concat('.').replace(/^./, letter => letter.toUpperCase()) : undefined,
+				icon: 'i-lucide-file-up',
+				color: imported.notes.length ? 'warning' : 'success',
+				duration: imported.notes.length ? 15_000 : undefined,
+			})
+		}
+		catch (error) {
+			toast.add({ title: 'The chat could not be imported', description: serverMessage(error), icon: 'i-lucide-alert-circle', color: 'error' })
+		}
+	})
+
+	return { renameChat, deleteChat, exportChat, importChat }
 }

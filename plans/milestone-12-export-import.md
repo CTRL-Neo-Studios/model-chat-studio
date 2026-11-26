@@ -1,6 +1,6 @@
 # Milestone 12: export and import of chats
 
-Status: spike N and 12.1 built (2026-11-25); 12.2 next. Part of `roadmap-milestones-7-14.md`. No migration. Comes after milestones 8 to 11, so the file covers branches, versions, images and authors.
+Status: spike N, 12.1 and 12.2 built (2026-11-25); 12.3 next. Part of `roadmap-milestones-7-14.md`. No migration. Comes after milestones 8 to 11, so the file covers branches, versions, images and authors.
 
 Goal: a chat can leave this instance and come back, or come in from OpenRouter's Chatroom.
 
@@ -61,6 +61,17 @@ Built (12.1):
 
 Check against the dev database: all eight of the admin's chats exported through the route with their attachments, each passing the schema (one carried its image), and as Markdown. In Chromium the title menu's "Export…" opened the dialog; Markdown downloaded as `Alpha reply.md`, reading as the page does.
 
+Built (12.2):
+- `server/utils/chat/import.ts`. `readChatFile` takes the file's text: not JSON, not `format: "model-chat-studio.chat"`, or not passing `chatFileSchema` is refused with 400, saying why. `importChat` checks that the file holds together (every parent an earlier user message, every lane named one the file has, no id twice, the tip a user message) and writes a new chat of the importer's in one transaction, with new ids for the chat, its lanes, messages and files.
+- Parts are checked by kind: text, reasoning, files, sources, step marks, mentions, "@" picks and tool calls, each for the fields the app reads, at most 500,000 characters each, a user message's text at most 100,000 as for sent ones. Their other fields stay as they are, so the next turn sends what the original would (a reasoning part's provider data, for one). Parts of other kinds are left out and noted. An "@" pick becomes its name as text, since libraries do not come along.
+- Lanes keep their model when it is on the active platform's list for the importer; otherwise the default model, the lane keeping its name (or taking the model's id as its name), without the settings that belong to the model (providers, reasoning level). A lane's Character comes as its own prompt (its instructions). Of each lane's answers to a message, one shows: the file's, else the newest. A round's `speakers` name the new lanes. User messages are the importer's; costs, models and tokens stay on the messages as history, and no usage is recorded.
+- Attachments pass the upload checks (type and 8 MB) and are stored under new ids, linked to the first message that names them; a drawn image's tool call points at its new file. One that fails, or that the file left out, becomes the line "[Attachment not imported: name]", a drawn image's call an error. Stored files are taken back if the chat cannot be written.
+- `POST /chats/import` (form field `file`, at most 25 MB, and `folderId`, one of the member's folders; 10 a minute) returns the new chat's id and notes: models not offered, Characters made prompts, attachments refused, kinds of parts left out, and the user's Character, structure profile and libraries left behind.
+- "Import chat…" in the sidebar under "Temporary chat", and "Import a chat here…" in each folder's menu, on its page and in the sidebar: a file picker; the new chat opens, with the notes in a toast.
+- Tests: the id mapping (new ids, the same tree, versions, tip, vote, metadata and reasoning's provider data, attachments as new files of the right message), a model not offered and a Character made a prompt, a refused attachment and one left out, the limits (a long text, a parent after its child, an unknown lane, 5,001 messages: refused and nothing written, stored files taken back), and files that are not chat files.
+
+Round trip against a fixture (DeepSeek faked with reasoning): a chat of two lanes, an image, two rounds and a regenerated answer was exported with its attachments. The next message on the original and the same message on the imported copy's lane sent DeepSeek the same request, byte for byte (six messages, the image included). In Chromium the sidebar's "Import chat…" took the file: the new chat opened with both lanes, the image, the earlier version ("2/2"), and "Chat imported". The chats and the fixture's usage rows were deleted.
+
 ## 6. To verify before building
 
 - **Spike N, the OpenRouter export.** From the sample you provide: which fields it has; how several models' answers to one message are stored and whether they map onto lanes; whether a retry or an edit leaves earlier versions in the file, and if so whether they map onto versions and branches; how attachments, reasoning and costs appear; which of its model ids exist here when OpenRouter is the active platform, and what a DeepSeek-only instance should do with them.
@@ -91,3 +102,5 @@ Second sample (2026-11-25, `OpenRouter Chat Wed Nov 25 2026.json`, which you exp
 - No scheduled or automatic backups.
 - Imported costs are history only; budgets are not charged for them.
 - People a chat is shared with cannot export it.
+- An imported chat's user messages are all the importer's: the authors' names in the file are not kept as authors.
+- Attachments no message names are stored with the chat but are linked to none.

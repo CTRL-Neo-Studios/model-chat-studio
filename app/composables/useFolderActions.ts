@@ -14,7 +14,7 @@ export function useFolderActions(chats: () => UIChat[]) {
 	const overlay = useOverlay()
 	const queryCache = useQueryCache()
 	const act = useApiAction()
-	const { renameChat, deleteChat, exportChat } = useChatActions()
+	const { renameChat, deleteChat, exportChat, importChat } = useChatActions()
 	const { pinnedFirst, pinItem } = usePins()
 
 	const { data: folderList } = useQuery(foldersQuery)
@@ -169,6 +169,7 @@ export function useFolderActions(chats: () => UIChat[]) {
 		return [[
 			...(route.path !== page ? [{ label: 'Open folder', icon: 'i-lucide-folder-open', to: page }] : []),
 			{ label: 'New chat here', icon: 'i-lucide-circle-plus', onSelect: () => navigateTo({ path: '/', query: { folder: folder.id } }) },
+			{ label: 'Import a chat here…', icon: 'i-lucide-file-up', onSelect: () => importChat(folder.id) },
 			{ label: 'Defaults…', icon: 'i-lucide-library-big', onSelect: () => editDefaults(folder) },
 		], [
 			pinItem('chatFolder', folder.id),
