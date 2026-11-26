@@ -1,6 +1,6 @@
 # Milestone 12: export and import of chats
 
-Status: spike N, 12.1, 12.2 and 12.3 built (2026-11-25); 12.4 next. Part of `roadmap-milestones-7-14.md`. No migration. Comes after milestones 8 to 11, so the file covers branches, versions, images and authors.
+Status: complete (2026-11-26): spike N and phases 12.1 to 12.4 built, the live run passed. Part of `roadmap-milestones-7-14.md`. No migration. Comes after milestones 8 to 11, so the file covers branches, versions, images and authors.
 
 Goal: a chat can leave this instance and come back, or come in from OpenRouter's Chatroom.
 
@@ -82,6 +82,17 @@ Built (12.3):
 - Tests (`test/openrouterImport.test.ts`, an export made by hand in the samples' shape): two models, one with `top_p`; two images; an answer with reasoning, a citation and a web search, retried; a second message answered by both models, one with a shell call, encrypted reasoning and text, the other stopped in a call; an edited message; an item of an unknown kind. The file passes its schema with every lane, part, source, cost and note as above; imported, the shown messages read in the Chatroom's order, the first answer the earlier version, the images stored.
 
 Check with the sample of 2026-11-25 on the dev instance (DeepSeek faked): "Import chat…" took the export as it was; the chat opened with DeepSeek and Kimi side by side, the shell calls as code blocks with their output, Kimi's stopped answer, cost on DeepSeek's, and the notes (encrypted reasoning, both models not offered on DeepSeek). The next message went to both lanes on the default model, each request plain text and the two images, without tool calls. The chat and the fixture's usage rows were deleted.
+
+Built (12.4):
+- `GET /me/export`: every chat the member owns, oldest first, temporary chats left out, one chat file per line (JSON Lines, `chats-YYYY-MM-DD.jsonl`), without attachments; written a chat at a time, so a long history is never held whole; a chat deleted while it runs is skipped. Three a minute.
+- `/settings`: a "Your chats" card with "Export all my chats", a plain download.
+- `scripts/app-smoke.ts`, step "export and import": the run's chat exported with its attachments, imported as a new chat, which answers the next message, and found in the all-chats download, every line of it a chat file; the copy is deleted.
+
+Check against the dev database: the button on `/settings` downloaded `chats-2026-11-26.jsonl`, one line for each of the admin's eight chats, each passing `chatFileSchema` with the messages the chat has and its attachment by name only.
+
+Live run (2026-11-26, both platforms with real keys, about $0.011 in all):
+- `scripts/app-smoke.ts`: every step passed on OpenRouter and on DeepSeek. "Export and import" brought 14 messages and 2 attachments (the image and the PDF) across with no notes, and the copy answered "pong" on each platform; the download held 10 chats. Images were skipped (no image model chosen), read-aloud on OpenRouter too (not set up there).
+- From one account to another: the admin's "Alpha reply" (an image, the default model) exported with its attachment and imported in Chromium by a member made for the run. On DeepSeek the member's copy answered "pineapple", the word in the imported image, which the member's session loads; with OpenRouter the active platform it answered the next question, "Black", as DeepSeek V4.1 Flash. The member, its chat, its file and its usage were deleted afterwards, the active platform set back to DeepSeek.
 
 ## 6. To verify before building
 

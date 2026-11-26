@@ -154,6 +154,12 @@ function playSample() {
 					</div>
 					<USkeleton v-else-if="!speech" class="h-8 w-72" />
 				</UPageCard>
+
+				<UPageCard title="Your chats" description="Every chat you own in one file, a chat file per line, without attachments: for keeping. To move a chat, export it from its menu and import it." variant="subtle">
+					<div>
+						<UButton label="Export all my chats" icon="i-lucide-download" color="neutral" variant="subtle" to="/api/v1/me/export" external download />
+					</div>
+				</UPageCard>
 			</div>
 		</template>
 	</UDashboardPanel>

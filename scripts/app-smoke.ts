@@ -1,4 +1,4 @@
-// Milestone 11 smoke run: drives a running instance through its own API, as the browser does, on each platform
+// Milestone 12 smoke run: drives a running instance through its own API, as the browser does, on each platform
 // that has an instance key. Run it as an admin: it switches the active platform and switches it back.
 //
 //   SESSION=<value of the nuxt-auth-session cookie> [BASE_URL=http://localhost:3000] bun scripts/app-smoke.ts [--search]
@@ -9,7 +9,8 @@
 // exported and imported again), a group round in the order the message asks for, a chat started in a folder whose
 // defaults are a group (the second speaker reads the first one's chart), a message refused after an older tip and
 // answered after the tip, dictation, a piece read aloud in the platform's default voice, an image drawn by the
-// model's tool call and one by `/image` (each about $0.01, once an image model is set), the spend ledger, and deleting
+// model's tool call and one by `/image` (each about $0.01, once an image model is set), the chat exported with its
+// attachments, imported and answering as a new chat, and found in the all-chats download, the spend ledger, and deleting
 // the chat. `--search` adds web search to the library question and a web search turn (on OpenRouter each costs about
 // $0.02). The test files come from `scripts/smoke-files.ts` (macOS makes them; elsewhere `--wav`, `--image`, `--pdf`).
 import { IMAGE_WORD, makeSmokeFiles, PDF_WORD, SENTENCE } from './smoke-files'
@@ -334,6 +335,30 @@ try {
 			const types = await Promise.all(stored.map(async url => url ? (await fetch(`${BASE}${url}`, { headers: { cookie: cookieHeader() } })).headers.get('content-type') : 'missing'))
 			if (types.some(type => !type?.startsWith('image/'))) throw new Error(`stored images answered ${types.join(', ')}`)
 			return `the tool's (${types[0]}) and /image's (${types[1]})`
+		})
+
+		await step('export and import', async () => {
+			// The chat as a file with its attachments, imported as a new chat, which then answers on its own.
+			type Exported = { format: string, tipId: string | null, messages: unknown[], attachments: unknown[] }
+			const exported = await api<Exported>('GET', `/chats/${chatId}/export?files=true`)
+			const form = new FormData()
+			form.append('file', new File([JSON.stringify(exported)], 'smoke.json', { type: 'application/json' }))
+			const imported = await api<{ id: string, notes: string[] }>('POST', '/chats/import', form)
+			try {
+				const copy = await api<{ models: { id: string }[] }>('GET', `/chats/${imported.id}`)
+				const answer = await turn(imported.id, copy.models[0]!.id, { trigger: 'submit-message', message: { id: crypto.randomUUID(), role: 'user', parts: [{ type: 'text', text: 'Reply with the single word: pong' }] } })
+				if (!/pong/i.test(answer.text)) throw new Error(`the imported chat answered ${summary(answer)}`)
+				// The all-chats download: a chat file per line, this chat among them.
+				const all = await fetch(`${BASE}/api/v1/me/export`, { headers: { cookie: cookieHeader() } })
+				if (!all.ok) throw new Error(`/me/export answered ${all.status}`)
+				const lines = (await all.text()).split('\n').filter(Boolean).map(line => JSON.parse(line) as Exported)
+				if (lines.some(line => line.format !== exported.format)) throw new Error('a line of the download is not a chat file')
+				if (!lines.some(line => line.tipId === exported.tipId && line.messages.length === exported.messages.length)) throw new Error(`the download's ${lines.length} chats miss this one`)
+				return `${exported.messages.length} messages and ${exported.attachments.length} attachments imported (notes: ${imported.notes.join('; ') || 'none'}); the copy ${summary(answer)}; ${lines.length} chats in the download`
+			}
+			finally {
+				await api('DELETE', `/chats/${imported.id}`)
+			}
 		})
 
 		await step('spend ledger', async () => {
