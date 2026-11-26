@@ -90,6 +90,18 @@ export const exploreSettingsQuery = defineQueryOptions({
 	query: () => useRequestFetch()('/api/v1/explore/settings'),
 })
 
+/** Explore's grid for a search, filters, sort and page. */
+export const exploreListingsQuery = defineQueryOptions((params: { q?: string, kind?: string, category?: string, tag?: string, sort: string, page: number }) => ({
+	key: ['explore', 'listings', params],
+	query: () => useRequestFetch()('/api/v1/explore/listings', { query: params }),
+}))
+
+/** A listing's page: everything in its current version, its versions, and which one the member has. */
+export const exploreListingQuery = defineQueryOptions((id: string) => ({
+	key: ['explore', 'listing', id],
+	query: () => useRequestFetch()(`/api/v1/explore/listings/${id}`),
+}))
+
 export const modelProfilesQuery = defineQueryOptions({
 	key: ['model-profiles'],
 	query: () => useRequestFetch()('/api/v1/model-profiles'),

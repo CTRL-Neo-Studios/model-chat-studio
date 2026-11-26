@@ -23,6 +23,7 @@ test('each role can do what the access table says, and no more', async () => {
 		'read a listed listing': [user => allows(can.readListing, user, listing('listed')), [true, true, true, true, false]],
 		'read an unlisted listing': [user => allows(can.readListing, user, listing('unlisted')), [true, false, true, true, false]],
 		'read a removed listing': [user => allows(can.readListing, user, listing('removed')), [true, false, true, true, false]],
+		'read a listed listing whose publisher is banned': [user => allows(can.readListing, user, { ...listing('listed'), ownerBanned: true }), [true, false, true, true, false]],
 		'edit a listed listing': [user => allows(can.editListing, user, listing('listed')), [true, false, false, false, false]],
 		'edit an unlisted listing': [user => allows(can.editListing, user, listing('unlisted')), [true, false, false, false, false]],
 		'edit a removed listing': [user => allows(can.editListing, user, listing('removed')), [false, false, false, false, false]],

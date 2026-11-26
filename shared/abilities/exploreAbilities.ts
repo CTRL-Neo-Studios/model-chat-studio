@@ -2,23 +2,24 @@ import { defineAbility, deny } from "nuxt-authorization/utils";
 import type {User} from "#shared/types/db";
 import {satisfies} from "#shared/utils/roles";
 
-/** What access to a listing depends on. */
+/** What access to a listing depends on. `ownerBanned`: its publisher is banned, which hides it while the ban lasts. */
 export interface ListingAccess {
 	ownerId: string
 	status: 'listed' | 'unlisted' | 'removed'
+	ownerBanned?: boolean
 }
 
 // A listing someone may not see is reported as missing.
 const notFound = () => deny({ statusCode: 404, message: 'Listing not found' })
 const staff = (user: User) => satisfies(user, { minRole: 'moderator' })
-const visible = (user: User, listing: ListingAccess) => listing.status === 'listed' || listing.ownerId === user.id || staff(user)
+const visible = (user: User, listing: ListingAccess) => (listing.status === 'listed' && !listing.ownerBanned) || listing.ownerId === user.id || staff(user)
 
 /**
  * | | Publisher | Member | Moderator, admin |
  * |---|---|---|---|
  * | Browse and get | yes | yes | yes |
  * | Publish | while publishing is on | while publishing is on | always |
- * | See an unlisted or removed listing | yes | no | yes |
+ * | See an unlisted or removed listing, or one whose publisher is banned | yes | no | yes |
  * | Texts, updates, listed or unlisted | yes, unless removed | no | their own |
  * | Delete | yes | no | yes |
  * | Feature, remove, restore; Explore's settings | no | no | yes |

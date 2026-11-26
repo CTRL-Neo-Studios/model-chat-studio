@@ -11,11 +11,24 @@ import { copyFiles, fileExtension, removeFiles, type Store, takePackage } from '
 export type ListingTexts = z.output<typeof listingTextsSchema>
 export type Listing = typeof tables.listing.$inferSelect
 
-/** One listing, whoever it belongs to; access is checked with `exploreAbilities`. Ids that are not UUIDs find nothing. */
+/**
+ * One listing, whoever it belongs to, with `ownerBanned` (its publisher is banned while the ban lasts, which hides it);
+ * access is checked with `exploreAbilities`. Ids that are not UUIDs find nothing.
+ */
 export async function findListing(db: Db, id: string | undefined) {
 	if (!z.uuid().safeParse(id).success) return undefined
-	const [row] = await db.select().from(tables.listing).where(eq(tables.listing.id, id!))
-	return row
+	const [row] = await db.select({ listing: tables.listing, banned: tables.user.banned, banExpires: tables.user.banExpires }).from(tables.listing)
+		.innerJoin(tables.user, eq(tables.user.id, tables.listing.ownerId))
+		.where(eq(tables.listing.id, id!))
+	return row && { ...row.listing, ownerBanned: row.banned && (!row.banExpires || row.banExpires > new Date()) }
+}
+
+/** The listing one of whose versions owns this file, if any. */
+export async function findFileListing(db: Db, fileId: string) {
+	const [row] = await db.select({ listingId: tables.listingVersion.listingId }).from(tables.listingFile)
+		.innerJoin(tables.listingVersion, eq(tables.listingVersion.id, tables.listingFile.versionId))
+		.where(eq(tables.listingFile.fileId, fileId))
+	return row ? await findListing(db, row.listingId) : undefined
 }
 
 /** A listing's category must be one the instance keeps. */

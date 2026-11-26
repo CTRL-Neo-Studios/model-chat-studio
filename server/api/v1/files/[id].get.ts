@@ -10,12 +10,14 @@ import { authorize } from '#server/utils/core/authorize'
 import { useServerAuth } from '#server/utils/core/useServerAuth'
 import { findChat } from '#server/utils/chat/turns'
 import { findFileLibrary } from '#server/utils/library/libraries'
+import { exploreAbilities } from '#shared/abilities/exploreAbilities'
+import { findFileListing } from '#server/utils/explore/listings'
 
 const inlineTypes: readonly string[] = [...FILE_UPLOAD.imageTypes, FILE_UPLOAD.pdfType]
 
 /**
- * Serves an attachment to whoever may read its chat (before the chat exists, to its uploader only), and a
- * library's file to whoever may read the library.
+ * Serves an attachment to whoever may read its chat (before the chat exists, to its uploader only), a library's file
+ * to whoever may read the library, and a file a listing's version owns to whoever may read the listing.
  * Anything other than an image or PDF downloads instead of rendering, and the sandbox policy keeps
  * an uploaded file from running script on the app's origin.
  */
@@ -26,12 +28,14 @@ export default defineEventHandler(async (event) => {
 	const [file] = await db.select().from(schema.file).where(eq(schema.file.id, id!))
 	if (!file) throw notFound()
 
-	const [chat, library] = await Promise.all([
+	const [chat, library, listing] = await Promise.all([
 		file.chatId ? findChat(db, file.chatId) : undefined,
 		file.chatId ? undefined : findFileLibrary(db, file.id),
+		file.chatId ? undefined : findFileListing(db, file.id),
 	])
 	if (chat) await authorize(event, chatAbilities().readChat, chat)
 	else if (library) await authorize(event, libraryAbilities().readLibrary, library)
+	else if (listing) await authorize(event, exploreAbilities().readListing, listing)
 	else if ((await useServerAuth().getUser(event))?.id !== file.ownerId) throw notFound()
 
 	const data = await blob.get(file.blobPath)

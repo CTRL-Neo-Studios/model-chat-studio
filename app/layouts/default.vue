@@ -106,6 +106,10 @@ defineShortcuts({
 						label: 'Shared with me',
 						to: '/shared',
 						icon: 'i-lucide-users',
+					}, {
+						label: 'Explore',
+						to: '/explore',
+						icon: 'i-lucide-telescope',
 					}]"
 					:collapsed="collapsed"
 					orientation="vertical"
