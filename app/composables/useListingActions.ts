@@ -1,12 +1,13 @@
 import type { DropdownMenuItem } from '@nuxt/ui'
 import { LazyModalConfirm, LazyModalListingUpdate, LazyModalPublishListing } from '#components'
 import type { PackageSource } from '#shared/utils/package'
-import type { ListingTextsDraft } from '~/components/ModalPublishListing.vue'
+import type { ListingTextsDraft } from '~/components/ListingTextsForm.vue'
 
 /** A listing as `/me/listings` returns it, as far as its actions and its state need. */
-interface OwnListing extends ListingTextsDraft {
+export interface OwnListing extends ListingTextsDraft {
 	id: string
 	status: 'listed' | 'unlisted' | 'removed'
+	statusReason?: string | null
 	source: PackageSource
 	/** The number of the version on Explore, if one was approved. */
 	version: number | null
@@ -20,8 +21,8 @@ export function listingState(listing: Pick<OwnListing, 'status' | 'version' | 'v
 	return listing.status === 'listed' ? { label: 'Published', color: 'success' } : { label: 'Unpublished', color: 'neutral' }
 }
 
-/** An item's ids (or a folder's) as one string, to find the listing published from exactly them. */
-const sourceKey = (source: PackageSource) => [source.folderId ?? '', ...source.characterIds ?? [], ...source.libraryIds ?? [], ...source.structureProfileIds ?? []].join()
+/** An item's ids (or a folder's, or a package's) as one string, to find the listing published from exactly them. */
+const sourceKey = (source: PackageSource) => [source.packageId ?? '', source.folderId ?? '', ...source.characterIds ?? [], ...source.libraryIds ?? [], ...source.structureProfileIds ?? []].join()
 
 /** The member's listings, and the one published from an item alone (or a folder's setup): the newest, if there are two. */
 export function useMyListings() {
@@ -40,8 +41,8 @@ export function useListingActions() {
 	const publishModal = overlay.create(LazyModalPublishListing)
 	const updateModal = overlay.create(LazyModalListingUpdate)
 	const confirm = overlay.create(LazyModalConfirm)
-	// The publisher's list, and what Explore shows (the grid, the listing's page, the counts).
-	const refresh = () => Promise.all([queryCache.invalidateQueries({ key: myListingsQuery.key }), queryCache.invalidateQueries({ key: ['explore'] })])
+	// The publisher's list, their packages (a deleted listing makes its package a draft), and what Explore shows.
+	const refresh = () => Promise.all([queryCache.invalidateQueries({ key: myListingsQuery.key }), queryCache.invalidateQueries({ key: ['packages'] }), queryCache.invalidateQueries({ key: ['explore'] })])
 	const yours = [{ label: 'Your listings', to: '/content/published' }]
 
 	/** "Publish to Explore…": the texts, what it holds and leaves out, then a new listing. */
@@ -51,6 +52,14 @@ export function useListingActions() {
 		const published = await act<{ left: string[], pending: boolean }>('/api/v1/explore/listings', { method: 'POST', body: { ...texts, source } })
 		if (!published) return
 		toast.add({ title: published.pending ? 'Sent for review' : 'Published to Explore', description: [published.pending ? 'It shows on Explore once an admin or moderator approves it.' : '', ...published.left].join(' ').trim() || undefined, icon: 'i-lucide-telescope', color: 'success', actions: yours })
+		await refresh()
+	}
+
+	/** A draft package, published with its name and texts (edited on its Listing page). */
+	async function publishPackage(packageId: string) {
+		const published = await act<{ left: string[], pending: boolean }>(`/api/v1/packages/${packageId}/publish`, { method: 'POST' })
+		if (!published) return
+		toast.add({ title: published.pending ? 'Sent for review' : 'Published to Explore', description: [published.pending ? 'It shows on Explore once an admin or moderator approves it.' : '', ...published.left].join(' ').trim() || undefined, icon: 'i-lucide-telescope', color: 'success' })
 		await refresh()
 	}
 
@@ -108,5 +117,5 @@ export function useListingActions() {
 		return [{ label: 'Open on Explore', icon: 'i-lucide-telescope', to: `/content/explore/${listing.id}` }, ...listingActions(listing)]
 	}
 
-	return { publish, update, setPublished, remove, listingActions, publishActions }
+	return { publish, publishPackage, update, setPublished, remove, listingActions, publishActions }
 }

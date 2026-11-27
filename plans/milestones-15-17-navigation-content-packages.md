@@ -1,6 +1,6 @@
 # Milestones 15–17: Unpublish, areas with their own sidebars, Content Packages
 
-Status: milestones 15 and 16 built, 17.1 built (2026-11-26); 17.2 next. Follows `roadmap-milestones-7-14.md` (complete). One migration (`0025_content_packages`, written in 17.1). The conventions of milestone 1 and the way of working so far apply: one phase per step, a check in Chromium for each phase, a live run where the API changes (milestone 17).
+Status: milestones 15 and 16 built, 17.1 and 17.2 built (2026-11-27); 17.3 next. Follows `roadmap-milestones-7-14.md` (complete). One migration (`0025_content_packages`, written in 17.1). The conventions of milestone 1 and the way of working so far apply: one phase per step, a check in Chromium for each phase, a live run where the API changes (milestone 17).
 
 Goal: publishing can be undone from where the item is; the app is split into areas (chat, content, settings, admin), each with its own sidebar and a breadcrumb to move around, with one "Content" place for Explore and everything the member made; and a pack becomes a thing of its own, a Content Package, made and published from a studio.
 
@@ -215,6 +215,14 @@ Built (17.1):
 
 Check in Chromium with a member with two Characters and a library: "New package" named "Dev team" opened its Items (Content › Packages › Dev team › Items; the sidebar Packages, Dev team, Overview, Items); Engineer and Designer chosen from the Characters menu and Specs from the Libraries menu were stored. Overview: Engineer and Designer (Character), Specs (Library, 1 entry), "0 files · 651 B of 25.0 MB in all", the package a draft. Engineer opened from Items carried `?package=`, its trail Content › Packages › Dev team › Engineer and its back row "Dev team", which led back to Items; Specs the same. The member was deleted.
 
+Built (17.2):
+- `publishPackage` (`server/utils/explore/packages.ts`): a draft package as a new listing, of its name and texts, `source: { packageId }`, linked to it in the listing's own transaction (`publishListing` gained `link`); one already published is refused (409). `POST /packages/:id/publish`, with publishing's checks (the mode, the rate limit). Updates are the listing's own route: they read the package as it is then. "Your listings" now carries each version's id and notes.
+- The studio's other pages: Setup (`FolderDefaultsForm`, the folder dialog's form, now shared by `ModalFolderDefaults`; Save, "Remove setup", leaving with changes asks), Listing (`ListingTextsForm`, the publish dialog's form, now shared; a draft's texts are the package's, a published one's the listing's, changed at once; the card and the description as Explore shows them), Versions (each with its state, "On Explore", its note or reason, and "Open"). The Overview shows the listing's state and `ListingNotices` (the waiting, rejected and removed notices "Published" had). The sidebar's "On Explore": "Publish" for a draft, then "Open on Explore" and the listing's actions (an update or publishing again, unpublishing or putting back).
+- "Published": a package's listing opens its studio. Every listing action refreshes the packages too (a deleted listing makes its package a draft). The add-a-profile picker of a folder's defaults now shows its placeholder again after each pick (it kept the last choice, so a second lane was hard to add).
+- Tests (`test/packages.test.ts`): publishing links the listing with the package's name and texts as a pack, and only once; an update holds the package as it is now (an item changed and one added), version 1 as it was; in reviewed mode it waits and its update is refused while one waits; deleting the listing makes the package a draft again; deleting the package deletes its listing, not the items.
+
+Check in Chromium with two members: the publisher made two Characters, a model profile for each, and "Dev team" holding both; on Setup, the two profiles added and "Group chat" chosen, saved ("Setup saved", stored as a group of two lanes); on Listing, the summary written, the card beside it showing it, saved; "Publish" in the sidebar answered "Published to Explore", and the sidebar became Open on Explore, Edit listing…, Publish an update…, Unpublish. The other member found it, saw its setup (a group: Engineer, Designer) and got it: their folder "Dev team" holds a group of two lanes, and a chat started in it was a group of their copies, Engineer then Designer. The publisher changed the Engineer's instructions and, from the studio, "Publish an update…" with a note: Versions showed version 2 with the note, on Explore, and version 1; the other member was offered "Version 2 is out; you have version 1." "Unpublish" from the studio made it "Unpublished" with "Put back on Explore", and the other member no longer found it, its address 404. Both members were deleted.
+
 ## 6. To verify before building
 
 1. **Redirects with a wildcard in `routeRules`** on Nitro v3 (`'/explore/**': { redirect: '/content/explore/**' }`), given that Nitro v3 already read one rule differently here (`csurf: false`, see `nuxt.config.ts`). If they do not carry the rest of the path, a small global route middleware does it instead. Before 16.1.
@@ -232,6 +240,7 @@ Check in Chromium with a member with two Characters and a library: "New package"
 - Model profiles keep their dialog; they cannot be published and have no page of their own.
 - A structure profile's page has no sidebar of its own.
 - Getting a package makes copies and a folder, not a package: a member who wants to republish makes their own package from the folder.
+- A listing published from a package does not say which listing its items were got from ("Based on"): that is worked out from items and folders asked for, and a package's are not.
 - A folder and the package made from it are not kept in step.
 - The palette searches chats and links to pages; it does not search Characters, libraries or Explore.
 - Sibling dropdowns list what the browser has loaded; a long list is not searched inside the breadcrumb.

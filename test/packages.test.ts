@@ -2,9 +2,10 @@ import { beforeEach, expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
 import * as schema from '../server/db/schema'
 import { type Store, takePackage } from '../server/utils/explore/package'
-import { changePackage, createPackage, deletePackage, findPackage, myPackages } from '../server/utils/explore/packages'
+import { deleteListing, findListing, publishUpdate } from '../server/utils/explore/listings'
+import { changePackage, createPackage, deletePackage, findPackage, myPackages, publishPackage } from '../server/utils/explore/packages'
 import type { FolderDefaults } from '../shared/utils/folderDefaults'
-import { NO_PACKAGE_ITEMS, packageItemsSchema } from '../shared/utils/package'
+import { EXPLORE_DEFAULTS, NO_PACKAGE_ITEMS, packageItemsSchema } from '../shared/utils/package'
 import { createTestDb, type TestDb } from './db'
 
 let db: TestDb
@@ -76,4 +77,50 @@ test('only the member\'s own items go in, within a listing\'s limits', async () 
 	const [thirteenth] = await characters('Thirteenth')
 	await changePackage(db, alice, id, { items: { ...NO_PACKAGE_ITEMS, characterIds: twelve }, setup: { libraryIds: [], structureProfileId: null, models: [{ characterId: thirteenth!, modelId: null }] } })
 	await expect(takePackage(db, alice, { packageId: id })).rejects.toThrow('A listing holds at most 12 Characters')
+})
+
+const open = EXPLORE_DEFAULTS
+const versionOf = async (listingId: string, number: number) => (await db.select().from(schema.listingVersion).where(eq(schema.listingVersion.listingId, listingId))).find(version => version.number === number)!
+
+test('publishing links the listing and takes the package\'s texts; it is published once, and updates read the package as it is now', async () => {
+	const [engineer, designer] = await characters('Engineer', 'Designer')
+	const { id } = await createPackage(db, alice, 'Dev team')
+	await changePackage(db, alice, id, { items: { ...NO_PACKAGE_ITEMS, characterIds: [engineer!] }, texts: { summary: 'Builds things', description: '', tags: ['team'], category: null } })
+	const { listing, pending } = await publishPackage(db, store, { userId: alice, packageId: id, settings: open })
+	expect([pending, (await findPackage(db, alice, id)).listingId]).toEqual([false, listing.id])
+	expect(listing).toMatchObject({ name: 'Dev team', summary: 'Builds things', tags: ['team'], kind: 'pack', source: { packageId: id } })
+	await expect(publishPackage(db, store, { userId: alice, packageId: id, settings: open })).rejects.toThrow(expect.objectContaining({ status: 409 }))
+
+	// Changed and added to since: the update holds what the package holds now.
+	await db.update(schema.character).set({ instructions: 'You build carefully.' }).where(eq(schema.character.id, engineer!))
+	await changePackage(db, alice, id, { items: { ...NO_PACKAGE_ITEMS, characterIds: [engineer!, designer!] } })
+	await publishUpdate(db, store, { listing: (await findListing(db, listing.id))!, notes: 'A designer joins', settings: open })
+	const second = await versionOf(listing.id, 2)
+	expect(second.content.characters.map(character => [character.name, character.instructions])).toEqual([['Engineer', 'You build carefully.'], ['Designer', 'You are Designer.']])
+	expect((await versionOf(listing.id, 1)).content.characters.map(character => character.instructions)).toEqual(['You are Engineer.'])
+})
+
+test('in reviewed mode a package waits, and its update is refused while one waits', async () => {
+	await db.insert(schema.user).values({ githubId: 3, username: 'moderator', role: 'moderator' })
+	const [engineer] = await characters('Engineer')
+	const { id } = await createPackage(db, alice, 'Dev team')
+	await changePackage(db, alice, id, { items: { ...NO_PACKAGE_ITEMS, characterIds: [engineer!] } })
+	const reviewed = { ...EXPLORE_DEFAULTS, publishing: 'reviewed' as const }
+	const { listing, pending } = await publishPackage(db, store, { userId: alice, packageId: id, settings: reviewed })
+	expect([pending, listing.currentVersionId]).toEqual([true, null])
+	await expect(publishUpdate(db, store, { listing, notes: 'Again', settings: reviewed })).rejects.toThrow(expect.objectContaining({ status: 409, message: 'An update of this listing is waiting for review' }))
+})
+
+test('deleting the listing makes the package a draft again; deleting the package deletes its listing', async () => {
+	const [engineer] = await characters('Engineer')
+	const { id } = await createPackage(db, alice, 'Dev team')
+	await changePackage(db, alice, id, { items: { ...NO_PACKAGE_ITEMS, characterIds: [engineer!] } })
+	const first = await publishPackage(db, store, { userId: alice, packageId: id, settings: open })
+	await deleteListing(db, store, first.listing.id)
+	expect((await findPackage(db, alice, id)).listingId).toBeNull()
+
+	const again = await publishPackage(db, store, { userId: alice, packageId: id, settings: open })
+	await deletePackage(db, store, alice, id)
+	expect(await findListing(db, again.listing.id)).toBeUndefined()
+	expect(await db.select().from(schema.character)).toHaveLength(1)
 })

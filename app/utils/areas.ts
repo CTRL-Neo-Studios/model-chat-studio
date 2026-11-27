@@ -87,6 +87,9 @@ export function sidebarOf(path: string): SidebarKind {
 export const PACKAGE_SECTIONS = [
 	{ path: '', label: 'Overview', icon: 'i-lucide-layout-grid' },
 	{ path: '/items', label: 'Items', icon: 'i-lucide-boxes' },
+	{ path: '/setup', label: 'Setup', icon: 'i-lucide-folder-cog' },
+	{ path: '/listing', label: 'Listing', icon: 'i-lucide-text' },
+	{ path: '/versions', label: 'Versions', icon: 'i-lucide-history' },
 ] as const
 
 /** A Character page's sections (`?section=`), listed by its sidebar. */
