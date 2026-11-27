@@ -1,5 +1,5 @@
 import { createError } from 'nuxt/server'
-import { and, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, inArray } from 'drizzle-orm'
 import { z } from 'zod'
 // Relative, not `#shared` or `hub:db`, so this module also loads in `bun test`.
 import * as tables from '../../db/schema'
@@ -32,6 +32,27 @@ export async function findPackage(db: Db, userId: string, id: string | undefined
 /** A new, empty package. */
 export async function createPackage(db: Db, userId: string, name: string) {
 	const [row] = await db.insert(tables.contentPackage).values({ ownerId: userId, name, items: NO_PACKAGE_ITEMS, texts: NO_PACKAGE_TEXTS }).returning()
+	return row!
+}
+
+/**
+ * A new package from one of the member's folders: its defaults as the setup, and as items the Characters of its lanes
+ * (a lane's own, or else its model profile's), its libraries and its structure profile, those that are the member's.
+ * Named after the folder; not tied to it afterwards.
+ */
+export async function packageFromFolder(db: Db, userId: string, folderId: string) {
+	const [folder] = await db.select().from(tables.chatFolder).where(and(eq(tables.chatFolder.id, folderId), eq(tables.chatFolder.userId, userId)))
+	if (!folder) throw createError({ status: 404, statusText: 'Folder not found' })
+	const setup = folder.defaults
+	if (!setup) throw createError({ status: 400, statusText: 'This folder has no setup to make a package of' })
+	const lanes = setup.models ?? []
+	const profileIds = lanes.flatMap(lane => lane.profileId ? [lane.profileId] : [])
+	const profiles = profileIds.length ? await db.select({ id: tables.modelProfile.id, characterId: tables.modelProfile.characterId }).from(tables.modelProfile).where(inArray(tables.modelProfile.id, profileIds)) : []
+	const characterIds = lanes
+		.map(lane => 'characterId' in lane ? lane.characterId : profiles.find(profile => profile.id === lane.profileId)?.characterId)
+		.filter((id, index, all): id is string => !!id && all.indexOf(id) === index)
+	const items = await ownedItems(db, userId, { characterIds, libraryIds: setup.libraryIds ?? [], structureProfileIds: setup.structureProfileId ? [setup.structureProfileId] : [] })
+	const [row] = await db.insert(tables.contentPackage).values({ ownerId: userId, name: folder.name.slice(0, 80), items, setup, texts: NO_PACKAGE_TEXTS }).returning()
 	return row!
 }
 

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { eq, inArray } from 'drizzle-orm'
 import * as schema from '../server/db/schema'
 import { givePackage, type Store, takePackage } from '../server/utils/explore/package'
+import { packageFromFolder } from '../server/utils/explore/packages'
 import { folderDefaultsSchema } from '../shared/utils/folderDefaults'
 import { createTestDb, type TestDb } from './db'
 
@@ -94,7 +95,7 @@ test('a Character with its lorebook library, a file and an avatar comes out equa
 	await expect(takePackage(db, publisher, { libraryIds: [shared!.id] })).rejects.toThrow('Library not found')
 })
 
-test('a three-model group folder comes out as a folder of the receiver\'s whose defaults name their copies', async () => {
+test('a three-model group package comes out as a folder of the receiver\'s whose defaults name their copies', async () => {
 	const { library, places } = await seedLibrary()
 	const [engineer, designer, me] = await db.insert(schema.character).values([
 		{ ownerId: publisher, name: 'Engineer', color: 'blue', instructions: 'You build things.' },
@@ -103,10 +104,12 @@ test('a three-model group folder comes out as a folder of the receiver\'s whose 
 	]).returning()
 	const [profile] = await db.insert(schema.modelProfile).values({ ownerId: publisher, name: 'Designer model', color: 'pink', platform: 'deepseek', modelId: 'deepseek-flash', params: { temperature: 0.7 }, characterId: designer!.id }).returning()
 	const [group] = await db.insert(schema.structureProfile).values({ ownerId: publisher, name: 'Group', blocks: [{ id: 'b1', kind: 'participants' }, { id: 'b2', kind: 'history' }] }).returning()
-	const [folder] = await db.insert(schema.chatFolder).values({
-		userId: publisher,
+	const [team] = await db.insert(schema.contentPackage).values({
+		ownerId: publisher,
 		name: 'Full-stack Dev Team',
-		defaults: {
+		items: { characterIds: [], libraryIds: [], structureProfileIds: [] },
+		texts: { summary: '', description: '', tags: [], category: null },
+		setup: {
 			libraryIds: [library.id],
 			structureProfileId: group!.id,
 			mode: 'group',
@@ -120,7 +123,7 @@ test('a three-model group folder comes out as a folder of the receiver\'s whose 
 		},
 	}).returning()
 
-	const first = await takePackage(db, publisher, { folderId: folder!.id })
+	const first = await takePackage(db, publisher, { packageId: team!.id })
 	expect(first.left).toEqual([])
 	expect(first.content.characters.map(character => character.name)).toEqual(['Engineer', 'Designer', 'Me'])
 	expect(first.content.setup).toEqual({
@@ -152,7 +155,8 @@ test('a three-model group folder comes out as a folder of the receiver\'s whose 
 	const characters = await db.select().from(schema.character).where(inArray(schema.character.id, made.characterIds))
 	expect(characters.every(character => character.ownerId === receiver)).toBe(true)
 
-	const again = await takePackage(db, receiver, { folderId: made.folderId! })
+	// Made into a package again, from the receiver's folder, it holds the same.
+	const again = await takePackage(db, receiver, { packageId: (await packageFromFolder(db, receiver, made.folderId!)).id })
 	expect(again.content).toEqual(first.content)
 })
 

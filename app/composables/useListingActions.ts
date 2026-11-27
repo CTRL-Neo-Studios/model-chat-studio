@@ -21,10 +21,10 @@ export function listingState(listing: Pick<OwnListing, 'status' | 'version' | 'v
 	return listing.status === 'listed' ? { label: 'Published', color: 'success' } : { label: 'Unpublished', color: 'neutral' }
 }
 
-/** An item's ids (or a folder's, or a package's) as one string, to find the listing published from exactly them. */
-const sourceKey = (source: PackageSource) => [source.packageId ?? '', source.folderId ?? '', ...source.characterIds ?? [], ...source.libraryIds ?? [], ...source.structureProfileIds ?? []].join()
+/** An item's ids (or a package's) as one string, to find the listing published from exactly them. */
+const sourceKey = (source: PackageSource) => [source.packageId ?? '', ...source.characterIds ?? [], ...source.libraryIds ?? [], ...source.structureProfileIds ?? []].join()
 
-/** The member's listings, and the one published from an item alone (or a folder's setup): the newest, if there are two. */
+/** The member's listings, and the one published from an item alone: the newest, if there are two. */
 export function useMyListings() {
 	const { data } = useQuery(myListingsQuery)
 	const listingOf = (source: PackageSource) => data.value?.find(listing => sourceKey(listing.source) === sourceKey(source))

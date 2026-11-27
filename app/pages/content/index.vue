@@ -98,7 +98,7 @@ const openExplore = (query: Record<string, string>) => navigateTo({ path: '/cont
 					<div v-if="explorePending" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" aria-label="Loading Explore">
 						<USkeleton v-for="n in 3" :key="n" class="h-36 w-full" />
 					</div>
-					<UEmpty v-else-if="!newest?.listings.length" icon="i-lucide-telescope" title="Nothing published yet" description="Publish a Character, a library, a structure profile or a folder's setup from its menu." />
+					<UEmpty v-else-if="!newest?.listings.length" icon="i-lucide-telescope" title="Nothing published yet" description="Publish a Character, a library or a structure profile from its menu, or a package from its studio." />
 					<ul v-else class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
 						<ListingCard v-for="listing in newest.listings.slice(0, 6)" :key="listing.id" :listing="listing" @tag="tag => openExplore({ tag })" />
 					</ul>

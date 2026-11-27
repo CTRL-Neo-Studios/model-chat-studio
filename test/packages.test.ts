@@ -3,7 +3,8 @@ import { eq } from 'drizzle-orm'
 import * as schema from '../server/db/schema'
 import { type Store, takePackage } from '../server/utils/explore/package'
 import { deleteListing, findListing, publishUpdate } from '../server/utils/explore/listings'
-import { changePackage, createPackage, deletePackage, findPackage, myPackages, publishPackage } from '../server/utils/explore/packages'
+import { getListing } from '../server/utils/explore/browse'
+import { changePackage, createPackage, deletePackage, findPackage, myPackages, packageFromFolder, publishPackage } from '../server/utils/explore/packages'
 import type { FolderDefaults } from '../shared/utils/folderDefaults'
 import { EXPLORE_DEFAULTS, NO_PACKAGE_ITEMS, packageItemsSchema } from '../shared/utils/package'
 import { createTestDb, type TestDb } from './db'
@@ -33,23 +34,51 @@ test('another member\'s package is not found for reading, changing, deleting or 
 	expect((await findPackage(db, alice, id)).name).toBe('Team')
 })
 
-test('a package\'s setup and items are taken as a folder\'s are', async () => {
+test('a package\'s setup is taken with it, after its items', async () => {
 	const [engineer, designer, critic] = await characters('Engineer', 'Designer', 'Critic')
 	const [library] = await db.insert(schema.library).values({ ownerId: alice, name: 'Specs' }).returning()
 	const setup: FolderDefaults = { libraryIds: [library!.id], structureProfileId: null, mode: 'group', models: [{ characterId: engineer!, modelId: 'deepseek-flash' }, { characterId: designer!, modelId: 'deepseek-flash' }] }
-	const [folder] = await db.insert(schema.chatFolder).values({ userId: alice, name: 'Team', defaults: setup }).returning()
-
 	const { id } = await createPackage(db, alice, 'Team')
 	await changePackage(db, alice, id, { setup })
-	const [fromFolder, fromPackage] = await Promise.all([takePackage(db, alice, { folderId: folder!.id }), takePackage(db, alice, { packageId: id })])
-	expect(fromPackage).toEqual(fromFolder)
-	expect(fromPackage.content.setup?.mode).toBe('group')
+	const taken = await takePackage(db, alice, { packageId: id })
+	expect(taken.content.setup?.mode).toBe('group')
+	expect(taken.content.characters.map(character => character.name)).toEqual(['Engineer', 'Designer'])
 
 	// Items are asked for, so they come first, then what the setup names.
 	await changePackage(db, alice, id, { items: { ...NO_PACKAGE_ITEMS, characterIds: [critic!] } })
 	const withItems = await takePackage(db, alice, { packageId: id })
 	expect(withItems.content.characters.map(character => character.name)).toEqual(['Critic', 'Engineer', 'Designer'])
 	expect(withItems.content.libraries.map(entry => entry.name)).toEqual(['Specs'])
+})
+
+test('a package made from a folder holds its setup and, as items, its lanes\' Characters, libraries and profile that are the member\'s', async () => {
+	const [engineer, designer] = await characters('Engineer', 'Designer')
+	const [specs] = await db.insert(schema.library).values({ ownerId: alice, name: 'Specs' }).returning()
+	const [theirs] = await db.insert(schema.library).values({ ownerId: bob, name: 'Theirs' }).returning()
+	const [group] = await db.insert(schema.structureProfile).values({ ownerId: alice, name: 'Group', blocks: [{ id: 'b1', kind: 'history' }] }).returning()
+	const [profile] = await db.insert(schema.modelProfile).values({ ownerId: alice, name: 'Design', platform: 'deepseek', modelId: 'deepseek-flash', characterId: designer! }).returning()
+	// The Engineer twice, the Designer through the model profile, and a lane with no Character.
+	const setup: FolderDefaults = {
+		libraryIds: [specs!.id, theirs!.id],
+		structureProfileId: group!.id,
+		mode: 'group',
+		models: [{ characterId: engineer!, modelId: 'deepseek-flash' }, { profileId: profile!.id }, { characterId: engineer!, name: 'Second opinion' }, { name: 'Reviewer', characterId: null }],
+	}
+	const [folder] = await db.insert(schema.chatFolder).values({ userId: alice, name: 'Dev team', defaults: setup }).returning()
+
+	const made = await packageFromFolder(db, alice, folder!.id)
+	expect(made.name).toBe('Dev team')
+	expect(made.setup).toEqual(setup)
+	expect(made.items).toEqual({ characterIds: [engineer!, designer!], libraryIds: [specs!.id], structureProfileIds: [group!.id] })
+	expect(made.listingId).toBeNull()
+	const taken = await takePackage(db, alice, { packageId: made.id })
+	expect(taken.content.characters.map(character => character.name)).toEqual(['Engineer', 'Designer'])
+	expect(taken.content.setup?.mode).toBe('group')
+
+	// Another member's folder is not found; one with no setup has nothing to make a package of.
+	await expect(packageFromFolder(db, bob, folder!.id)).rejects.toThrow(expect.objectContaining({ status: 404, message: 'Folder not found' }))
+	const [plain] = await db.insert(schema.chatFolder).values({ userId: alice, name: 'Plain' }).returning()
+	await expect(packageFromFolder(db, alice, plain!.id)).rejects.toThrow(expect.objectContaining({ status: 400 }))
 })
 
 test('an item deleted elsewhere drops out: when read, when taken, and from what is stored at the next save', async () => {
@@ -98,6 +127,19 @@ test('publishing links the listing and takes the package\'s texts; it is publish
 	const second = await versionOf(listing.id, 2)
 	expect(second.content.characters.map(character => [character.name, character.instructions])).toEqual([['Engineer', 'You build carefully.'], ['Designer', 'You are Designer.']])
 	expect((await versionOf(listing.id, 1)).content.characters.map(character => character.instructions)).toEqual(['You are Engineer.'])
+})
+
+test('a package made from a folder got from Explore is based on the listing it came from', async () => {
+	const [engineer, designer] = await characters('Engineer', 'Designer')
+	const { id } = await createPackage(db, alice, 'Dev team')
+	await changePackage(db, alice, id, { setup: { libraryIds: [], structureProfileId: null, mode: 'group', models: [{ characterId: engineer!, modelId: null }, { characterId: designer!, modelId: null }] } })
+	const { listing } = await publishPackage(db, store, { userId: alice, packageId: id, settings: open })
+
+	await getListing(db, store, listing, bob)
+	const [folder] = await db.select().from(schema.chatFolder).where(eq(schema.chatFolder.userId, bob))
+	const theirs = await packageFromFolder(db, bob, folder!.id)
+	const derived = await publishPackage(db, store, { userId: bob, packageId: theirs.id, settings: open })
+	expect(derived.listing.basedOnId).toBe(listing.id)
 })
 
 test('in reviewed mode a package waits, and its update is refused while one waits', async () => {

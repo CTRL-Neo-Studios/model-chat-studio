@@ -121,15 +121,11 @@ export function packageSize(content: Pick<Package, 'files'>) {
 	return new TextEncoder().encode(JSON.stringify(content)).length + content.files.reduce((sum, file) => sum + file.size, 0)
 }
 
-/**
- * What a package is taken from: the member's items by id, and/or a folder whose defaults become the setup, or a
- * Content Package (its items and setup).
- */
+/** What a package is taken from: the member's items by id, or a Content Package (its items and setup). */
 export const packageSourceSchema = z.object({
 	characterIds: z.array(z.uuid()).max(PACKAGE_LIMITS.characters).optional(),
 	libraryIds: z.array(z.uuid()).max(PACKAGE_LIMITS.libraries).optional(),
 	structureProfileIds: z.array(z.uuid()).max(PACKAGE_LIMITS.structureProfiles).optional(),
-	folderId: z.uuid().optional(),
 	packageId: z.uuid().optional(),
 }).strict()
 
@@ -143,10 +139,10 @@ export interface PackageCopies {
 	folderId: string | null
 }
 
-/** A listing's kind, by what it is taken from: one item is that item's kind; a folder, a package or several items, a pack. */
+/** A listing's kind, by what it is taken from: one item is that item's kind; a package or several items, a pack. */
 export function listingKind(source: PackageSource) {
 	const counts = [source.characterIds?.length ?? 0, source.libraryIds?.length ?? 0, source.structureProfileIds?.length ?? 0]
-	if (source.folderId || source.packageId || counts.reduce((sum, count) => sum + count, 0) !== 1) return 'pack' as const
+	if (source.packageId || counts.reduce((sum, count) => sum + count, 0) !== 1) return 'pack' as const
 	return counts[0] ? 'character' as const : counts[1] ? 'library' as const : 'structureProfile' as const
 }
 

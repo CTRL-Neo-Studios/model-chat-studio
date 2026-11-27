@@ -21,7 +21,7 @@ const included = computed(() => preview.value
 			...preview.value.characters.map(name => ({ icon: LISTING_KINDS.character.icon, label: name, detail: 'Character' })),
 			...preview.value.libraries.map(library => ({ icon: LISTING_KINDS.library.icon, label: library.name, detail: `Library, ${library.entries} ${library.entries === 1 ? 'entry' : 'entries'}` })),
 			...preview.value.structureProfiles.map(name => ({ icon: LISTING_KINDS.structureProfile.icon, label: name, detail: 'Structure profile' })),
-			...(preview.value.setup ? [{ icon: 'i-lucide-folder-cog', label: props.source.packageId ? 'The package\'s setup' : 'The folder\'s setup', detail: `${preview.value.setup.lanes} ${preview.value.setup.lanes === 1 ? 'model' : 'models'}, ${preview.value.setup.mode === 'group' ? 'a group' : 'separate answers'}` }] : []),
+			...(preview.value.setup ? [{ icon: 'i-lucide-folder-cog', label: 'The package\'s setup', detail: `${preview.value.setup.lanes} ${preview.value.setup.lanes === 1 ? 'model' : 'models'}, ${preview.value.setup.mode === 'group' ? 'a group' : 'separate answers'}` }] : []),
 		]
 	: [])
 </script>

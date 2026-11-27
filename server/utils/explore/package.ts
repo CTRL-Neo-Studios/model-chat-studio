@@ -45,24 +45,20 @@ export const fileExtension = (path: string) => /\.[a-z0-9]{1,8}$/i.exec(path)?.[
 
 /**
  * A package of the member's items (milestone 13 plan, section 2): the Characters, libraries and structure profiles
- * asked for, which must be theirs, and a folder's defaults as the setup; or a Content Package's items (those it still
- * has) and setup. What those refer to comes along when it is the member's (a lane's Character, a Character's
- * libraries, the setup's libraries, profile and "who you are"); what is not (a library shared with them, an instance
- * Character) is left out and reported. A lane started from a model profile carries the profile's fields. Returns the
- * package, where each file is stored, and what was left out.
+ * asked for, which must be theirs; or a Content Package's items (those it still has) and its setup. What those refer
+ * to comes along when it is the member's (a lane's Character, a Character's libraries, the setup's libraries, profile
+ * and "who you are"); what is not (a library shared with them, an instance Character) is left out and reported. A lane
+ * started from a model profile carries the profile's fields. Returns the package, where each file is stored, and what
+ * was left out.
  */
 export async function takePackage(db: Db, userId: string, source: PackageSource) {
 	const left: string[] = []
-	const [folder] = source.folderId
-		? await db.select().from(tables.chatFolder).where(and(eq(tables.chatFolder.id, source.folderId), eq(tables.chatFolder.userId, userId)))
-		: []
-	if (source.folderId && !folder) throw createError({ status: 404, statusText: 'Folder not found' })
 	const [contentPackage] = source.packageId
 		? await db.select().from(tables.contentPackage).where(and(eq(tables.contentPackage.id, source.packageId), eq(tables.contentPackage.ownerId, userId)))
 		: []
 	if (source.packageId && !contentPackage) throw createError({ status: 404, statusText: 'Package not found' })
 	const asked: Partial<PackageItems> = contentPackage ? await ownedItems(db, userId, contentPackage.items) : source
-	const defaults: FolderDefaults | null = folder?.defaults ?? contentPackage?.setup ?? null
+	const defaults: FolderDefaults | null = contentPackage?.setup ?? null
 
 	// The setup's lanes with their profiles' fields under their own.
 	const lanes = await Promise.all((defaults?.models ?? []).map(async ({ profileId, ...fields }) => {

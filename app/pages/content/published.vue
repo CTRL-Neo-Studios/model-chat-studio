@@ -33,7 +33,7 @@ const actions = (listing: Listing): DropdownMenuItem[][] => [
 					v-else-if="!listings.length"
 					icon="i-lucide-telescope"
 					title="Nothing published yet"
-					description="Publish a Character, a library or a structure profile from its menu, or a folder's setup as a pack."
+					description="Publish a Character, a library or a structure profile from its menu, or a package from its studio."
 				/>
 				<ul v-else class="flex flex-col divide-y divide-default rounded-md border border-default">
 					<li v-for="listing in listings" :key="listing.id" class="flex flex-col gap-2 px-4 py-3">

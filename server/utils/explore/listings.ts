@@ -59,13 +59,15 @@ export async function previewListing(db: Db, userId: string, source: PackageSour
 	}
 }
 
-/** The listing a source was got from, when one of its items is a copy the member got from Explore. */
+/** The listing a source was got from, when one of its items (or its package's) is a copy the member got from Explore. */
 async function basedOn(db: Db, userId: string, source: PackageSource) {
-	const ids = [...source.characterIds ?? [], ...source.libraryIds ?? [], ...source.structureProfileIds ?? [], ...source.folderId ? [source.folderId] : []]
+	const [fromPackage] = source.packageId ? await db.select({ items: tables.contentPackage.items }).from(tables.contentPackage).where(eq(tables.contentPackage.id, source.packageId)) : []
+	const items = fromPackage?.items ?? source
+	const ids = [...items.characterIds ?? [], ...items.libraryIds ?? [], ...items.structureProfileIds ?? []]
 	if (!ids.length) return null
 	const got = await db.select({ listingId: tables.acquisition.listingId, created: tables.acquisition.created }).from(tables.acquisition)
 		.where(eq(tables.acquisition.userId, userId)).orderBy(desc(tables.acquisition.createdAt))
-	return got.find(({ created }) => [...created.characterIds, ...created.libraryIds, ...created.structureProfileIds, created.folderId].some(id => id && ids.includes(id)))?.listingId ?? null
+	return got.find(({ created }) => [...created.characterIds, ...created.libraryIds, ...created.structureProfileIds].some(id => ids.includes(id)))?.listingId ?? null
 }
 
 /** The note on a version that went up in reviewed mode because nobody but its publisher could review it. */

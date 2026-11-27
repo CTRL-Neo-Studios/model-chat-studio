@@ -1,6 +1,6 @@
 # Milestones 15–17: Unpublish, areas with their own sidebars, Content Packages
 
-Status: milestones 15 and 16 built, 17.1 and 17.2 built (2026-11-27); 17.3 next. Follows `roadmap-milestones-7-14.md` (complete). One migration (`0025_content_packages`, written in 17.1). The conventions of milestone 1 and the way of working so far apply: one phase per step, a check in Chromium for each phase, a live run where the API changes (milestone 17).
+Status: milestones 15, 16 and 17 built (17.3 on 2026-11-27). Follows `roadmap-milestones-7-14.md` (complete). One migration (`0025_content_packages`, written in 17.1; production still needs it before deploying). The conventions of milestone 1 and the way of working so far apply: one phase per step, a check in Chromium for each phase, a live run where the API changes (milestone 17).
 
 Goal: publishing can be undone from where the item is; the app is split into areas (chat, content, settings, admin), each with its own sidebar and a breadcrumb to move around, with one "Content" place for Explore and everything the member made; and a pack becomes a thing of its own, a Content Package, made and published from a studio.
 
@@ -223,6 +223,16 @@ Built (17.2):
 
 Check in Chromium with two members: the publisher made two Characters, a model profile for each, and "Dev team" holding both; on Setup, the two profiles added and "Group chat" chosen, saved ("Setup saved", stored as a group of two lanes); on Listing, the summary written, the card beside it showing it, saved; "Publish" in the sidebar answered "Published to Explore", and the sidebar became Open on Explore, Edit listing…, Publish an update…, Unpublish. The other member found it, saw its setup (a group: Engineer, Designer) and got it: their folder "Dev team" holds a group of two lanes, and a chat started in it was a group of their copies, Engineer then Designer. The publisher changed the Engineer's instructions and, from the studio, "Publish an update…" with a note: Versions showed version 2 with the note, on Explore, and version 1; the other member was offered "Version 2 is out; you have version 1." "Unpublish" from the studio made it "Unpublished" with "Put back on Explore", and the other member no longer found it, its address 404. Both members were deleted.
 
+Built (17.3):
+- `packageFromFolder` (`server/utils/explore/packages.ts`), through `POST /packages` with `fromFolderId` (or `name`, as before): a draft named after the folder, its defaults as the setup, and as items the Characters of its lanes (a lane's own, else its model profile's; each once), its libraries and its structure profile, those that are the member's. Another member's folder is not found; one with no setup is refused. The folder is not tied to the package afterwards.
+- A folder's menu (with a setup): "Make a package from this folder" in place of "Publish to Explore…"; it opens the new package in its studio.
+- `source.folderId` is gone (`packageSourceSchema`, `listingKind`, `takePackage`'s folder branch, `useMyListings`' key, the preview's "The folder's setup"): checked on the day, neither database had a listing from a folder (dev 0 of 0, production 0 of 0). "Based on" now reads a package's items, so a package made from a folder got from Explore names that listing.
+- Tests: a package made from a folder (`test/packages.test.ts`: the Engineer twice and the Designer through a model profile come out once each, another member's library is left out, the setup is the folder's; another member's folder, and one with no setup, refused); a package made from a got folder is based on its listing; the group-folder package test (`test/package.test.ts`) takes a package and makes one again from the receiver's folder, which holds the same; `test/browse.test.ts` publishes its pack from a package. `scripts/app-smoke.ts`'s "explore" step makes the package from the folder, checks its Characters and setup, writes its summary, publishes it with `POST /packages/:id/publish` and deletes the package (and so its listing) after.
+
+Check in Chromium with a member with two Characters, a library and a folder "Dev team" whose setup is a group of the two with the library: the folder's menu offered "Make a package from this folder" after "Defaults…"; it opened the new draft "Dev team" in its studio (Overview: Engineer and Designer, Character; Specs, Library; "The package's setup: 2 models, a group"; 693 B in all), Items listing both Characters and the library; the package stored their ids and the group setup of two lanes.
+
+Live run (`scripts/app-smoke.ts` with a second member): "explore" passed on both platforms. On OpenRouter: a package made from the folder (2 Characters, a group), found by its word, got as 2 Characters and a folder, the round "engineer" then "designer" (DeepSeek through OpenRouter, $0.000345 and $0.000359). On DeepSeek the same ("engineer" $0.000299, "designer" $0.000302). "Review, stars and reports" passed. One step failed on OpenRouter, "folder defaults and a shared chart": OpenRouter's stream broke off mid-answer ("Failed to process successful response", a dropped connection in the server log), and the same step passed on DeepSeek; not rerun. $0.0093 recorded in all. The run's packages and listings were deleted (0 left), and the throwaway members with them.
+
 ## 6. To verify before building
 
 1. **Redirects with a wildcard in `routeRules`** on Nitro v3 (`'/explore/**': { redirect: '/content/explore/**' }`), given that Nitro v3 already read one rule differently here (`csurf: false`, see `nuxt.config.ts`). If they do not carry the rest of the path, a small global route middleware does it instead. Before 16.1.
@@ -240,7 +250,6 @@ Check in Chromium with two members: the publisher made two Characters, a model p
 - Model profiles keep their dialog; they cannot be published and have no page of their own.
 - A structure profile's page has no sidebar of its own.
 - Getting a package makes copies and a folder, not a package: a member who wants to republish makes their own package from the folder.
-- A listing published from a package does not say which listing its items were got from ("Based on"): that is worked out from items and folders asked for, and a package's are not.
 - A folder and the package made from it are not kept in step.
 - The palette searches chats and links to pages; it does not search Characters, libraries or Explore.
 - Sibling dropdowns list what the browser has loaded; a long list is not searched inside the breadcrumb.
