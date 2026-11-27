@@ -6,37 +6,14 @@ useHead({ title: 'Your listings' })
 const { data, isPending } = useQuery(myListingsQuery)
 const listings = computed(() => data.value ?? [])
 type Listing = (typeof listings.value)[number]
-const { edit, update, setListed, remove } = useListingActions()
+const { listingActions, update, remove } = useListingActions()
 
-const STATUS = {
-	listed: { label: 'Listed', color: 'success' },
-	unlisted: { label: 'Unlisted', color: 'neutral' },
-	removed: { label: 'Removed', color: 'error' },
-} as const
-
-/** Its status, or, until a version is approved, where its review stands. */
-function badge(listing: Listing): { label: string, color: 'success' | 'neutral' | 'error' | 'info' } {
-	if (listing.status === 'removed' || listing.version) return STATUS[listing.status]
-	return listing.versions[0]?.status === 'rejected' ? { label: 'Rejected', color: 'error' } : { label: 'Waiting for review', color: 'info' }
-}
 /** A waiting version's earlier rejection, kept beside it. */
 const earlierReason = (listing: Listing) => listing.versions[1]?.status === 'rejected' ? listing.versions[1].reason : null
 
-// A removed listing can only be deleted: a moderator took it off Explore. While a version waits, no other is taken.
+// A removed listing can only be deleted: a moderator took it off Explore.
 const actions = (listing: Listing): DropdownMenuItem[][] => [
-	...(listing.status === 'removed'
-		? []
-		: [[
-				{ label: 'Edit…', icon: 'i-lucide-pencil', onSelect: () => edit(listing) },
-				...(listing.versions[0]?.status === 'pending'
-					? []
-					: listing.versions[0]?.status === 'rejected'
-						? [{ label: 'Publish again…', icon: 'i-lucide-telescope', onSelect: () => update(listing, true) }]
-						: [{ label: 'Publish an update…', icon: 'i-lucide-telescope', onSelect: () => update(listing) }]),
-				listing.status === 'listed'
-					? { label: 'Unlist', icon: 'i-lucide-eye-off', onSelect: () => setListed(listing, false) }
-					: { label: 'List on Explore', icon: 'i-lucide-eye', onSelect: () => setListed(listing, true) },
-			]]),
+	...(listing.status === 'removed' ? [] : [listingActions(listing)]),
 	[{ label: 'Delete', icon: 'i-lucide-trash', color: 'error' as const, onSelect: () => remove(listing) }],
 ]
 </script>
@@ -78,7 +55,7 @@ const actions = (listing: Listing): DropdownMenuItem[][] => [
 									</template>
 								</p>
 							</div>
-							<UBadge :label="badge(listing).label" :color="badge(listing).color" variant="subtle" />
+							<UBadge :label="listingState(listing).label" :color="listingState(listing).color" variant="subtle" />
 							<UDropdownMenu :items="actions(listing)" :content="{ align: 'end' }">
 								<UButton icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="sm" :aria-label="`Actions for ${listing.name}`" />
 							</UDropdownMenu>

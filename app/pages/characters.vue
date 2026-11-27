@@ -25,7 +25,7 @@ const canEdit = computed(() => tab.value === 'mine' || isAdmin.value)
 
 const editor = overlay.create(LazyCharacterEditor)
 const confirm = overlay.create(LazyModalConfirm)
-const { publish } = useListingActions()
+const { publishActions } = useListingActions()
 const fields = ({ name, color, instructions, libraryIds, greetings, examples, note, creatorNotes, tags }: Character): CharacterFields => ({ name, color, instructions, libraryIds, greetings, examples, note, creatorNotes, tags })
 const blank: CharacterFields = { name: '', color: null, instructions: '', libraryIds: [], greetings: [], examples: '', note: '', creatorNotes: '', tags: [] }
 const store = (saved: Character) => queryCache.setQueryData(charactersQuery.key, characters.value.some(entry => entry.id === saved.id) ? characters.value.map(entry => entry.id === saved.id ? saved : entry) : [...characters.value, saved])
@@ -111,12 +111,9 @@ function actions(character: Character): DropdownMenuItem[][] {
 	return [[
 		...(canEdit.value ? [{ label: 'Edit', icon: 'i-lucide-pencil', onSelect: () => edit(character) }] : []),
 		...(mine
-			? [
-					{ label: 'Publish to Explore…', icon: 'i-lucide-telescope', onSelect: () => publish({ characterIds: [character.id] }, character.name) },
-					...(isAdmin.value ? [{ label: 'Publish for everyone', icon: 'i-lucide-share', onSelect: () => copy(character, true) }] : []),
-				]
+			? isAdmin.value ? [{ label: 'Publish for everyone', icon: 'i-lucide-share', onSelect: () => copy(character, true) }] : []
 			: [{ label: 'Copy to my Characters', icon: 'i-lucide-copy', onSelect: () => copy(character, false) }]),
-	], [
+	], ...(mine ? [publishActions({ characterIds: [character.id] }, character.name)] : []), [
 		// A card in its picture when the Character has an avatar; only a PNG one can carry it, the server says so otherwise.
 		...(character.avatarFileId ? [{ label: 'Export card (PNG)', icon: 'i-lucide-image-down', onSelect: () => exportCard(character, 'png') }] : []),
 		{ label: 'Export card (JSON)', icon: 'i-lucide-file-down', onSelect: () => exportCard(character, 'json') },
@@ -159,6 +156,7 @@ function actions(character: Character): DropdownMenuItem[][] {
 						<div class="flex items-center gap-2">
 							<LaneDot :color="character.color" :avatar="characterAvatarUrl(character)" avatar-class="size-8" dot-class="size-2.5" />
 							<span class="font-medium text-highlighted truncate flex-1">{{ character.name }}</span>
+							<PublishedBadge v-if="character.ownerId !== null" :source="{ characterIds: [character.id] }" />
 							<PinButton kind="character" :target-id="character.id" />
 							<UDropdownMenu :items="actions(character)" :content="{ align: 'end' }">
 								<UButton icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="sm" aria-label="Character actions" />

@@ -34,8 +34,8 @@ async function save() {
 }
 
 const STATUS = {
-	listed: { label: 'Listed', color: 'success' },
-	unlisted: { label: 'Unlisted', color: 'neutral' },
+	listed: { label: 'Published', color: 'success' },
+	unlisted: { label: 'Unpublished', color: 'neutral' },
 	removed: { label: 'Removed', color: 'error' },
 } as const
 const columns: TableColumn<Row>[] = [

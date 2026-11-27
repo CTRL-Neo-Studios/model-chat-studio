@@ -1,6 +1,6 @@
 # Milestones 15–17: Unpublish, areas with their own sidebars, Content Packages
 
-Status: planned (2026-11-26); nothing built. Follows `roadmap-milestones-7-14.md` (complete). One migration (`0025_content_packages`, in 17.1). The conventions of milestone 1 and the way of working so far apply: one phase per step, a check in Chromium for each phase, a live run where the API changes (milestone 17).
+Status: 15.1 built (2026-11-26); 16.1 next. Follows `roadmap-milestones-7-14.md` (complete). One migration (`0025_content_packages`, in 17.1). The conventions of milestone 1 and the way of working so far apply: one phase per step, a check in Chromium for each phase, a live run where the API changes (milestone 17).
 
 Goal: publishing can be undone from where the item is; the app is split into areas (chat, content, settings, admin), each with its own sidebar and a breadcrumb to move around, with one "Content" place for Explore and everything the member made; and a pack becomes a thing of its own, a Content Package, made and published from a studio.
 
@@ -55,6 +55,14 @@ Today "Unlist" exists only in the menu on "Your listings", itself only in the us
 | Phase | Deliverable | Done when |
 |---|---|---|
 | 15.1 | The wording, the state and the actions on the item rows, the listing page and "Your listings" | a test that an unpublished listing keeps its versions, stars and gets and comes back as it was (added to `test/listings.test.ts` if not there). In Chromium with two accounts: a published Character's row says "Published"; "Unpublish" from that row hides it from the other member (the grid, and its address answers 404); "Put back on Explore" from the listing's page shows it again with its star |
+
+Built (15.1):
+- `app/composables/useListingActions.ts`: `listingState` (Published, Unpublished, Waiting for review, Rejected, Removed: the badge "Your listings" had, moved here and renamed), `useMyListings().listingOf(source)` (the newest listing published from exactly an item's ids, or a folder's), `setPublished` (was `setListed`; its toasts "Unpublished: only you see it" and "Back on Explore"), `listingActions` (Edit listing…, Publish an update… or again…, Unpublish or Put back on Explore; none once removed) and `publishActions(source, name)` (an item's menu group: "Publish to Explore…", or "Open on Explore" and its listing's actions). Every action now refreshes Explore's queries as well as the publisher's list, so the listing's page follows.
+- `PublishedBadge.vue` on the rows of Characters, Libraries (owned) and Structure profiles; their menus and a folder's (with a setup) use `publishActions`, so an item published once no longer offers "Publish to Explore…" again. Folders show no badge in the sidebar's tree.
+- The listing's page: "Unpublish" / "Put back on Explore" for its publisher beside "Your listings"; the alert reads "Unpublished". "Your listings" uses the same state and actions; `/admin/explore` and `/admin/review` say "Published" and "Unpublished".
+- Test (`test/listings.test.ts`): unpublished, a listing with two versions, a star and a get leaves the other member's grid and is refused to them, its versions, stars and gets kept; put back, it is in the grid as it was.
+
+Check in Chromium with two accounts: a member published a Character from its row ("Published to Explore"); the row showed "Published" and its menu Open on Explore, Edit listing…, Publish an update…, Unpublish, without "Publish to Explore…". The other member starred it. "Unpublish" from the row turned the badge "Unpublished" (about 1.5 s); the other member's grid lost it and its address answered 404. On the listing's page (alert "Unpublished"), "Put back on Explore" answered "Back on Explore", the alert went and the button became "Unpublish" (about 2.5 s); the other member found it again, starred, with its 1 star. Both members were deleted.
 
 ## 4. Milestone 16: areas, sidebars, breadcrumbs
 

@@ -25,7 +25,7 @@ const canEdit = computed(() => tab.value === 'mine' || isAdmin.value)
 
 const editor = overlay.create(LazyStructureProfileEditor)
 const confirm = overlay.create(LazyModalConfirm)
-const { publish } = useListingActions()
+const { publishActions } = useListingActions()
 
 async function create(template: (typeof PROFILE_TEMPLATES)[number]) {
 	const blocks = template.blocks.map(block => ({ ...block, id: crypto.randomUUID() }) as ProfileBlock)
@@ -62,12 +62,9 @@ function actions(profile: Profile): DropdownMenuItem[][] {
 	return [[
 		...(canEdit.value ? [{ label: 'Edit', icon: 'i-lucide-pencil', onSelect: () => edit(profile) }] : []),
 		...(mine
-			? [
-					{ label: 'Publish to Explore…', icon: 'i-lucide-telescope', onSelect: () => publish({ structureProfileIds: [profile.id] }, profile.name) },
-					...(isAdmin.value ? [{ label: 'Publish for everyone', icon: 'i-lucide-share', onSelect: () => copy(profile, true) }] : []),
-				]
+			? isAdmin.value ? [{ label: 'Publish for everyone', icon: 'i-lucide-share', onSelect: () => copy(profile, true) }] : []
 			: [{ label: 'Copy to my profiles', icon: 'i-lucide-copy', onSelect: () => copy(profile, false) }]),
-	], ...(canEdit.value ? [[{ label: 'Delete', icon: 'i-lucide-trash', color: 'error' as const, onSelect: () => remove(profile) }]] : [])]
+	], ...(mine ? [publishActions({ structureProfileIds: [profile.id] }, profile.name)] : []), ...(canEdit.value ? [[{ label: 'Delete', icon: 'i-lucide-trash', color: 'error' as const, onSelect: () => remove(profile) }]] : [])]
 }
 
 const kindLabel: Record<ProfileBlock['kind'], string> = { message: 'message', history: 'conversation', autoFetch: 'auto-fetch', files: 'files', userCharacter: 'your Character', participants: 'participants' }
@@ -107,6 +104,7 @@ const summary = (blocks: ProfileBlock[]) => blocks.map(block => block.kind === '
 						<div class="flex items-center gap-2">
 							<UIcon name="i-lucide-layers" class="size-5 text-muted shrink-0" />
 							<span class="font-medium text-highlighted truncate flex-1">{{ profile.name }}</span>
+							<PublishedBadge v-if="profile.ownerId !== null" :source="{ structureProfileIds: [profile.id] }" />
 							<PinButton kind="structureProfile" :target-id="profile.id" />
 							<UDropdownMenu :items="actions(profile)" :content="{ align: 'end' }">
 								<UButton icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="sm" aria-label="Profile actions" />

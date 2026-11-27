@@ -72,7 +72,7 @@ async function decide(reportId: string, remove: boolean, reported?: string) {
 						<ULink :to="`/explore/${entry.listingId}`" class="font-medium text-highlighted truncate">
 							{{ entry.name }}
 						</ULink>
-						<UBadge v-if="entry.status !== 'listed'" :label="entry.status === 'removed' ? 'Removed' : 'Unlisted'" color="warning" variant="subtle" size="sm" />
+						<UBadge v-if="entry.status !== 'listed'" :label="entry.status === 'removed' ? 'Removed' : 'Unpublished'" color="warning" variant="subtle" size="sm" />
 					</div>
 					<p class="text-xs text-muted">
 						{{ LISTING_KINDS[entry.kind].label }} by {{ entry.publisher }} · reported by {{ entry.reporter.name || entry.reporter.username }} {{ formatDistanceToNow(new Date(entry.createdAt), { addSuffix: true }) }}

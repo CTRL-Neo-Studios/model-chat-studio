@@ -16,6 +16,7 @@ const toast = useToast()
 const queryCache = useQueryCache()
 const overlay = useOverlay()
 const { addToLists } = useStarLists()
+const { setPublished } = useListingActions()
 
 const content = computed(() => page.value?.version?.content)
 const fileUrl = (key: string | null) => key && page.value?.fileIds[key] ? `/api/v1/files/${page.value.fileIds[key]}` : undefined
@@ -133,12 +134,15 @@ async function get() {
 								<UButton v-if="page.got < currentNumber" label="Get the new version" icon="i-lucide-download" size="sm" :loading="getting" @click="get" />
 							</template>
 						</template>
-						<UButton v-if="mine" label="Your listings" size="xs" color="neutral" variant="link" to="/explore/mine" />
+						<template v-if="mine">
+							<UButton v-if="page.listing.status !== 'removed'" :label="page.listing.status === 'listed' ? 'Unpublish' : 'Put back on Explore'" :icon="page.listing.status === 'listed' ? 'i-lucide-eye-off' : 'i-lucide-eye'" size="xs" color="neutral" variant="link" @click="setPublished(page.listing, page.listing.status !== 'listed')" />
+							<UButton label="Your listings" size="xs" color="neutral" variant="link" to="/explore/mine" />
+						</template>
 						<UButton v-else label="Report…" icon="i-lucide-flag" size="xs" color="neutral" variant="link" @click="report" />
 					</div>
 				</div>
 				<UAlert v-if="page.got !== null && page.got < currentNumber" color="info" variant="subtle" icon="i-lucide-sparkles" :title="`Version ${currentNumber} is out; you have version ${page.got || 'an earlier one'}.`" description="Getting it makes new copies; the ones you have stay as they are, with whatever you changed." />
-				<UAlert v-if="page.listing.status !== 'listed'" color="warning" variant="subtle" icon="i-lucide-eye-off" :title="page.listing.status === 'removed' ? 'Removed by a moderator' : 'Unlisted'" :description="page.listing.statusReason ?? 'Only its publisher, admins and moderators see it.'" />
+				<UAlert v-if="page.listing.status !== 'listed'" color="warning" variant="subtle" icon="i-lucide-eye-off" :title="page.listing.status === 'removed' ? 'Removed by a moderator' : 'Unpublished'" :description="page.listing.statusReason ?? 'Its publisher took it off Explore: only they, admins and moderators see it.'" />
 				<!-- A version other than the one on Explore: its state, and for a reviewer, Approve and Reject. -->
 				<UAlert
 					v-if="page.version?.status === 'pending'"
