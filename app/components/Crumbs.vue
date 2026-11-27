@@ -99,18 +99,17 @@ const last = computed(() => segments.value.length - 1)
 						trailing-icon="i-lucide-chevron-down"
 						color="neutral"
 						variant="ghost"
-						size="sm"
 						:aria-label="`${segment.label}, ${segment.hint}`"
 						:aria-current="index === last ? 'page' : undefined"
 						class="min-w-0 data-[state=open]:bg-elevated"
 						:class="index === last ? 'font-semibold text-highlighted' : 'text-muted'"
-						:ui="{ label: 'truncate', trailingIcon: 'text-dimmed size-4' }"
+						:ui="{ label: 'truncate', trailingIcon: 'text-dimmed' }"
 					/>
 				</UDropdownMenu>
-				<ULink v-else-if="segment.to && index !== last" :to="segment.to" class="px-1.5 text-sm text-muted hover:text-highlighted truncate">
+				<ULink v-else-if="segment.to && index !== last" :to="segment.to" class="px-2.5 text-sm text-muted hover:text-highlighted truncate">
 					{{ segment.label }}
 				</ULink>
-				<span v-else aria-current="page" class="px-1.5 text-sm font-semibold text-highlighted truncate">{{ segment.label }}</span>
+				<span v-else aria-current="page" class="px-2.5 text-sm font-semibold text-highlighted truncate">{{ segment.label }}</span>
 			</li>
 		</ol>
 	</nav>
