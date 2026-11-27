@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import type { PackageSource } from '#shared/utils/package'
 
-/** What publishing `source` would hold and leave out, as the server would take it now. `ok`: it can be published. */
-const props = defineProps<{ source: PackageSource }>()
+/**
+ * What publishing `source` would hold and leave out, as the server would take it now. `ok`: it can be published.
+ * `limitBytes`: the instance's size limit, shown beside the size.
+ */
+const props = defineProps<{ source: PackageSource, limitBytes?: number }>()
 const ok = defineModel<boolean>('ok', { default: false })
 
 const { csrf, headerName } = useCsrf()
@@ -18,7 +21,7 @@ const included = computed(() => preview.value
 			...preview.value.characters.map(name => ({ icon: LISTING_KINDS.character.icon, label: name, detail: 'Character' })),
 			...preview.value.libraries.map(library => ({ icon: LISTING_KINDS.library.icon, label: library.name, detail: `Library, ${library.entries} ${library.entries === 1 ? 'entry' : 'entries'}` })),
 			...preview.value.structureProfiles.map(name => ({ icon: LISTING_KINDS.structureProfile.icon, label: name, detail: 'Structure profile' })),
-			...(preview.value.setup ? [{ icon: 'i-lucide-folder-cog', label: 'The folder\'s setup', detail: `${preview.value.setup.lanes} ${preview.value.setup.lanes === 1 ? 'model' : 'models'}, ${preview.value.setup.mode === 'group' ? 'a group' : 'separate answers'}` }] : []),
+			...(preview.value.setup ? [{ icon: 'i-lucide-folder-cog', label: props.source.packageId ? 'The package\'s setup' : 'The folder\'s setup', detail: `${preview.value.setup.lanes} ${preview.value.setup.lanes === 1 ? 'model' : 'models'}, ${preview.value.setup.mode === 'group' ? 'a group' : 'separate answers'}` }] : []),
 		]
 	: [])
 </script>
@@ -39,7 +42,7 @@ const included = computed(() => preview.value
 				</li>
 			</ul>
 			<p class="text-xs text-dimmed">
-				{{ preview.files }} {{ preview.files === 1 ? 'file' : 'files' }} · {{ fileSize(preview.size) }} in all. Others get a copy as it is now; later changes need "Publish an update".
+				{{ preview.files }} {{ preview.files === 1 ? 'file' : 'files' }} · {{ fileSize(preview.size) }}{{ limitBytes ? ` of ${fileSize(limitBytes)}` : '' }} in all. Others get a copy as it is now; later changes need "Publish an update".
 			</p>
 			<UAlert v-if="preview.left.length" color="warning" variant="subtle" icon="i-lucide-circle-alert" title="Left out" :description="preview.left.join(' ')" />
 		</template>

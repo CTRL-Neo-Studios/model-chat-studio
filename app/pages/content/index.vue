@@ -5,6 +5,7 @@ const { user } = useUserSession()
 const { data: characters } = useQuery(charactersQuery)
 const { data: libraries } = useQuery(librariesQuery)
 const { data: profiles } = useQuery(structureProfilesQuery)
+const { data: packages } = useQuery(packagesQuery)
 const { data: listings } = useQuery(myListingsQuery)
 const { data: stars } = useQuery(myStarsQuery)
 const { data: counts } = useQuery(exploreCountsQuery)
@@ -18,6 +19,7 @@ const kinds = computed(() => {
 		{ label: 'Characters', icon: 'i-lucide-drama', to: '/content/characters', count: characters.value?.filter(character => character.ownerId !== null).length, detail: 'Who a model is in a chat, or who you are', create: true },
 		{ label: 'Libraries', icon: 'i-lucide-library-big', to: '/content/libraries', count: libraries.value?.length, detail: shared ? `${shared} shared with you` : 'Files and notes chats can read', create: true },
 		{ label: 'Structure profiles', icon: 'i-lucide-layers', to: '/content/structure-profiles', count: profiles.value?.filter(profile => profile.ownerId !== null).length, detail: 'What a chat sends, in what order', create: true },
+		{ label: 'Packages', icon: 'i-lucide-package', to: '/content/packages', count: packages.value?.length, detail: 'Several items and a setup, published as one', create: true },
 		{ label: 'Published', icon: 'i-lucide-send', to: '/content/published', count: listings.value?.length, detail: `${onExplore} on Explore`, create: false },
 		{ label: 'Your stars', icon: 'i-lucide-star', to: '/content/stars', count: stars.value?.listings.length, detail: `${stars.value?.lists.length ?? 0} star lists`, create: false },
 	]

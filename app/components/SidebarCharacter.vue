@@ -9,8 +9,10 @@ const { data: characters } = useQuery(charactersQuery)
 const name = computed(() => route.params.id === 'new' ? 'New Character' : characters.value?.find(entry => entry.id === route.params.id)?.name ?? '')
 const current = computed(() => characterSectionOf(route.query.section))
 
+const back = useBackRow({ label: 'Characters', to: '/content/characters' })
+
 const items = computed<NavigationMenuItem[][]>(() => [
-	[{ label: 'Characters', icon: 'i-lucide-arrow-left', to: '/content/characters' }],
+	[back.value],
 	[
 		{ label: name.value, type: 'label' },
 		...CHARACTER_SECTIONS.map(section => ({

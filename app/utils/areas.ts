@@ -33,6 +33,7 @@ export const AREAS: Record<Area, { label: string, icon: string, to: string, minR
 			{ label: 'Characters', icon: 'i-lucide-drama', to: '/content/characters', heading: 'My content' },
 			{ label: 'Libraries', icon: 'i-lucide-library-big', to: '/content/libraries' },
 			{ label: 'Structure profiles', icon: 'i-lucide-layers', to: '/content/structure-profiles' },
+			{ label: 'Packages', icon: 'i-lucide-package', to: '/content/packages' },
 			{ label: 'Published', icon: 'i-lucide-send', to: '/content/published' },
 			{ label: 'Review', icon: 'i-lucide-shield-check', to: '/admin/review', minRole: 'moderator' },
 		],
@@ -73,13 +74,20 @@ export function areaOf(path: string): Area {
 	return 'chat'
 }
 
-/** What the sidebar shows: inside a library or a Character, that thing's own; elsewhere, the area's. The only place that decides it. */
-export type SidebarKind = Area | 'library' | 'character'
+/** What the sidebar shows: inside a library, a Character or a package, that thing's own; elsewhere, the area's. The only place that decides it. */
+export type SidebarKind = Area | 'library' | 'character' | 'package'
 export function sidebarOf(path: string): SidebarKind {
 	if (/^\/content\/libraries\/[^/]+$/.test(path)) return 'library'
 	if (/^\/content\/characters\/[^/]+$/.test(path)) return 'character'
+	if (/^\/content\/packages\/[^/]+(\/[^/]+)?$/.test(path)) return 'package'
 	return areaOf(path)
 }
+
+/** A package studio's pages, under `/content/packages/<id>`; listed by its sidebar and named by the breadcrumb. */
+export const PACKAGE_SECTIONS = [
+	{ path: '', label: 'Overview', icon: 'i-lucide-layout-grid' },
+	{ path: '/items', label: 'Items', icon: 'i-lucide-boxes' },
+] as const
 
 /** A Character page's sections (`?section=`), listed by its sidebar. */
 export const CHARACTER_SECTIONS = [

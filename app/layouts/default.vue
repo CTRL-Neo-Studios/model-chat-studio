@@ -97,6 +97,7 @@ const linkGroups = computed(() => [
 				<template v-if="loggedIn">
 					<SidebarLibrary v-if="sidebar === 'library'" :collapsed="collapsed" />
 					<SidebarCharacter v-else-if="sidebar === 'character'" :collapsed="collapsed" />
+					<SidebarPackage v-else-if="sidebar === 'package'" :collapsed="collapsed" />
 					<SidebarArea v-else-if="sidebar !== 'chat'" :area="sidebar" :collapsed="collapsed" />
 					<SidebarChat v-else :collapsed="collapsed" :chats="chats" @search="searchOpen = true" />
 				</template>

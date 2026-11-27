@@ -5,7 +5,7 @@ import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm'
 import * as tables from '../../db/schema'
 import type { Db } from '../core/settings'
 import { type FolderDefaults, folderDefaultsSchema } from '../../../shared/utils/folderDefaults'
-import { type Package, type PackageCopies, type PackageInput, PACKAGE_LIMITS, packageSchema, packageSize, type PackageSource } from '../../../shared/utils/package'
+import { type Package, type PackageCopies, type PackageInput, type PackageItems, PACKAGE_LIMITS, packageSchema, packageSize, type PackageSource } from '../../../shared/utils/package'
 
 /** Storage as `#server/utils/core/blob` has it; passed in, so tests bring their own. */
 export interface Store {
@@ -45,10 +45,11 @@ export const fileExtension = (path: string) => /\.[a-z0-9]{1,8}$/i.exec(path)?.[
 
 /**
  * A package of the member's items (milestone 13 plan, section 2): the Characters, libraries and structure profiles
- * asked for, which must be theirs, and a folder's defaults as the setup. What those refer to comes along when it is the
- * member's (a lane's Character, a Character's libraries, the setup's libraries, profile and "who you are"); what is
- * not (a library shared with them, an instance Character) is left out and reported. A lane started from a model
- * profile carries the profile's fields. Returns the package, where each file is stored, and what was left out.
+ * asked for, which must be theirs, and a folder's defaults as the setup; or a Content Package's items (those it still
+ * has) and setup. What those refer to comes along when it is the member's (a lane's Character, a Character's
+ * libraries, the setup's libraries, profile and "who you are"); what is not (a library shared with them, an instance
+ * Character) is left out and reported. A lane started from a model profile carries the profile's fields. Returns the
+ * package, where each file is stored, and what was left out.
  */
 export async function takePackage(db: Db, userId: string, source: PackageSource) {
 	const left: string[] = []
@@ -56,7 +57,12 @@ export async function takePackage(db: Db, userId: string, source: PackageSource)
 		? await db.select().from(tables.chatFolder).where(and(eq(tables.chatFolder.id, source.folderId), eq(tables.chatFolder.userId, userId)))
 		: []
 	if (source.folderId && !folder) throw createError({ status: 404, statusText: 'Folder not found' })
-	const defaults: FolderDefaults | null = folder?.defaults ?? null
+	const [contentPackage] = source.packageId
+		? await db.select().from(tables.contentPackage).where(and(eq(tables.contentPackage.id, source.packageId), eq(tables.contentPackage.ownerId, userId)))
+		: []
+	if (source.packageId && !contentPackage) throw createError({ status: 404, statusText: 'Package not found' })
+	const asked: Partial<PackageItems> = contentPackage ? await ownedItems(db, userId, contentPackage.items) : source
+	const defaults: FolderDefaults | null = folder?.defaults ?? contentPackage?.setup ?? null
 
 	// The setup's lanes with their profiles' fields under their own.
 	const lanes = await Promise.all((defaults?.models ?? []).map(async ({ profileId, ...fields }) => {
@@ -69,12 +75,12 @@ export async function takePackage(db: Db, userId: string, source: PackageSource)
 	}))
 
 	// The member's own items, in order: asked for, then referred to. Asked-for ones that are not theirs are not found.
-	const characters = await ownRows(db, tables.character, userId, source.characterIds ?? [], [...lanes.map(lane => lane.characterId), defaults?.userCharacterId], 'Character', left)
+	const characters = await ownRows(db, tables.character, userId, asked.characterIds ?? [], [...lanes.map(lane => lane.characterId), defaults?.userCharacterId], 'Character', left)
 	const characterLibraries = characters.length
 		? await db.select().from(tables.characterLibrary).where(inArray(tables.characterLibrary.characterId, characters.map(character => character.id))).orderBy(asc(tables.characterLibrary.createdAt))
 		: []
-	const libraries = await ownRows(db, tables.library, userId, source.libraryIds ?? [], [...(defaults?.libraryIds ?? []), ...characterLibraries.map(link => link.libraryId)], 'library', left)
-	const profiles = await ownRows(db, tables.structureProfile, userId, source.structureProfileIds ?? [], [defaults?.structureProfileId], 'structure profile', left)
+	const libraries = await ownRows(db, tables.library, userId, asked.libraryIds ?? [], [...(defaults?.libraryIds ?? []), ...characterLibraries.map(link => link.libraryId)], 'library', left)
+	const profiles = await ownRows(db, tables.structureProfile, userId, asked.structureProfileIds ?? [], [defaults?.structureProfileId], 'structure profile', left)
 
 	const files: Package['files'] = []
 	const paths: Record<string, string> = {}
@@ -165,6 +171,20 @@ async function ownRows<T extends typeof tables.character | typeof tables.library
 		if (row) left.push(`The ${kind} “${row.name}” is not yours, so it is left out`)
 		return []
 	})
+}
+
+/**
+ * The ids of `items` the member still owns, in their order: what a Content Package holds once an item was deleted
+ * (or given away) elsewhere.
+ */
+export async function ownedItems(db: Db, userId: string, items: PackageItems): Promise<PackageItems> {
+	const own = async (table: typeof tables.character | typeof tables.library | typeof tables.structureProfile, ids: string[]) => {
+		if (!ids.length) return []
+		const rows = await db.select({ id: table.id }).from(table as typeof tables.library).where(and(inArray(table.id, ids), eq(table.ownerId, userId)))
+		return ids.filter(id => rows.some(row => row.id === id))
+	}
+	const [characterIds, libraryIds, structureProfileIds] = await Promise.all([own(tables.character, items.characterIds), own(tables.library, items.libraryIds), own(tables.structureProfile, items.structureProfileIds)])
+	return { characterIds, libraryIds, structureProfileIds }
 }
 
 /**

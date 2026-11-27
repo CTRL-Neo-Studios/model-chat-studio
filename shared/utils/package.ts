@@ -121,12 +121,16 @@ export function packageSize(content: Pick<Package, 'files'>) {
 	return new TextEncoder().encode(JSON.stringify(content)).length + content.files.reduce((sum, file) => sum + file.size, 0)
 }
 
-/** What a package is taken from: the member's items by id, and/or a folder whose defaults become the setup. */
+/**
+ * What a package is taken from: the member's items by id, and/or a folder whose defaults become the setup, or a
+ * Content Package (its items and setup).
+ */
 export const packageSourceSchema = z.object({
 	characterIds: z.array(z.uuid()).max(PACKAGE_LIMITS.characters).optional(),
 	libraryIds: z.array(z.uuid()).max(PACKAGE_LIMITS.libraries).optional(),
 	structureProfileIds: z.array(z.uuid()).max(PACKAGE_LIMITS.structureProfiles).optional(),
 	folderId: z.uuid().optional(),
+	packageId: z.uuid().optional(),
 }).strict()
 
 export type PackageSource = z.infer<typeof packageSourceSchema>
@@ -139,10 +143,10 @@ export interface PackageCopies {
 	folderId: string | null
 }
 
-/** A listing's kind, by what it is taken from: one item is that item's kind; a folder or several items, a pack. */
+/** A listing's kind, by what it is taken from: one item is that item's kind; a folder, a package or several items, a pack. */
 export function listingKind(source: PackageSource) {
 	const counts = [source.characterIds?.length ?? 0, source.libraryIds?.length ?? 0, source.structureProfileIds?.length ?? 0]
-	if (source.folderId || counts.reduce((sum, count) => sum + count, 0) !== 1) return 'pack' as const
+	if (source.folderId || source.packageId || counts.reduce((sum, count) => sum + count, 0) !== 1) return 'pack' as const
 	return counts[0] ? 'character' as const : counts[1] ? 'library' as const : 'structureProfile' as const
 }
 
@@ -154,6 +158,21 @@ export const listingTextsSchema = z.object({
 	tags: z.array(z.string().trim().toLowerCase().min(1).max(30)).max(5, 'At most 5 tags').transform(tags => [...new Set(tags)]),
 	category: z.string().trim().min(1).max(40).nullable(),
 })
+
+const ids = (max: number) => z.array(z.uuid()).max(max).transform(list => [...new Set(list)])
+/** A Content Package's items (milestone 17): the member's own Characters, libraries and structure profiles, within a listing's limits. */
+export const packageItemsSchema = z.object({
+	characterIds: ids(PACKAGE_LIMITS.characters),
+	libraryIds: ids(PACKAGE_LIMITS.libraries),
+	structureProfileIds: ids(PACKAGE_LIMITS.structureProfiles),
+}).strict()
+export type PackageItems = z.infer<typeof packageItemsSchema>
+export const NO_PACKAGE_ITEMS: PackageItems = { characterIds: [], libraryIds: [], structureProfileIds: [] }
+
+/** A Content Package's texts while it is a draft: a listing's, but for the name, which is the package's own. */
+export const packageTextsSchema = listingTextsSchema.omit({ name: true })
+export type PackageTexts = z.infer<typeof packageTextsSchema>
+export const NO_PACKAGE_TEXTS: PackageTexts = { summary: '', description: '', tags: [], category: null }
 
 export const PUBLISHING_MODES = ['open', 'reviewed', 'off'] as const
 

@@ -123,6 +123,18 @@ export const adminListingsQuery = defineQueryOptions({
 	query: () => useRequestFetch()('/api/v1/admin/listings'),
 })
 
+/** The member's Content Packages, each with the items it still has. */
+export const packagesQuery = defineQueryOptions({
+	key: ['packages'],
+	query: () => useRequestFetch()('/api/v1/packages'),
+})
+
+/** One of the member's packages. */
+export const packageQuery = defineQueryOptions((id: string) => ({
+	key: ['packages', id],
+	query: () => useRequestFetch()(`/api/v1/packages/${id}`),
+}))
+
 /** The member's starred listings and their star lists. */
 export const myStarsQuery = defineQueryOptions({
 	key: ['me', 'stars'],

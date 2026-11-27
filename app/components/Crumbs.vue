@@ -21,14 +21,17 @@ interface Segment {
 const route = useRoute()
 const { loggedIn, user } = useUserSession()
 const area = computed(() => areaOf(route.path))
-/** The kind of thing open in Content (a library, a Character, a structure profile), for its siblings' dropdown. */
-const kind = computed(() => (['libraries', 'characters', 'structure-profiles'] as const).find(entry => route.path.startsWith(`/content/${entry}/`)))
+/** The kind of thing open in Content (a library, a Character, a structure profile, a package), for its siblings' dropdown. */
+const kind = computed(() => (['libraries', 'characters', 'structure-profiles', 'packages'] as const).find(entry => route.path.startsWith(`/content/${entry}/`)))
+/** The package an item was opened from (`?package=`), to lead back to. */
+const fromPackage = computed(() => typeof route.query.package === 'string' ? route.query.package : undefined)
 const { data: chats } = useQuery(() => ({ ...chatsQuery, enabled: import.meta.client && loggedIn.value && area.value === 'chat' }))
 const { data: folders } = useQuery(() => ({ ...foldersQuery, enabled: import.meta.client && loggedIn.value && area.value === 'chat' }))
 const { data: libraries } = useQuery(() => ({ ...librariesQuery, enabled: import.meta.client && kind.value === 'libraries' }))
 const { data: characters } = useQuery(() => ({ ...charactersQuery, enabled: import.meta.client && kind.value === 'characters' }))
 const { data: profiles } = useQuery(() => ({ ...structureProfilesQuery, enabled: import.meta.client && kind.value === 'structure-profiles' }))
-const siblings = computed<{ id: string, name: string }[] | undefined>(() => ({ 'libraries': libraries.value, 'characters': characters.value, 'structure-profiles': profiles.value, 'none': undefined })[kind.value ?? 'none'])
+const { data: packages } = useQuery(() => ({ ...packagesQuery, enabled: import.meta.client && (kind.value === 'packages' || !!fromPackage.value) }))
+const siblings = computed<{ id: string, name: string }[] | undefined>(() => ({ 'libraries': libraries.value, 'characters': characters.value, 'structure-profiles': profiles.value, 'packages': packages.value, 'none': undefined })[kind.value ?? 'none'])
 
 /** A folder and the folders it is in, outermost first, each a link to its page. */
 function folderPath(folderId: string | null | undefined): Segment[] {
@@ -61,16 +64,23 @@ const segments = computed<Segment[]>(() => {
 
 	const section = sectionOf(area.value, path)
 	if (!section) return trail
+	// An item opened from a package's Items: the trail leads back through that package.
+	const origin = fromPackage.value ? packages.value?.find(entry => entry.id === fromPackage.value) : undefined
+	const shown = origin ? sectionOf(area.value, '/content/packages')! : section
 	trail.push({
-		label: section.label,
-		to: section.to,
-		items: sectionsOf(area.value, role).map(other => ({ label: other.label, icon: other.icon, to: other.to, ...other === section && { color: 'primary' as const } })),
+		label: shown.label,
+		to: shown.to,
+		items: sectionsOf(area.value, role).map(other => ({ label: other.label, icon: other.icon, to: other.to, ...other === shown && { color: 'primary' as const } })),
 		hint: `pages of ${here.label}`,
 	})
+	if (origin) trail.push({ label: origin.name, to: `/content/packages/${origin.id}/items` })
 	// A page under the section's: what is open there, with the others of its kind when the browser has them.
 	if (path !== section.to) {
 		const others = siblings.value?.map(item => ({ label: item.name, icon: section.icon, to: `${section.to}/${item.id}`, ...item.id === route.params.id && { color: 'primary' as const } }))
 		trail.push({ label: props.current ?? '', items: others?.length ? others : undefined, hint: section.label.toLowerCase() })
+		// In a package's studio: which of its pages.
+		const page = kind.value === 'packages' ? PACKAGE_SECTIONS.find(entry => entry.path && path.endsWith(entry.path)) : undefined
+		if (page) trail.push({ label: page.label })
 	}
 	return trail
 })
