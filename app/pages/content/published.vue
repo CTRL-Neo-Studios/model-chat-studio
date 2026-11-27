@@ -21,7 +21,7 @@ const actions = (listing: Listing): DropdownMenuItem[][] => [
 <template>
 	<UDashboardPanel id="explore-mine" class="min-h-0">
 		<template #header>
-			<UDashboardNavbar title="Published" />
+			<PageNavbar />
 		</template>
 
 		<template #body>

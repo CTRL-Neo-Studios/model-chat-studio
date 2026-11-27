@@ -79,6 +79,7 @@ export default defineNuxtConfig({
 		'/libraries/**': { redirect: '/content/libraries/**' },
 		'/structure-profiles': { redirect: '/content/structure-profiles' },
 		'/shared': { redirect: '/' },
+		'/model-profiles': { redirect: '/settings/model-profiles' },
 	},
 
 	security: {

@@ -31,7 +31,7 @@ const openExplore = (query: Record<string, string>) => navigateTo({ path: '/cont
 <template>
 	<UDashboardPanel id="content" class="min-h-0">
 		<template #header>
-			<UDashboardNavbar title="Content" />
+			<PageNavbar />
 		</template>
 
 		<template #body>

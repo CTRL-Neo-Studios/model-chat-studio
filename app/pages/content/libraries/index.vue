@@ -73,11 +73,11 @@ useNewFromLink(create)
 <template>
 	<UDashboardPanel id="libraries" class="min-h-0">
 		<template #header>
-			<UDashboardNavbar title="Libraries">
+			<PageNavbar>
 				<template #right>
 					<UButton icon="i-lucide-plus" label="New library" @click="create" />
 				</template>
-			</UDashboardNavbar>
+			</PageNavbar>
 		</template>
 
 		<template #body>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const { loggedIn } = useUserSession()
+const { loggedIn, user } = useUserSession()
 const siteName = useRuntimeConfig().public.siteName as string || 'Chat'
 
 const sidebarOpen = ref(false)
@@ -51,6 +51,21 @@ const area = computed(() => areaOf(route.path))
 defineShortcuts({
 	meta_o: () => navigateTo('/'),
 })
+
+// The palette's links: a new chat, then a group per area the member may open, of its pages (each group stays
+// under the palette's 12 results a group; Review, in two areas, is listed once).
+const linkGroups = computed(() => [
+	{ id: 'links', label: 'Go to', items: [{ label: 'New chat', to: '/', icon: 'i-lucide-circle-plus', kbds: ['meta', 'o'] }] },
+	...(['content', 'settings', 'admin'] as const)
+		.filter(key => allowed(user.value?.role, AREAS[key].minRole))
+		.map(key => ({
+			id: `links-${key}`,
+			label: AREAS[key].label,
+			items: sectionsOf(key, user.value?.role)
+				.filter(section => key === 'content' || !AREAS.content.sections.some(other => other.to === section.to))
+				.map(section => ({ label: section.label, icon: section.icon, to: section.to })),
+		})),
+])
 </script>
 
 <template>
@@ -80,7 +95,7 @@ defineShortcuts({
 			<!-- One sidebar for every area, so its width and collapsed state carry across; what it holds is the area's. -->
 			<template #default="{ collapsed }">
 				<template v-if="loggedIn">
-					<SidebarContent v-if="area === 'content'" :collapsed="collapsed" />
+					<SidebarArea v-if="area !== 'chat'" :area="area" :collapsed="collapsed" />
 					<SidebarChat v-else :collapsed="collapsed" :chats="chats" @search="searchOpen = true" />
 				</template>
 			</template>
@@ -103,10 +118,7 @@ defineShortcuts({
 			v-if="loggedIn"
 			v-model:open="searchOpen"
 			placeholder="Search chats..."
-			:groups="[{
-				id: 'links',
-				items: [{ label: 'New chat', to: '/', icon: 'i-lucide-circle-plus', kbds: ['meta', 'o'] }],
-			}, ...groups]"
+			:groups="[...linkGroups, ...groups]"
 		/>
 
 		<div class="flex-1 flex m-4 lg:ml-0 rounded-lg ring ring-default bg-default/75 shadow-sm min-w-0 overflow-hidden">

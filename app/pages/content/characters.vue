@@ -126,13 +126,13 @@ useNewFromLink(create)
 <template>
 	<UDashboardPanel id="characters" class="min-h-0">
 		<template #header>
-			<UDashboardNavbar title="Characters">
+			<PageNavbar>
 				<template #right>
 					<input ref="picker" type="file" accept=".png,.json,image/png,application/json" class="hidden" @change="event => importCard((event.target as HTMLInputElement).files?.[0])">
 					<UButton icon="i-lucide-file-up" label="Import card" color="neutral" variant="outline" :loading="importing" :ui="{ label: 'hidden sm:inline' }" aria-label="Import card" @click="picker?.click()" />
 					<UButton v-if="canEdit" icon="i-lucide-plus" label="New Character" @click="create" />
 				</template>
-			</UDashboardNavbar>
+			</PageNavbar>
 		</template>
 
 		<template #body>

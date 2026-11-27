@@ -76,13 +76,13 @@ useNewFromLink(() => create(PROFILE_TEMPLATES[0]!))
 <template>
 	<UDashboardPanel id="structure-profiles" class="min-h-0">
 		<template #header>
-			<UDashboardNavbar title="Structure profiles">
+			<PageNavbar>
 				<template #right>
 					<UDropdownMenu v-if="canEdit" :items="newItems" :content="{ align: 'end' }">
 						<UButton icon="i-lucide-plus" label="New profile" trailing-icon="i-lucide-chevron-down" />
 					</UDropdownMenu>
 				</template>
-			</UDashboardNavbar>
+			</PageNavbar>
 		</template>
 
 		<template #body>

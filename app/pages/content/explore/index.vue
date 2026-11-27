@@ -36,7 +36,7 @@ const page = computed({ get: () => filters.value.page, set: value => setFilters(
 <template>
 	<UDashboardPanel id="explore" class="min-h-0">
 		<template #header>
-			<UDashboardNavbar title="Explore" />
+			<PageNavbar />
 		</template>
 
 		<template #body>

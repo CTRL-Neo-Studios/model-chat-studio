@@ -88,11 +88,7 @@ async function get() {
 <template>
 	<UDashboardPanel id="explore-listing" class="min-h-0">
 		<template #header>
-			<UDashboardNavbar :title="page?.listing.name ?? ''">
-				<template #leading>
-					<UButton icon="i-lucide-arrow-left" color="neutral" variant="ghost" to="/content/explore" aria-label="Explore" />
-				</template>
-			</UDashboardNavbar>
+			<PageNavbar :current="page?.listing.name" />
 		</template>
 
 		<template #body>

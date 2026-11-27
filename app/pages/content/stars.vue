@@ -46,11 +46,11 @@ const listActions = (list: List): DropdownMenuItem[][] => [[
 <template>
 	<UDashboardPanel id="explore-stars" class="min-h-0">
 		<template #header>
-			<UDashboardNavbar title="Your stars">
+			<PageNavbar>
 				<template #right>
 					<UButton icon="i-lucide-list-plus" label="New list" color="neutral" variant="subtle" @click="createList" />
 				</template>
-			</UDashboardNavbar>
+			</PageNavbar>
 		</template>
 
 		<template #body>
