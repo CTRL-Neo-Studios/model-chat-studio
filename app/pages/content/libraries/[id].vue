@@ -24,7 +24,7 @@ const canEditFiles = computed(() => library.value?.role === 'owner' || library.v
 		<template #header>
 			<UDashboardNavbar :title="library?.name ?? ''">
 				<template #leading>
-					<UButton icon="i-lucide-arrow-left" color="neutral" variant="ghost" to="/libraries" aria-label="All libraries" />
+					<UButton icon="i-lucide-arrow-left" color="neutral" variant="ghost" to="/content/libraries" aria-label="All libraries" />
 				</template>
 				<template #right>
 					<LibraryLorebook v-if="library" :library-id="libraryId" :lorebook="library.lorebook" :can-manage="isOwner" />

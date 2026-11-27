@@ -31,7 +31,7 @@ async function create() {
 	const library = await act<Library>('/api/v1/libraries', { method: 'POST', body: { name } })
 	if (!library) return
 	queryCache.setQueryData(librariesQuery.key, list => [{ ...library, role: 'owner' as const }, ...(list ?? [])])
-	await navigateTo(`/libraries/${library.id}`)
+	await navigateTo(`/content/libraries/${library.id}`)
 }
 
 // Renames and deletions show at once; the list comes back as it was if the server refuses.
@@ -66,6 +66,8 @@ const actions = (library: Library): DropdownMenuItem[][] => library.role === 'ow
 			[{ label: 'Delete', icon: 'i-lucide-trash', color: 'error', onSelect: () => remove(library) }],
 		]
 	: [[{ label: 'Leave library', icon: 'i-lucide-log-out', color: 'error', onSelect: () => leave(library) }]]
+
+useNewFromLink(create)
 </script>
 
 <template>
@@ -101,7 +103,7 @@ const actions = (library: Library): DropdownMenuItem[][] => library.role === 'ow
 						<div class="flex items-center gap-2">
 							<UIcon name="i-lucide-library-big" class="size-5 text-muted shrink-0" />
 							<!-- The link covers the card; the buttons sit above it. -->
-							<NuxtLink :to="`/libraries/${library.id}`" class="font-medium text-highlighted truncate flex-1 outline-none after:absolute after:inset-0">
+							<NuxtLink :to="`/content/libraries/${library.id}`" class="font-medium text-highlighted truncate flex-1 outline-none after:absolute after:inset-0">
 								{{ library.name }}
 							</NuxtLink>
 							<div class="relative flex items-center">

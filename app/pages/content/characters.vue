@@ -119,6 +119,8 @@ function actions(character: Character): DropdownMenuItem[][] {
 		{ label: 'Export card (JSON)', icon: 'i-lucide-file-down', onSelect: () => exportCard(character, 'json') },
 	], ...(canEdit.value ? [[{ label: 'Delete', icon: 'i-lucide-trash', color: 'error' as const, onSelect: () => remove(character) }]] : [])]
 }
+
+useNewFromLink(create)
 </script>
 
 <template>

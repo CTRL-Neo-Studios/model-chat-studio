@@ -127,7 +127,7 @@ function save() {
 								<USelectMenu v-model="draft.libraryIds" :items="libraryItems" value-key="value" multiple placeholder="No library" icon="i-lucide-library-big" class="w-full" />
 							</UFormField>
 							<div v-if="chosenLibraries.length" class="flex flex-wrap gap-2">
-								<UButton v-for="library in chosenLibraries" :key="library.id" :to="`/libraries/${library.id}`" target="_blank" :label="library.name" icon="i-lucide-library-big" trailing-icon="i-lucide-external-link" color="neutral" variant="subtle" size="xs" />
+								<UButton v-for="library in chosenLibraries" :key="library.id" :to="`/content/libraries/${library.id}`" target="_blank" :label="library.name" icon="i-lucide-library-big" trailing-icon="i-lucide-external-link" color="neutral" variant="subtle" size="xs" />
 							</div>
 						</div>
 					</template>

@@ -467,7 +467,7 @@ onMounted(() => {
 				<UButton
 					v-for="library in libraries"
 					:key="library.id"
-					:to="library.role ? `/libraries/${library.id}` : undefined"
+					:to="library.role ? `/content/libraries/${library.id}` : undefined"
 					:label="library.name"
 					icon="i-lucide-library-big"
 					color="neutral"

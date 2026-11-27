@@ -1,6 +1,5 @@
 <script setup lang="ts">
 const { loggedIn } = useUserSession()
-const { importChat } = useChatActions()
 const siteName = useRuntimeConfig().public.siteName as string || 'Chat'
 
 const sidebarOpen = ref(false)
@@ -9,9 +8,6 @@ const searchOpen = ref(false)
 // Guests only ever see a chat shared by link, so they have no list.
 const { data: chatList } = useQuery(() => ({ ...chatsQuery, enabled: import.meta.client && loggedIn.value }))
 const chats = computed(() => loggedIn.value ? (chatList.value ?? []).map(toUIChat) : [])
-// Beside "Explore": the member's listings rejected or removed, and for reviewers what waits for them.
-const { data: exploreCounts } = useQuery(() => ({ ...exploreCountsQuery, enabled: import.meta.client && loggedIn.value }))
-const exploreCount = computed(() => (exploreCounts.value?.attention ?? 0) + (exploreCounts.value?.waiting ?? 0))
 
 const prefetch = usePrefetch()
 
@@ -49,6 +45,9 @@ onMounted(() => watch(() => route.path === '/temporary', (temporary) => {
 	}
 }, { immediate: true }))
 
+// Which sidebar shows: the area of the page (`areaOf`).
+const area = computed(() => areaOf(route.path))
+
 defineShortcuts({
 	meta_o: () => navigateTo('/'),
 })
@@ -78,62 +77,12 @@ defineShortcuts({
 				<UDashboardSidebarCollapse class="ms-auto" />
 			</template>
 
+			<!-- One sidebar for every area, so its width and collapsed state carry across; what it holds is the area's. -->
 			<template #default="{ collapsed }">
-				<UNavigationMenu
-					v-if="loggedIn"
-					:items="[{
-						label: 'New chat',
-						to: '/',
-						kbds: ['meta', 'o'],
-						icon: 'i-lucide-circle-plus',
-					}, {
-						label: 'Temporary chat',
-						to: '/temporary',
-						icon: 'i-lucide-ghost',
-					}, {
-						label: 'Import chat…',
-						icon: 'i-lucide-file-up',
-						onSelect: () => importChat(),
-					}, {
-						label: 'Libraries',
-						to: '/libraries',
-						icon: 'i-lucide-library-big',
-					}, {
-						label: 'Search',
-						icon: 'i-lucide-search',
-						kbds: ['meta', 'k'],
-						onSelect: () => {
-							searchOpen = true
-						},
-					}, {
-						label: 'Shared with me',
-						to: '/shared',
-						icon: 'i-lucide-users',
-					}, {
-						label: 'Explore',
-						to: '/explore',
-						icon: 'i-lucide-telescope',
-						count: exploreCount,
-					}]"
-					:collapsed="collapsed"
-					orientation="vertical"
-				>
-					<template #item-trailing="{ item }">
-						<div v-if="item.kbds?.length" class="flex items-center gap-px opacity-0 group-hover:opacity-100 transition-opacity">
-							<UKbd
-								v-for="kbd in item.kbds"
-								:key="kbd"
-								:value="kbd"
-								size="sm"
-								variant="soft"
-								class="bg-accented/50"
-							/>
-						</div>
-						<UBadge v-else-if="item.count" :label="String(item.count)" size="sm" variant="subtle" :aria-label="`${item.count} on Explore need you`" />
-					</template>
-				</UNavigationMenu>
-
-				<SidebarChats v-if="loggedIn && !collapsed" :chats="chats" />
+				<template v-if="loggedIn">
+					<SidebarContent v-if="area === 'content'" :collapsed="collapsed" />
+					<SidebarChat v-else :collapsed="collapsed" :chats="chats" @search="searchOpen = true" />
+				</template>
 			</template>
 
 			<template #footer="{ collapsed }">

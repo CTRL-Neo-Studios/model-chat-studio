@@ -69,6 +69,16 @@ export default defineNuxtConfig({
 		// nuxt-auth-utils clears the session with a DELETE that carries no CSRF token. Not `csurf: false`:
 		// Nitro v3 reads a `false` rule as "no rule here", so nuxt-csurf would never see it.
 		'/api/_auth/session': { csurf: { enabled: false } },
+		// Pages that moved under `/content` (milestone 16); old links and bookmarks land on the new page.
+		'/explore': { redirect: '/content/explore' },
+		'/explore/stars': { redirect: '/content/stars' },
+		'/explore/mine': { redirect: '/content/published' },
+		'/explore/**': { redirect: '/content/explore/**' },
+		'/characters': { redirect: '/content/characters' },
+		'/libraries': { redirect: '/content/libraries' },
+		'/libraries/**': { redirect: '/content/libraries/**' },
+		'/structure-profiles': { redirect: '/content/structure-profiles' },
+		'/shared': { redirect: '/' },
 	},
 
 	security: {

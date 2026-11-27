@@ -42,7 +42,7 @@ export function useListingActions() {
 	const confirm = overlay.create(LazyModalConfirm)
 	// The publisher's list, and what Explore shows (the grid, the listing's page, the counts).
 	const refresh = () => Promise.all([queryCache.invalidateQueries({ key: myListingsQuery.key }), queryCache.invalidateQueries({ key: ['explore'] })])
-	const yours = [{ label: 'Your listings', to: '/explore/mine' }]
+	const yours = [{ label: 'Your listings', to: '/content/published' }]
 
 	/** "Publish to Explore…": the texts, what it holds and leaves out, then a new listing. */
 	async function publish(source: PackageSource, name: string) {
@@ -105,7 +105,7 @@ export function useListingActions() {
 	function publishActions(source: PackageSource, name: string): DropdownMenuItem[] {
 		const listing = listingOf(source)
 		if (!listing) return [{ label: 'Publish to Explore…', icon: 'i-lucide-telescope', onSelect: () => publish(source, name) }]
-		return [{ label: 'Open on Explore', icon: 'i-lucide-telescope', to: `/explore/${listing.id}` }, ...listingActions(listing)]
+		return [{ label: 'Open on Explore', icon: 'i-lucide-telescope', to: `/content/explore/${listing.id}` }, ...listingActions(listing)]
 	}
 
 	return { publish, update, setPublished, remove, listingActions, publishActions }

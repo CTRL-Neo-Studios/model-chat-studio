@@ -39,7 +39,7 @@ async function decide(reportId: string, remove: boolean, reported?: string) {
 				<div class="flex items-center gap-3 min-w-0">
 					<UIcon :name="LISTING_KINDS[entry.kind].icon" class="size-5 text-muted shrink-0" />
 					<!-- The link covers the row. -->
-					<NuxtLink :to="{ path: `/explore/${entry.listingId}`, query: { version: entry.versionId } }" class="font-medium text-highlighted truncate flex-1 outline-none after:absolute after:inset-0">
+					<NuxtLink :to="{ path: `/content/explore/${entry.listingId}`, query: { version: entry.versionId } }" class="font-medium text-highlighted truncate flex-1 outline-none after:absolute after:inset-0">
 						{{ entry.name }}
 					</NuxtLink>
 					<UBadge :label="entry.update ? `Update, version ${entry.number}` : 'New listing'" :color="entry.update ? 'neutral' : 'info'" variant="subtle" size="sm" />
@@ -69,7 +69,7 @@ async function decide(reportId: string, remove: boolean, reported?: string) {
 				<UIcon :name="LISTING_KINDS[entry.kind].icon" class="size-5 text-muted shrink-0 mt-0.5" />
 				<div class="flex-1 min-w-0 flex flex-col gap-1">
 					<div class="flex items-center gap-2 min-w-0">
-						<ULink :to="`/explore/${entry.listingId}`" class="font-medium text-highlighted truncate">
+						<ULink :to="`/content/explore/${entry.listingId}`" class="font-medium text-highlighted truncate">
 							{{ entry.name }}
 						</ULink>
 						<UBadge v-if="entry.status !== 'listed'" :label="entry.status === 'removed' ? 'Removed' : 'Unpublished'" color="warning" variant="subtle" size="sm" />

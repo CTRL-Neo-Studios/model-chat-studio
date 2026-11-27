@@ -30,7 +30,7 @@ const emit = defineEmits<{ tag: [tag: string] }>()
 				<UIcon :name="LISTING_KINDS[listing.kind].icon" class="size-4 text-muted" />
 			</div>
 			<!-- The link covers the card. -->
-			<NuxtLink v-if="listing.available" :to="`/explore/${listing.id}`" class="font-medium text-highlighted truncate flex-1 outline-none after:absolute after:inset-0">
+			<NuxtLink v-if="listing.available" :to="`/content/explore/${listing.id}`" class="font-medium text-highlighted truncate flex-1 outline-none after:absolute after:inset-0">
 				{{ listing.name }}
 			</NuxtLink>
 			<span v-else class="font-medium text-muted truncate flex-1">{{ listing.name }}</span>

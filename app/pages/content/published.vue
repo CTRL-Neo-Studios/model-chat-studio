@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DropdownMenuItem } from '@nuxt/ui'
 
-useHead({ title: 'Your listings' })
+useHead({ title: 'Published' })
 
 const { data, isPending } = useQuery(myListingsQuery)
 const listings = computed(() => data.value ?? [])
@@ -21,7 +21,7 @@ const actions = (listing: Listing): DropdownMenuItem[][] => [
 <template>
 	<UDashboardPanel id="explore-mine" class="min-h-0">
 		<template #header>
-			<UDashboardNavbar title="Your listings" />
+			<UDashboardNavbar title="Published" />
 		</template>
 
 		<template #body>
@@ -43,7 +43,7 @@ const actions = (listing: Listing): DropdownMenuItem[][] => [
 						<div class="flex items-center gap-3">
 							<UIcon :name="LISTING_KINDS[listing.kind].icon" class="size-5 text-muted shrink-0" />
 							<div class="flex-1 min-w-0">
-								<NuxtLink :to="`/explore/${listing.id}`" class="block font-medium text-highlighted truncate hover:text-primary">
+								<NuxtLink :to="`/content/explore/${listing.id}`" class="block font-medium text-highlighted truncate hover:text-primary">
 									{{ listing.name }}
 								</NuxtLink>
 								<p class="text-xs text-muted truncate">
