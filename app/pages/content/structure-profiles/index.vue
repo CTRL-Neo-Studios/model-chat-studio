@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DropdownMenuItem } from '@nuxt/ui'
 import { PROFILE_TEMPLATES, type ProfileBlock } from '#shared/utils/structureProfile'
-import { LazyModalConfirm, LazyStructureProfileEditor } from '#components'
+import { LazyModalConfirm } from '#components'
 
 useHead({ title: 'Structure profiles' })
 
@@ -23,25 +23,12 @@ const tabs = [
 const shown = computed(() => pinnedFirst('structureProfile', profiles.value.filter(profile => (profile.ownerId === null) === (tab.value === 'instance'))))
 const canEdit = computed(() => tab.value === 'mine' || isAdmin.value)
 
-const editor = overlay.create(LazyStructureProfileEditor)
 const confirm = overlay.create(LazyModalConfirm)
 const { publishActions } = useListingActions()
 
-async function create(template: (typeof PROFILE_TEMPLATES)[number]) {
-	const blocks = template.blocks.map(block => ({ ...block, id: crypto.randomUUID() }) as ProfileBlock)
-	const draft = await editor.open({ title: 'New structure profile', profile: { name: template.name, blocks } }).result
-	if (!draft) return
-	const profile = await act<Profile>('/api/v1/structure-profiles', { method: 'POST', body: { ...draft, instance: tab.value === 'instance' || undefined }, success: 'Profile added' })
-	if (profile) queryCache.setQueryData(structureProfilesQuery.key, [...profiles.value, profile])
-}
+// A new profile is made on its own page, from a template; in the Instance tab, an admin's instance one.
+const create = (template: (typeof PROFILE_TEMPLATES)[number]) => navigateTo({ path: '/content/structure-profiles/new', query: { template: template.label, ...tab.value === 'instance' && { instance: '1' } } })
 const newItems = computed<DropdownMenuItem[]>(() => PROFILE_TEMPLATES.map(template => ({ label: template.label, onSelect: () => create(template) })))
-
-async function edit(profile: Profile) {
-	const draft = await editor.open({ title: 'Edit structure profile', profile: { name: profile.name, blocks: profile.blocks } }).result
-	if (!draft) return
-	const saved = await act<Profile>(`/api/v1/structure-profiles/${profile.id}`, { method: 'PATCH', body: { ...draft }, success: 'Profile saved' })
-	if (saved) queryCache.setQueryData(structureProfilesQuery.key, profiles.value.map(entry => entry.id === profile.id ? saved : entry))
-}
 
 async function copy(profile: Profile, instance: boolean) {
 	const blocks = profile.blocks.map(block => ({ ...block, id: crypto.randomUUID() }))
@@ -60,7 +47,7 @@ async function remove(profile: Profile) {
 function actions(profile: Profile): DropdownMenuItem[][] {
 	const mine = profile.ownerId !== null
 	return [[
-		...(canEdit.value ? [{ label: 'Edit', icon: 'i-lucide-pencil', onSelect: () => edit(profile) }] : []),
+		...(canEdit.value ? [{ label: 'Edit', icon: 'i-lucide-pencil', to: `/content/structure-profiles/${profile.id}` }] : []),
 		...(mine
 			? isAdmin.value ? [{ label: 'Publish for everyone', icon: 'i-lucide-share', onSelect: () => copy(profile, true) }] : []
 			: [{ label: 'Copy to my profiles', icon: 'i-lucide-copy', onSelect: () => copy(profile, false) }]),
@@ -102,15 +89,20 @@ useNewFromLink(() => create(PROFILE_TEMPLATES[0]!))
 					:description="tab === 'mine' ? 'Start from a blank profile or one of the examples.' : isAdmin ? 'Publish a profile for every member.' : 'An admin can publish profiles for everyone.'"
 				/>
 				<ul v-else class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-					<li v-for="profile in shown" :key="profile.id" class="flex flex-col gap-2 rounded-md border border-default p-4">
+					<li v-for="profile in shown" :key="profile.id" class="relative flex flex-col gap-2 rounded-md border border-default p-4 hover:bg-elevated/50 has-focus-visible:ring-2 has-focus-visible:ring-primary">
 						<div class="flex items-center gap-2">
 							<UIcon name="i-lucide-layers" class="size-5 text-muted shrink-0" />
-							<span class="font-medium text-highlighted truncate flex-1">{{ profile.name }}</span>
+							<!-- The link covers the card; the buttons sit above it. -->
+							<NuxtLink :to="`/content/structure-profiles/${profile.id}`" class="font-medium text-highlighted truncate flex-1 outline-none after:absolute after:inset-0">
+								{{ profile.name }}
+							</NuxtLink>
 							<PublishedBadge v-if="profile.ownerId !== null" :source="{ structureProfileIds: [profile.id] }" />
-							<PinButton kind="structureProfile" :target-id="profile.id" />
-							<UDropdownMenu :items="actions(profile)" :content="{ align: 'end' }">
-								<UButton icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="sm" aria-label="Profile actions" />
-							</UDropdownMenu>
+							<div class="relative flex items-center">
+								<PinButton kind="structureProfile" :target-id="profile.id" />
+								<UDropdownMenu :items="actions(profile)" :content="{ align: 'end' }">
+									<UButton icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="sm" aria-label="Profile actions" />
+								</UDropdownMenu>
+							</div>
 						</div>
 						<p class="text-sm text-muted line-clamp-3">
 							{{ summary(profile.blocks) }}

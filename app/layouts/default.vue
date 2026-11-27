@@ -45,8 +45,8 @@ onMounted(() => watch(() => route.path === '/temporary', (temporary) => {
 	}
 }, { immediate: true }))
 
-// Which sidebar shows: the area of the page (`areaOf`).
-const area = computed(() => areaOf(route.path))
+// Which sidebar shows: the area's, or inside a library or a Character its own (`sidebarOf`).
+const sidebar = computed(() => sidebarOf(route.path))
 
 defineShortcuts({
 	meta_o: () => navigateTo('/'),
@@ -95,7 +95,9 @@ const linkGroups = computed(() => [
 			<!-- One sidebar for every area, so its width and collapsed state carry across; what it holds is the area's. -->
 			<template #default="{ collapsed }">
 				<template v-if="loggedIn">
-					<SidebarArea v-if="area !== 'chat'" :area="area" :collapsed="collapsed" />
+					<SidebarLibrary v-if="sidebar === 'library'" :collapsed="collapsed" />
+					<SidebarCharacter v-else-if="sidebar === 'character'" :collapsed="collapsed" />
+					<SidebarArea v-else-if="sidebar !== 'chat'" :area="sidebar" :collapsed="collapsed" />
 					<SidebarChat v-else :collapsed="collapsed" :chats="chats" @search="searchOpen = true" />
 				</template>
 			</template>

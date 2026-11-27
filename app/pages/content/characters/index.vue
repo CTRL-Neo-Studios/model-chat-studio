@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DropdownMenuItem } from '@nuxt/ui'
 import { type CharacterFields, characterAvatarUrl } from '#shared/utils/character'
-import { LazyCharacterEditor, LazyModalConfirm, LazyModalImportReport } from '#components'
+import { LazyModalConfirm, LazyModalImportReport } from '#components'
 
 useHead({ title: 'Characters' })
 
@@ -23,11 +23,9 @@ const tabs = [
 const shown = computed(() => pinnedFirst('character', characters.value.filter(character => (character.ownerId === null) === (tab.value === 'instance'))))
 const canEdit = computed(() => tab.value === 'mine' || isAdmin.value)
 
-const editor = overlay.create(LazyCharacterEditor)
 const confirm = overlay.create(LazyModalConfirm)
 const { publishActions } = useListingActions()
 const fields = ({ name, color, instructions, libraryIds, greetings, examples, note, creatorNotes, tags }: Character): CharacterFields => ({ name, color, instructions, libraryIds, greetings, examples, note, creatorNotes, tags })
-const blank: CharacterFields = { name: '', color: null, instructions: '', libraryIds: [], greetings: [], examples: '', note: '', creatorNotes: '', tags: [] }
 const store = (saved: Character) => queryCache.setQueryData(charactersQuery.key, characters.value.some(entry => entry.id === saved.id) ? characters.value.map(entry => entry.id === saved.id ? saved : entry) : [...characters.value, saved])
 
 // "Import card": a PNG with a card in it, or a card's JSON, becomes a Character of yours (under "Mine").
@@ -44,36 +42,13 @@ async function importCard(file: File | undefined) {
 	importing.value = false
 	if (!result) return
 	store(result.character)
-	tab.value = 'mine'
+	// The new Character opens on its page, with what the card could not carry.
+	await navigateTo(`/content/characters/${result.character.id}`)
 	if (result.report.length) reportModal.open({ name: result.character.name, report: result.report })
 }
 
-/** Sends an avatar chosen in the editor once the Character exists: a new image, or `null` to remove it. */
-async function sendAvatar(character: Character, avatar: File | null | undefined) {
-	if (avatar === undefined) return
-	const form = new FormData()
-	if (avatar) form.append('file', avatar)
-	const saved = await act<Character>(`/api/v1/characters/${character.id}/avatar`, avatar ? { method: 'PUT', body: form } : { method: 'DELETE' })
-	if (saved) store(saved)
-}
-
-async function create() {
-	const result = await editor.open({ title: 'New Character', character: blank }).result
-	if (!result) return
-	const created = await act<Character>('/api/v1/characters', { method: 'POST', body: { ...result.fields, instance: tab.value === 'instance' || undefined }, success: 'Character added' })
-	if (!created) return
-	store(created)
-	await sendAvatar(created, result.avatar)
-}
-
-async function edit(character: Character) {
-	const result = await editor.open({ title: 'Edit Character', character: fields(character), avatar: characterAvatarUrl(character) }).result
-	if (!result) return
-	const saved = await act<Character>(`/api/v1/characters/${character.id}`, { method: 'PATCH', body: result.fields, success: 'Character saved' })
-	if (!saved) return
-	store(saved)
-	await sendAvatar(saved, result.avatar)
-}
+// A new Character is made on its own page; in the Instance tab, an admin's instance one.
+const create = () => navigateTo({ path: '/content/characters/new', query: tab.value === 'instance' ? { instance: '1' } : {} })
 
 async function copy(character: Character, instance: boolean) {
 	// A copy leaves out libraries (the new owner may not read them) and the avatar.
@@ -109,7 +84,7 @@ async function exportCard(character: Character, format: 'json' | 'png') {
 function actions(character: Character): DropdownMenuItem[][] {
 	const mine = character.ownerId !== null
 	return [[
-		...(canEdit.value ? [{ label: 'Edit', icon: 'i-lucide-pencil', onSelect: () => edit(character) }] : []),
+		...(canEdit.value ? [{ label: 'Edit', icon: 'i-lucide-pencil', to: `/content/characters/${character.id}` }] : []),
 		...(mine
 			? isAdmin.value ? [{ label: 'Publish for everyone', icon: 'i-lucide-share', onSelect: () => copy(character, true) }] : []
 			: [{ label: 'Copy to my Characters', icon: 'i-lucide-copy', onSelect: () => copy(character, false) }]),
@@ -154,15 +129,20 @@ useNewFromLink(create)
 					:actions="canEdit ? [{ label: 'New Character', icon: 'i-lucide-plus', onClick: create }] : undefined"
 				/>
 				<ul v-else class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-					<li v-for="character in shown" :key="character.id" class="flex flex-col gap-2 rounded-md border border-default p-4">
+					<li v-for="character in shown" :key="character.id" class="relative flex flex-col gap-2 rounded-md border border-default p-4 hover:bg-elevated/50 has-focus-visible:ring-2 has-focus-visible:ring-primary">
 						<div class="flex items-center gap-2">
 							<LaneDot :color="character.color" :avatar="characterAvatarUrl(character)" avatar-class="size-8" dot-class="size-2.5" />
-							<span class="font-medium text-highlighted truncate flex-1">{{ character.name }}</span>
+							<!-- The link covers the card; the buttons sit above it. -->
+							<NuxtLink :to="`/content/characters/${character.id}`" class="font-medium text-highlighted truncate flex-1 outline-none after:absolute after:inset-0">
+								{{ character.name }}
+							</NuxtLink>
 							<PublishedBadge v-if="character.ownerId !== null" :source="{ characterIds: [character.id] }" />
-							<PinButton kind="character" :target-id="character.id" />
-							<UDropdownMenu :items="actions(character)" :content="{ align: 'end' }">
-								<UButton icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="sm" aria-label="Character actions" />
-							</UDropdownMenu>
+							<div class="relative flex items-center">
+								<PinButton kind="character" :target-id="character.id" />
+								<UDropdownMenu :items="actions(character)" :content="{ align: 'end' }">
+									<UButton icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="sm" aria-label="Character actions" />
+								</UDropdownMenu>
+							</div>
 						</div>
 						<p class="text-sm text-muted line-clamp-3" :class="!character.instructions && 'italic'">
 							{{ character.instructions || 'No instructions: the default ones apply.' }}

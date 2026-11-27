@@ -64,7 +64,7 @@ export const AREAS: Record<Area, { label: string, icon: string, to: string, minR
 	},
 }
 
-/** The area a page belongs to, by its address. The only place that decides which sidebar shows. */
+/** The area a page belongs to, by its address. */
 export function areaOf(path: string): Area {
 	for (const area of ['content', 'settings', 'admin'] as const) {
 		const root = area === 'admin' ? '/admin' : AREAS[area].to
@@ -72,6 +72,26 @@ export function areaOf(path: string): Area {
 	}
 	return 'chat'
 }
+
+/** What the sidebar shows: inside a library or a Character, that thing's own; elsewhere, the area's. The only place that decides it. */
+export type SidebarKind = Area | 'library' | 'character'
+export function sidebarOf(path: string): SidebarKind {
+	if (/^\/content\/libraries\/[^/]+$/.test(path)) return 'library'
+	if (/^\/content\/characters\/[^/]+$/.test(path)) return 'character'
+	return areaOf(path)
+}
+
+/** A Character page's sections (`?section=`), listed by its sidebar. */
+export const CHARACTER_SECTIONS = [
+	{ value: 'instructions', label: 'Instructions', icon: 'i-lucide-scroll-text' },
+	{ value: 'greetings', label: 'Greetings', icon: 'i-lucide-message-circle' },
+	{ value: 'examples', label: 'Examples and note', icon: 'i-lucide-quote' },
+	{ value: 'lorebook', label: 'Lorebook', icon: 'i-lucide-book-open-text' },
+	{ value: 'about', label: 'About', icon: 'i-lucide-info' },
+] as const
+export type CharacterSection = (typeof CHARACTER_SECTIONS)[number]['value']
+/** The section asked for in the address, or the first. */
+export const characterSectionOf = (value: unknown): CharacterSection => CHARACTER_SECTIONS.find(section => section.value === value)?.value ?? 'instructions'
 
 /** Whether `path` is the page `to` or one under it, for a sidebar row that stays lit on its sub-pages. */
 export const isUnder = (path: string, to: string) => path === to || path.startsWith(`${to}/`)

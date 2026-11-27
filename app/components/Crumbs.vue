@@ -21,10 +21,14 @@ interface Segment {
 const route = useRoute()
 const { loggedIn, user } = useUserSession()
 const area = computed(() => areaOf(route.path))
-const inLibraries = computed(() => route.path.startsWith('/content/libraries/'))
+/** The kind of thing open in Content (a library, a Character, a structure profile), for its siblings' dropdown. */
+const kind = computed(() => (['libraries', 'characters', 'structure-profiles'] as const).find(entry => route.path.startsWith(`/content/${entry}/`)))
 const { data: chats } = useQuery(() => ({ ...chatsQuery, enabled: import.meta.client && loggedIn.value && area.value === 'chat' }))
 const { data: folders } = useQuery(() => ({ ...foldersQuery, enabled: import.meta.client && loggedIn.value && area.value === 'chat' }))
-const { data: libraries } = useQuery(() => ({ ...librariesQuery, enabled: import.meta.client && inLibraries.value }))
+const { data: libraries } = useQuery(() => ({ ...librariesQuery, enabled: import.meta.client && kind.value === 'libraries' }))
+const { data: characters } = useQuery(() => ({ ...charactersQuery, enabled: import.meta.client && kind.value === 'characters' }))
+const { data: profiles } = useQuery(() => ({ ...structureProfilesQuery, enabled: import.meta.client && kind.value === 'structure-profiles' }))
+const siblings = computed<{ id: string, name: string }[] | undefined>(() => ({ 'libraries': libraries.value, 'characters': characters.value, 'structure-profiles': profiles.value, 'none': undefined })[kind.value ?? 'none'])
 
 /** A folder and the folders it is in, outermost first, each a link to its page. */
 function folderPath(folderId: string | null | undefined): Segment[] {
@@ -65,8 +69,8 @@ const segments = computed<Segment[]>(() => {
 	})
 	// A page under the section's: what is open there, with the others of its kind when the browser has them.
 	if (path !== section.to) {
-		const others = inLibraries.value ? libraries.value?.map(library => ({ label: library.name, icon: 'i-lucide-library-big', to: `/content/libraries/${library.id}`, ...library.id === route.params.id && { color: 'primary' as const } })) : undefined
-		trail.push({ label: props.current ?? '', items: others?.length ? others : undefined, hint: 'libraries' })
+		const others = siblings.value?.map(item => ({ label: item.name, icon: section.icon, to: `${section.to}/${item.id}`, ...item.id === route.params.id && { color: 'primary' as const } }))
+		trail.push({ label: props.current ?? '', items: others?.length ? others : undefined, hint: section.label.toLowerCase() })
 	}
 	return trail
 })

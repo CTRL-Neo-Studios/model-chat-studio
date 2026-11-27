@@ -1,27 +1,69 @@
 <script setup lang="ts">
 import type { DropdownMenuItem } from '@nuxt/ui'
-import type { ProfileBlock } from '#shared/utils/structureProfile'
+import { PROFILE_TEMPLATES, type ProfileBlock } from '#shared/utils/structureProfile'
+
+// One structure profile, edited on its page; `new` makes one from a template (`?template=` its label; `?instance=1`:
+// an admin's instance profile). Keyed by the address, so opening another profile starts afresh.
+definePageMeta({ key: route => route.path })
 
 interface Draft { name: string, blocks: ProfileBlock[] }
 
-const props = defineProps<{
-	title: string
-	profile: Draft
-}>()
+const route = useRoute()
+const creating = route.params.id === 'new'
+const act = useApiAction()
+const queryCache = useQueryCache()
+const { user } = useUserSession()
+const { data: profiles, isPending } = useQuery(structureProfilesQuery)
+type Profile = NonNullable<typeof profiles.value>[number]
+const profile = computed(() => profiles.value?.find(entry => entry.id === route.params.id))
+useHead({ title: () => profile.value?.name ?? (creating ? 'New structure profile' : 'Structure profile') })
 
-/** The edited profile, or nothing when cancelled. */
-const emit = defineEmits<{ close: [profile?: Draft] }>()
-
-const draft = ref<Draft>(structuredClone(toRaw(props.profile)))
-const valid = computed(() => !!draft.value.name.trim() && draft.value.blocks.length <= 30)
+const instance = computed(() => creating ? route.query.instance === '1' : profile.value?.ownerId === null)
+const canEdit = computed(() => !instance.value || user.value?.role === 'admin')
 
 const newId = () => crypto.randomUUID()
+function fromTemplate(): Draft {
+	const template = PROFILE_TEMPLATES.find(entry => entry.label === route.query.template) ?? PROFILE_TEMPLATES[0]!
+	return { name: template.name, blocks: template.blocks.map(block => ({ ...block, id: newId() }) as ProfileBlock) }
+}
+
+// The draft, and the profile as last saved, to tell what changed.
+const draft = ref<Draft | undefined>(creating ? fromTemplate() : undefined)
+// A new profile starts unsaved (nothing saved to match), so leaving it asks; saving clears that.
+const saved = ref('')
+watch(profile, (value) => {
+	if (draft.value || !value) return
+	draft.value = structuredClone({ name: value.name, blocks: value.blocks })
+	saved.value = JSON.stringify(draft.value)
+}, { immediate: true })
+
+const dirty = computed(() => !!draft.value && JSON.stringify(draft.value) !== saved.value)
+const valid = computed(() => !!draft.value?.name.trim() && draft.value.blocks.length <= 30)
+useUnsavedGuard(() => dirty.value)
+
+const saving = ref(false)
+async function save() {
+	if (!draft.value || !valid.value) return
+	const body = { ...draft.value, name: draft.value.name.trim() }
+	saving.value = true
+	const result = creating
+		? await act<Profile>('/api/v1/structure-profiles', { method: 'POST', body: { ...body, instance: instance.value || undefined }, success: 'Profile added' })
+		: await act<Profile>(`/api/v1/structure-profiles/${route.params.id}`, { method: 'PATCH', body, success: 'Profile saved' })
+	if (result) {
+		queryCache.setQueryData(structureProfilesQuery.key, (list = []) => list.some(entry => entry.id === result.id) ? list.map(entry => entry.id === result.id ? result : entry) : [...list, result])
+		draft.value = body
+		saved.value = JSON.stringify(body)
+		if (creating) await navigateTo(`/content/structure-profiles/${result.id}`, { replace: true })
+	}
+	saving.value = false
+}
+
 const roles = [
 	{ label: 'System', value: 'system' },
 	{ label: 'User', value: 'user' },
 	{ label: 'Assistant', value: 'assistant' },
 ]
-const has = (kind: ProfileBlock['kind']) => draft.value.blocks.some(block => block.kind === kind)
+const has = (kind: ProfileBlock['kind']) => !!draft.value?.blocks.some(block => block.kind === kind)
 const addItems = computed<DropdownMenuItem[]>(() => [
 	{ label: 'Message', icon: 'i-lucide-message-square-text', onSelect: () => add({ id: newId(), kind: 'message', role: 'user', text: '' }) },
 	{ label: 'Library files', icon: 'i-lucide-files', onSelect: () => add({ id: newId(), kind: 'files', paths: [] }) },
@@ -30,17 +72,17 @@ const addItems = computed<DropdownMenuItem[]>(() => [
 	{ label: 'Participants (group chats)', icon: 'i-lucide-users', disabled: has('participants'), onSelect: () => add({ id: newId(), kind: 'participants' }) },
 ])
 const add = (block: ProfileBlock) => {
-	draft.value.blocks = [...draft.value.blocks, block]
+	draft.value!.blocks = [...draft.value!.blocks, block]
 }
 const remove = (index: number) => {
-	draft.value.blocks = draft.value.blocks.toSpliced(index, 1)
+	draft.value!.blocks = draft.value!.blocks.toSpliced(index, 1)
 }
 function move(from: number, to: number) {
-	if (to < 0 || to >= draft.value.blocks.length || from === to) return
-	const blocks = [...draft.value.blocks]
+	const blocks = [...draft.value!.blocks]
+	if (to < 0 || to >= blocks.length || from === to) return
 	const [block] = blocks.splice(from, 1)
 	blocks.splice(to, 0, block!)
-	draft.value.blocks = blocks
+	draft.value!.blocks = blocks
 }
 
 // Drag by the handle; the arrows do the same from the keyboard.
@@ -57,9 +99,21 @@ const estimate = (text: string) => Math.ceil(text.length / 4)
 </script>
 
 <template>
-	<UModal :title="title" :ui="{ content: 'sm:max-w-2xl', footer: 'justify-end' }" @update:open="emit('close')">
+	<UDashboardPanel id="structure-profile" class="min-h-0">
+		<template #header>
+			<PageNavbar :current="profile?.name ?? (creating ? 'New structure profile' : '')">
+				<template #right>
+					<UBadge v-if="dirty" label="Not saved" color="warning" variant="subtle" />
+					<UButton v-if="canEdit" label="Save" icon="i-lucide-check" :loading="saving" :disabled="!dirty || !valid" @click="save" />
+				</template>
+			</PageNavbar>
+		</template>
+
 		<template #body>
-			<div class="flex flex-col gap-4">
+			<UError v-if="!creating && !isPending && !profile" :error="{ statusMessage: 'Structure profile not found', statusCode: 404 }" class="min-h-full" />
+			<!-- A disabled fieldset turns every field into reading only. -->
+			<fieldset v-else-if="draft" :disabled="!canEdit" class="w-full max-w-3xl mx-auto flex flex-col gap-4 min-w-0">
+				<UAlert v-if="!canEdit" color="neutral" variant="subtle" icon="i-lucide-building" title="An instance profile" description="Admins keep it; you can pick it for a chat, or copy it to your profiles from the list." />
 				<UFormField label="Name" required>
 					<UInput v-model="draft.name" :maxlength="100" placeholder="e.g. Roleplay, Code review" class="w-full" />
 				</UFormField>
@@ -78,7 +132,7 @@ const estimate = (text: string) => Math.ceil(text.length / 4)
 					>
 						<div class="flex items-center gap-2">
 							<span
-								draggable="true"
+								:draggable="canEdit"
 								class="cursor-grab text-dimmed"
 								:aria-label="`Drag ${label[block.kind]} block`"
 								@dragstart="dragging = index"
@@ -116,14 +170,14 @@ const estimate = (text: string) => Math.ceil(text.length / 4)
 					</li>
 				</ol>
 
-				<UDropdownMenu :items="addItems">
+				<UDropdownMenu v-if="canEdit" :items="addItems">
 					<UButton icon="i-lucide-plus" label="Add a block" color="neutral" variant="subtle" class="self-start" :disabled="draft.blocks.length >= 30" />
 				</UDropdownMenu>
+			</fieldset>
+			<div v-else class="w-full max-w-3xl mx-auto flex flex-col gap-4" aria-busy="true" aria-label="Loading the structure profile">
+				<USkeleton class="h-10 w-full" />
+				<USkeleton class="h-48 w-full" />
 			</div>
 		</template>
-		<template #footer>
-			<UButton color="neutral" variant="ghost" label="Cancel" @click="emit('close')" />
-			<UButton label="Save" :disabled="!valid" @click="emit('close', draft)" />
-		</template>
-	</UModal>
+	</UDashboardPanel>
 </template>
