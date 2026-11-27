@@ -20,21 +20,9 @@ const items = computed<DropdownMenuItem[][]>(() => ([[{
 		alt: user.value?.name || user.value?.username,
 	},
 }], [{
-	label: 'Model profiles',
-	icon: 'i-lucide-bot',
-	to: '/model-profiles',
-}, {
-	label: 'Characters',
-	icon: 'i-lucide-drama',
-	to: '/characters',
-}, {
-	label: 'Structure profiles',
-	icon: 'i-lucide-layers',
-	to: '/structure-profiles',
-}, {
-	label: 'Your listings',
-	icon: 'i-lucide-telescope',
-	to: '/explore/mine',
+	label: 'Content',
+	icon: 'i-lucide-shapes',
+	to: '/content',
 }, {
 	label: 'Settings',
 	icon: 'i-lucide-user-cog',

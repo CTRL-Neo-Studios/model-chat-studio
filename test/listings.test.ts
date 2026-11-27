@@ -2,7 +2,12 @@ import { beforeEach, expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { asc, eq } from 'drizzle-orm'
 import * as schema from '../server/db/schema'
-import { changeListing, deleteListing, myListings, previewListing, publishListing, publishUpdate } from '../server/utils/explore/listings'
+import { allows } from 'nuxt-authorization/utils'
+import { browseListings, browseQuerySchema, getListing } from '../server/utils/explore/browse'
+import { changeListing, deleteListing, findListing, myListings, previewListing, publishListing, publishUpdate } from '../server/utils/explore/listings'
+import { starListing } from '../server/utils/explore/stars'
+import { exploreAbilities } from '../shared/abilities/exploreAbilities'
+import type { User } from '../shared/types/db'
 import type { Store } from '../server/utils/explore/package'
 import { EXPLORE_DEFAULTS } from '../shared/utils/package'
 import { createTestDb, type TestDb } from './db'
@@ -106,4 +111,22 @@ test('a moderator\'s removal shows its reason to the publisher; deleting removes
 	const files = await db.select().from(schema.file)
 	expect(files.map(file => file.blobPath)).toEqual([`avatars/${characterId}/a.png`])
 	expect(await db.select().from(schema.character).where(eq(schema.character.id, characterId))).toHaveLength(1)
+})
+
+test('unpublishing hides a listing from others and keeps its versions, stars and gets; putting it back shows it as it was', async () => {
+	const { listing } = await publishListing(db, store, { userId: publisher, texts, source: { characterIds: [characterId] }, settings })
+	await publishUpdate(db, store, { listing, notes: 'Again', settings })
+	await starListing(db, other, listing.id)
+	await getListing(db, store, (await findListing(db, listing.id))!, other)
+	const grid = async () => (await browseListings(db, browseQuerySchema.parse({}), other)).listings.map(card => card.id)
+	const kept = async () => (await myListings(db, publisher)).map(row => ({ status: row.status, version: row.version, versions: row.versions.length, stars: row.stars, gets: row.gets }))
+
+	await changeListing(db, listing, { status: 'unlisted' }, settings)
+	expect(await grid()).toEqual([])
+	expect(await allows(exploreAbilities().readListing, { id: other, role: 'user', banned: false } as User, (await findListing(db, listing.id))!)).toBe(false)
+	expect(await kept()).toEqual([{ status: 'unlisted', version: 2, versions: 2, stars: 1, gets: 1 }])
+
+	await changeListing(db, listing, { status: 'listed' }, settings)
+	expect(await grid()).toEqual([listing.id])
+	expect(await kept()).toEqual([{ status: 'listed', version: 2, versions: 2, stars: 1, gets: 1 }])
 })

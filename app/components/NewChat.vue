@@ -189,6 +189,7 @@ const quickChats = [
 		<template #header>
 			<Navbar>
 				<template #title>
+					<Crumbs />
 					<ChatModelsMenu v-if="!unavailable && ready" v-model:mode="mode" :chat-lanes="chatLanes" choose-mode />
 					<USkeleton v-else-if="!unavailable" class="h-8 w-40" aria-label="Loading the models" />
 				</template>

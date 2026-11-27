@@ -5,7 +5,7 @@ import * as schema from '../server/db/schema'
 import { browseListings, browseQuerySchema, getListing, listingPage } from '../server/utils/explore/browse'
 import { findListing, publishListing, publishUpdate } from '../server/utils/explore/listings'
 import type { Store } from '../server/utils/explore/package'
-import { EXPLORE_DEFAULTS, type PackageSource } from '../shared/utils/package'
+import { EXPLORE_DEFAULTS, NO_PACKAGE_ITEMS, NO_PACKAGE_TEXTS, type PackageSource } from '../shared/utils/package'
 import { createTestDb, type TestDb } from './db'
 
 let db: TestDb
@@ -54,11 +54,11 @@ beforeEach(async () => {
 		{ ownerId: dave, name: 'Forgiven one' },
 	]).returning()
 	const [notes] = await db.insert(schema.library).values({ ownerId: alice, name: 'Notes' }).returning()
-	const [folder] = await db.insert(schema.chatFolder).values({ userId: alice, name: 'Dev Team', defaults: { libraryIds: [], structureProfileId: null, mode: 'group', models: [{ characterId: engineer!.id }, { characterId: designer!.id }] } }).returning()
+	const [team] = await db.insert(schema.contentPackage).values({ ownerId: alice, name: 'Dev Team', items: NO_PACKAGE_ITEMS, texts: NO_PACKAGE_TEXTS, setup: { libraryIds: [], structureProfileId: null, mode: 'group', models: [{ characterId: engineer!.id }, { characterId: designer!.id }] } }).returning()
 
 	ids = {
 		seraphina: await publish(alice, 'Seraphina', 'A gentle guardian of the glade', ['fantasy'], 'Roleplay', { characterIds: [seraphina!.id] }, 1),
-		team: await publish(alice, 'Dev Team', 'An Engineer and a Designer answering in turn', ['coding', 'team'], 'Work', { folderId: folder!.id }, 2),
+		team: await publish(alice, 'Dev Team', 'An Engineer and a Designer answering in turn', ['coding', 'team'], 'Work', { packageId: team!.id }, 2),
 		notes: await publish(alice, 'Notes', 'Research notes, 100% sourced', ['research'], null, { libraryIds: [notes!.id] }, 3),
 		hidden: await publish(alice, 'Hidden draft', 'Not ready', [], null, { characterIds: [engineer!.id] }, 4),
 		removed: await publish(alice, 'Removed one', 'Taken down', [], null, { characterIds: [designer!.id] }, 5),

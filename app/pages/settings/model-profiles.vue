@@ -95,11 +95,11 @@ function actions(profile: Profile): DropdownMenuItem[][] {
 <template>
 	<UDashboardPanel id="model-profiles" class="min-h-0">
 		<template #header>
-			<UDashboardNavbar title="Model profiles">
+			<PageNavbar>
 				<template #right>
 					<UButton v-if="canEdit" icon="i-lucide-plus" label="Add model" :loading="adding" :disabled="!platform" @click="quickAdd" />
 				</template>
-			</UDashboardNavbar>
+			</PageNavbar>
 		</template>
 
 		<template #body>

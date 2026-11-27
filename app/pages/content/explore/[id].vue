@@ -16,6 +16,7 @@ const toast = useToast()
 const queryCache = useQueryCache()
 const overlay = useOverlay()
 const { addToLists } = useStarLists()
+const { setPublished } = useListingActions()
 
 const content = computed(() => page.value?.version?.content)
 const fileUrl = (key: string | null) => key && page.value?.fileIds[key] ? `/api/v1/files/${page.value.fileIds[key]}` : undefined
@@ -72,10 +73,10 @@ async function get() {
 	const open = made.folderId
 		? { label: 'Open the folder', to: `/folders/${made.folderId}` }
 		: made.characterIds.length
-			? { label: 'Characters', to: '/characters' }
+			? { label: 'Characters', to: '/content/characters' }
 			: made.libraryIds.length
-				? { label: 'Open the library', to: `/libraries/${made.libraryIds[0]}` }
-				: { label: 'Structure profiles', to: '/structure-profiles' }
+				? { label: 'Open the library', to: `/content/libraries/${made.libraryIds[0]}` }
+				: { label: 'Structure profiles', to: '/content/structure-profiles' }
 	toast.add({ title: `Got ${page.value?.listing.name}`, description: `Made your own copies: ${counts.join(', ')}.`, icon: 'i-lucide-download', color: 'success', actions: [open] })
 	await Promise.all([
 		refetch(),
@@ -87,11 +88,7 @@ async function get() {
 <template>
 	<UDashboardPanel id="explore-listing" class="min-h-0">
 		<template #header>
-			<UDashboardNavbar :title="page?.listing.name ?? ''">
-				<template #leading>
-					<UButton icon="i-lucide-arrow-left" color="neutral" variant="ghost" to="/explore" aria-label="Explore" />
-				</template>
-			</UDashboardNavbar>
+			<PageNavbar :current="page?.listing.name" />
 		</template>
 
 		<template #body>
@@ -118,7 +115,7 @@ async function get() {
 							</template>
 						</p>
 						<div v-if="page.listing.tags.length" class="flex flex-wrap gap-1 mt-1">
-							<UButton v-for="tag in page.listing.tags" :key="tag" :label="`#${tag}`" size="xs" color="neutral" variant="soft" :to="{ path: '/explore', query: { tag } }" />
+							<UButton v-for="tag in page.listing.tags" :key="tag" :label="`#${tag}`" size="xs" color="neutral" variant="soft" :to="{ path: '/content/explore', query: { tag } }" />
 						</div>
 					</div>
 					<div class="flex flex-col items-end gap-1">
@@ -133,12 +130,15 @@ async function get() {
 								<UButton v-if="page.got < currentNumber" label="Get the new version" icon="i-lucide-download" size="sm" :loading="getting" @click="get" />
 							</template>
 						</template>
-						<UButton v-if="mine" label="Your listings" size="xs" color="neutral" variant="link" to="/explore/mine" />
+						<template v-if="mine">
+							<UButton v-if="page.listing.status !== 'removed'" :label="page.listing.status === 'listed' ? 'Unpublish' : 'Put back on Explore'" :icon="page.listing.status === 'listed' ? 'i-lucide-eye-off' : 'i-lucide-eye'" size="xs" color="neutral" variant="link" @click="setPublished(page.listing, page.listing.status !== 'listed')" />
+							<UButton label="Your listings" size="xs" color="neutral" variant="link" to="/content/published" />
+						</template>
 						<UButton v-else label="Report…" icon="i-lucide-flag" size="xs" color="neutral" variant="link" @click="report" />
 					</div>
 				</div>
 				<UAlert v-if="page.got !== null && page.got < currentNumber" color="info" variant="subtle" icon="i-lucide-sparkles" :title="`Version ${currentNumber} is out; you have version ${page.got || 'an earlier one'}.`" description="Getting it makes new copies; the ones you have stay as they are, with whatever you changed." />
-				<UAlert v-if="page.listing.status !== 'listed'" color="warning" variant="subtle" icon="i-lucide-eye-off" :title="page.listing.status === 'removed' ? 'Removed by a moderator' : 'Unlisted'" :description="page.listing.statusReason ?? 'Only its publisher, admins and moderators see it.'" />
+				<UAlert v-if="page.listing.status !== 'listed'" color="warning" variant="subtle" icon="i-lucide-eye-off" :title="page.listing.status === 'removed' ? 'Removed by a moderator' : 'Unpublished'" :description="page.listing.statusReason ?? 'Its publisher took it off Explore: only they, admins and moderators see it.'" />
 				<!-- A version other than the one on Explore: its state, and for a reviewer, Approve and Reject. -->
 				<UAlert
 					v-if="page.version?.status === 'pending'"
@@ -152,7 +152,7 @@ async function get() {
 				<UAlert v-else-if="page.version?.status === 'rejected'" color="error" variant="subtle" icon="i-lucide-circle-x" :title="`Version ${page.version.number} was rejected`" :description="page.version.reason ?? undefined" />
 				<UAlert v-else-if="page.version && page.listing.currentVersionId && page.version.id !== page.listing.currentVersionId" color="neutral" variant="subtle" icon="i-lucide-history" :title="`Version ${page.version.number}: an earlier one`" />
 				<p v-if="page.basedOn" class="text-sm text-muted">
-					Based on <NuxtLink :to="`/explore/${page.basedOn.id}`" class="text-primary">{{ page.basedOn.name }}</NuxtLink>.
+					Based on <NuxtLink :to="`/content/explore/${page.basedOn.id}`" class="text-primary">{{ page.basedOn.name }}</NuxtLink>.
 				</p>
 
 				<ChatComark v-if="page.listing.description" :value="page.listing.description" :streaming="false" />

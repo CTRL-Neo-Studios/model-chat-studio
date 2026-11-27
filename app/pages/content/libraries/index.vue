@@ -20,7 +20,7 @@ type Library = (typeof libraries.value)[number]
 const nameModal = overlay.create(LazyModalRename)
 const confirm = overlay.create(LazyModalConfirm)
 const deleteModal = overlay.create(LazyModalDeleteLibrary)
-const { publish } = useListingActions()
+const { publishActions } = useListingActions()
 const { user } = useUserSession()
 
 const nameProps = { heading: 'New library', description: 'A library holds files, notes and folders that chats can read.', placeholder: 'Library name', maxlength: 100 }
@@ -31,7 +31,7 @@ async function create() {
 	const library = await act<Library>('/api/v1/libraries', { method: 'POST', body: { name } })
 	if (!library) return
 	queryCache.setQueryData(librariesQuery.key, list => [{ ...library, role: 'owner' as const }, ...(list ?? [])])
-	await navigateTo(`/libraries/${library.id}`)
+	await navigateTo(`/content/libraries/${library.id}`)
 }
 
 // Renames and deletions show at once; the list comes back as it was if the server refuses.
@@ -61,23 +61,23 @@ async function leave(library: Library) {
 const ROLE_LABELS = { owner: 'Owner', editor: 'Editor', viewer: 'Viewer' } as const
 const actions = (library: Library): DropdownMenuItem[][] => library.role === 'owner'
 	? [
-			[
-				{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => rename(library) },
-				{ label: 'Publish to Explore…', icon: 'i-lucide-telescope', onSelect: () => publish({ libraryIds: [library.id] }, library.name) },
-			],
+			[{ label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => rename(library) }],
+			publishActions({ libraryIds: [library.id] }, library.name),
 			[{ label: 'Delete', icon: 'i-lucide-trash', color: 'error', onSelect: () => remove(library) }],
 		]
 	: [[{ label: 'Leave library', icon: 'i-lucide-log-out', color: 'error', onSelect: () => leave(library) }]]
+
+useNewFromLink(create)
 </script>
 
 <template>
 	<UDashboardPanel id="libraries" class="min-h-0">
 		<template #header>
-			<UDashboardNavbar title="Libraries">
+			<PageNavbar>
 				<template #right>
 					<UButton icon="i-lucide-plus" label="New library" @click="create" />
 				</template>
-			</UDashboardNavbar>
+			</PageNavbar>
 		</template>
 
 		<template #body>
@@ -103,7 +103,7 @@ const actions = (library: Library): DropdownMenuItem[][] => library.role === 'ow
 						<div class="flex items-center gap-2">
 							<UIcon name="i-lucide-library-big" class="size-5 text-muted shrink-0" />
 							<!-- The link covers the card; the buttons sit above it. -->
-							<NuxtLink :to="`/libraries/${library.id}`" class="font-medium text-highlighted truncate flex-1 outline-none after:absolute after:inset-0">
+							<NuxtLink :to="`/content/libraries/${library.id}`" class="font-medium text-highlighted truncate flex-1 outline-none after:absolute after:inset-0">
 								{{ library.name }}
 							</NuxtLink>
 							<div class="relative flex items-center">
@@ -117,9 +117,10 @@ const actions = (library: Library): DropdownMenuItem[][] => library.role === 'ow
 							{{ library.description }}
 						</p>
 						<div class="flex items-center gap-2 mt-auto">
-							<span class="text-xs text-dimmed">Created {{ formatDistanceToNow(new Date(library.createdAt), { addSuffix: true }) }}</span>
-							<UBadge v-if="library.lorebook?.on" label="Lorebook" icon="i-lucide-book-open-text" color="neutral" variant="subtle" size="sm" class="ms-auto" />
-							<UBadge v-if="library.role !== 'owner'" :label="`Shared · ${ROLE_LABELS[library.role]}`" color="neutral" variant="subtle" size="sm" :class="!library.lorebook?.on && 'ms-auto'" />
+							<span class="text-xs text-dimmed flex-1">Created {{ formatDistanceToNow(new Date(library.createdAt), { addSuffix: true }) }}</span>
+							<PublishedBadge v-if="library.role === 'owner'" :source="{ libraryIds: [library.id] }" />
+							<UBadge v-if="library.lorebook?.on" label="Lorebook" icon="i-lucide-book-open-text" color="neutral" variant="subtle" size="sm" />
+							<UBadge v-if="library.role !== 'owner'" :label="`Shared · ${ROLE_LABELS[library.role]}`" color="neutral" variant="subtle" size="sm" />
 						</div>
 					</li>
 				</ul>

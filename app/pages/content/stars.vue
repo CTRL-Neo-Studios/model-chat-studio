@@ -46,11 +46,11 @@ const listActions = (list: List): DropdownMenuItem[][] => [[
 <template>
 	<UDashboardPanel id="explore-stars" class="min-h-0">
 		<template #header>
-			<UDashboardNavbar title="Your stars">
+			<PageNavbar>
 				<template #right>
 					<UButton icon="i-lucide-list-plus" label="New list" color="neutral" variant="subtle" @click="createList" />
 				</template>
-			</UDashboardNavbar>
+			</PageNavbar>
 		</template>
 
 		<template #body>
@@ -63,9 +63,9 @@ const listActions = (list: List): DropdownMenuItem[][] => [[
 						<h2 class="font-semibold text-highlighted">
 							All stars <span class="text-sm text-dimmed font-normal">{{ listings.length }}</span>
 						</h2>
-						<UEmpty v-if="!listings.length" icon="i-lucide-star" title="Nothing starred yet" description="Star what you like on Explore to find it here again, whether or not you got it." :actions="[{ label: 'Explore', icon: 'i-lucide-telescope', to: '/explore' }]" />
+						<UEmpty v-if="!listings.length" icon="i-lucide-star" title="Nothing starred yet" description="Star what you like on Explore to find it here again, whether or not you got it." :actions="[{ label: 'Explore', icon: 'i-lucide-telescope', to: '/content/explore' }]" />
 						<ul v-else class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-							<ListingCard v-for="listing in listings" :key="listing.id" :listing="listing" @tag="tag => navigateTo({ path: '/explore', query: { tag } })">
+							<ListingCard v-for="listing in listings" :key="listing.id" :listing="listing" @tag="tag => navigateTo({ path: '/content/explore', query: { tag } })">
 								<template #actions>
 									<UButton v-if="listing.available" icon="i-lucide-list-plus" size="xs" color="neutral" variant="ghost" :aria-label="`Add ${listing.name} to a list`" @click="addToLists(listing.id, listing.name)" />
 								</template>
@@ -89,7 +89,7 @@ const listActions = (list: List): DropdownMenuItem[][] => [[
 							Empty: "Add to a list…" on a listing puts it here.
 						</p>
 						<ul v-else class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-							<ListingCard v-for="listing in inList(list)" :key="listing.id" :listing="listing" @tag="tag => navigateTo({ path: '/explore', query: { tag } })">
+							<ListingCard v-for="listing in inList(list)" :key="listing.id" :listing="listing" @tag="tag => navigateTo({ path: '/content/explore', query: { tag } })">
 								<template #actions>
 									<UButton icon="i-lucide-list-minus" label="Take out" size="xs" color="neutral" variant="ghost" @click="takeOut(list, listing.id)" />
 								</template>

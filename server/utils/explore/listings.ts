@@ -59,13 +59,15 @@ export async function previewListing(db: Db, userId: string, source: PackageSour
 	}
 }
 
-/** The listing a source was got from, when one of its items is a copy the member got from Explore. */
+/** The listing a source was got from, when one of its items (or its package's) is a copy the member got from Explore. */
 async function basedOn(db: Db, userId: string, source: PackageSource) {
-	const ids = [...source.characterIds ?? [], ...source.libraryIds ?? [], ...source.structureProfileIds ?? [], ...source.folderId ? [source.folderId] : []]
+	const [fromPackage] = source.packageId ? await db.select({ items: tables.contentPackage.items }).from(tables.contentPackage).where(eq(tables.contentPackage.id, source.packageId)) : []
+	const items = fromPackage?.items ?? source
+	const ids = [...items.characterIds ?? [], ...items.libraryIds ?? [], ...items.structureProfileIds ?? []]
 	if (!ids.length) return null
 	const got = await db.select({ listingId: tables.acquisition.listingId, created: tables.acquisition.created }).from(tables.acquisition)
 		.where(eq(tables.acquisition.userId, userId)).orderBy(desc(tables.acquisition.createdAt))
-	return got.find(({ created }) => [...created.characterIds, ...created.libraryIds, ...created.structureProfileIds, created.folderId].some(id => id && ids.includes(id)))?.listingId ?? null
+	return got.find(({ created }) => [...created.characterIds, ...created.libraryIds, ...created.structureProfileIds].some(id => ids.includes(id)))?.listingId ?? null
 }
 
 /** The note on a version that went up in reviewed mode because nobody but its publisher could review it. */
@@ -113,8 +115,11 @@ async function addVersion(db: Db, store: Store, input: { listingId: string, owne
 	}
 }
 
-/** Publishes the member's items as a new listing, version 1. Returns the listing, what was left out, and whether it waits for review. */
-export async function publishListing(db: Db, store: Store, input: { userId: string, texts: ListingTexts, source: PackageSource, settings: ExploreSettings }) {
+/**
+ * Publishes the member's items as a new listing, version 1. `link` runs in the same transaction, once the listing
+ * exists (a package pointing at it). Returns the listing, what was left out, and whether it waits for review.
+ */
+export async function publishListing(db: Db, store: Store, input: { userId: string, texts: ListingTexts, source: PackageSource, settings: ExploreSettings, link?: (tx: Db, listingId: string) => Promise<unknown> }) {
 	assertCategory(input.settings, input.texts.category)
 	const { content, paths, left } = await take(db, input.userId, input.source, input.settings)
 	const listingId = randomUUID()
@@ -126,7 +131,10 @@ export async function publishListing(db: Db, store: Store, input: { userId: stri
 		content,
 		paths,
 		review,
-		first: tx => tx.insert(tables.listing).values({ id: listingId, ownerId: input.userId, kind: listingKind(input.source), ...input.texts, source: input.source, basedOnId }),
+		first: async (tx) => {
+			await tx.insert(tables.listing).values({ id: listingId, ownerId: input.userId, kind: listingKind(input.source), ...input.texts, source: input.source, basedOnId })
+			await input.link?.(tx, listingId)
+		},
 	})
 	return { listing: (await findListing(db, listingId))!, left, pending: review.status === 'pending' }
 }
@@ -195,7 +203,7 @@ export async function myListings(db: Db, userId: string) {
 		.where(eq(tables.listing.ownerId, userId))
 		.orderBy(desc(tables.listing.publishedAt))
 	const versions = rows.length
-		? await db.select({ listingId: tables.listingVersion.listingId, number: tables.listingVersion.number, status: tables.listingVersion.status, reason: tables.listingVersion.reason, createdAt: tables.listingVersion.createdAt })
+		? await db.select({ listingId: tables.listingVersion.listingId, id: tables.listingVersion.id, number: tables.listingVersion.number, status: tables.listingVersion.status, reason: tables.listingVersion.reason, notes: tables.listingVersion.notes, createdAt: tables.listingVersion.createdAt })
 			.from(tables.listingVersion).where(inArray(tables.listingVersion.listingId, rows.map(row => row.id))).orderBy(desc(tables.listingVersion.number))
 		: []
 	return rows.map(row => ({ ...row, versions: versions.filter(version => version.listingId === row.id).map(({ listingId: _listingId, ...version }) => version) }))

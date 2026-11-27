@@ -455,11 +455,15 @@ onMounted(() => {
 		<template #header>
 			<Navbar>
 				<template #title>
-					<ChatTitle
-						:chat-id="chatId"
-						:title="title"
-						:is-owner="isOwner"
-					/>
+					<Crumbs>
+						<template #current>
+							<ChatTitle
+								:chat-id="chatId"
+								:title="title"
+								:is-owner="isOwner"
+							/>
+						</template>
+					</Crumbs>
 					<ChatModelsMenu v-if="isOwner" :chat-lanes="chatLanes" :mode="data?.mode" :answer-last="group && lastQuestion && !answers.busy.value ? answerLast : undefined" />
 				</template>
 
@@ -467,7 +471,7 @@ onMounted(() => {
 				<UButton
 					v-for="library in libraries"
 					:key="library.id"
-					:to="library.role ? `/libraries/${library.id}` : undefined"
+					:to="library.role ? `/content/libraries/${library.id}` : undefined"
 					:label="library.name"
 					icon="i-lucide-library-big"
 					color="neutral"

@@ -34,8 +34,8 @@ async function save() {
 }
 
 const STATUS = {
-	listed: { label: 'Listed', color: 'success' },
-	unlisted: { label: 'Unlisted', color: 'neutral' },
+	listed: { label: 'Published', color: 'success' },
+	unlisted: { label: 'Unpublished', color: 'neutral' },
 	removed: { label: 'Removed', color: 'error' },
 } as const
 const columns: TableColumn<Row>[] = [
@@ -60,7 +60,7 @@ async function destroy(row: Row) {
 	if (await act(`/api/v1/explore/listings/${row.id}`, { method: 'DELETE', success: 'Listing deleted' })) await refetch()
 }
 const actions = (row: Row): DropdownMenuItem[][] => [[
-	{ label: 'Open', icon: 'i-lucide-external-link', to: `/explore/${row.id}` },
+	{ label: 'Open', icon: 'i-lucide-external-link', to: `/content/explore/${row.id}` },
 	{ label: row.featured ? 'Stop featuring' : 'Feature', icon: 'i-lucide-star', onSelect: () => change(row, { featured: !row.featured }, row.featured ? 'No longer featured' : 'Featured: shown first on Explore') },
 	row.status === 'removed'
 		? { label: 'Restore', icon: 'i-lucide-undo-2', onSelect: () => change(row, { status: 'listed' }, 'Listing restored') }

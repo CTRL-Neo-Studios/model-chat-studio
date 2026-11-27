@@ -36,12 +36,7 @@ const page = computed({ get: () => filters.value.page, set: value => setFilters(
 <template>
 	<UDashboardPanel id="explore" class="min-h-0">
 		<template #header>
-			<UDashboardNavbar title="Explore">
-				<template #right>
-					<UButton icon="i-lucide-star" label="Your stars" color="neutral" variant="subtle" to="/explore/stars" />
-					<UButton icon="i-lucide-telescope" label="Your listings" color="neutral" variant="subtle" to="/explore/mine" />
-				</template>
-			</UDashboardNavbar>
+			<PageNavbar />
 		</template>
 
 		<template #body>

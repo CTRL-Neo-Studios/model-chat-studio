@@ -22,7 +22,7 @@ import type {Lore, Lorebook} from "../../shared/utils/lorebook";
 import type {UserPreferences} from "../../shared/utils/preferences";
 import type {ProfileBlock} from "../../shared/utils/structureProfile";
 import type {FolderDefaults} from "../../shared/utils/folderDefaults";
-import type {Package, PackageCopies, PackageSource} from "../../shared/utils/package";
+import type {Package, PackageCopies, PackageItems, PackageSource, PackageTexts} from "../../shared/utils/package";
 
 const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' })
 
@@ -507,6 +507,26 @@ export const acquisition = pgTable("acquisition", {
 	createdAt,
 }, (t) => [
 	index().on(t.userId, t.listingId),
+]);
+
+/**
+ * A member's Content Package (milestone 17): their items and a chat setup, published as one listing. It points at
+ * the items; publishing copies them as they are then. `texts` are the listing's while it is a draft; once published,
+ * the listing holds them. Deleting the listing makes it a draft again.
+ */
+export const contentPackage = pgTable("contentPackage", {
+	id: uuid().primaryKey().defaultRandom(),
+	ownerId: uuid().notNull().references(() => user.id, { onDelete: "cascade" }),
+	name: text().notNull(),
+	items: jsonb().$type<PackageItems>().notNull().default({ characterIds: [], libraryIds: [], structureProfileIds: [] }),
+	/** A folder's defaults, for the chat it starts; `null`: none. */
+	setup: jsonb().$type<FolderDefaults>(),
+	texts: jsonb().$type<PackageTexts>().notNull().default({ summary: "", description: "", tags: [], category: null }),
+	listingId: uuid().unique().references(() => listing.id, { onDelete: "set null" }),
+
+	...createdUpdatedAtColumns
+}, (t) => [
+	index().on(t.ownerId),
 ]);
 
 /** A member's star on a listing (milestone 14): one per member and listing, counted in `listing.stars`. */

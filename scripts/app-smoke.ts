@@ -10,8 +10,9 @@
 // defaults are a group (the second speaker reads the first one's chart), a message refused after an older tip and
 // answered after the tip, dictation, a piece read aloud in the platform's default voice, an image drawn by the
 // model's tool call and one by `/image` (each about $0.01, once an image model is set), the chat exported with its
-// attachments, imported and answering as a new chat, and found in the all-chats download, a pack published to Explore,
-// found and got by the second member and one round of its group chat (with SECOND_SESSION), the spend ledger, and
+// attachments, imported and answering as a new chat, and found in the all-chats download, a package made from a folder
+// with a group setup and published to Explore, found and got by the second member and one round of its group chat
+// (with SECOND_SESSION), the spend ledger, and
 // deleting the chat. Once, with SECOND_SESSION: in reviewed mode the second member's Character waits and the admin
 // approves it, stars it into a list, reports it and removes it from the report, its publisher reading why.
 // `--search` adds web search to the library question and a web search turn (on OpenRouter each costs about $0.02).
@@ -368,16 +369,21 @@ try {
 
 		await step('explore', async () => {
 			if (!second) return 'skipped: set SECOND_SESSION to a second member\'s session to get the pack as them'
-			// The admin publishes a pack: a folder whose defaults are a group of two Characters, each with a word to say.
+			// The admin makes a package from a folder whose defaults are a group of two Characters, each with a word to say, and publishes it.
 			const word = `smoke${Date.now().toString(36)}`
 			const blank = { color: null, libraryIds: [], greetings: [], examples: '', note: '', creatorNotes: '', tags: [] }
 			const [engineer, designer] = await Promise.all(['engineer', 'designer'].map(name => api<{ id: string }>('POST', '/characters', { ...blank, name: `${name[0]!.toUpperCase()}${name.slice(1)}`, instructions: `Whatever you are asked, reply with the single word: ${name}` })))
 			const folder = await api<{ id: string }>('POST', '/folders', { name: 'Smoke team', parentId: null })
+			let packageId: string | undefined
 			let listingId: string | undefined
 			let made: { characterIds: string[], folderId: string | null } | undefined
 			try {
 				await api('PATCH', `/folders/${folder.id}`, { defaults: { libraryIds: [], structureProfileId: null, mode: 'group', models: [{ modelId: model.id, characterId: engineer!.id }, { modelId: model.id, characterId: designer!.id }] } })
-				listingId = (await api<{ listing: { id: string } }>('POST', '/explore/listings', { name: 'Smoke team', summary: `A smoke run's pack, ${word}`, description: '', tags: [], category: null, source: { folderId: folder.id } })).listing.id
+				const contentPackage = await api<{ id: string, name: string, items: { characterIds: string[] }, setup: { mode?: string } | null }>('POST', '/packages', { fromFolderId: folder.id })
+				packageId = contentPackage.id
+				if (contentPackage.name !== 'Smoke team' || contentPackage.items.characterIds.join() !== [engineer!.id, designer!.id].join() || contentPackage.setup?.mode !== 'group') throw new Error(`the package from the folder is "${contentPackage.name}" with ${contentPackage.items.characterIds.length} Characters and a ${contentPackage.setup?.mode} setup`)
+				await api('PATCH', `/packages/${packageId}`, { texts: { summary: `A smoke run's pack, ${word}`, description: '', tags: [], category: null } })
+				listingId = (await api<{ listing: { id: string } }>('POST', `/packages/${packageId}/publish`)).listing.id
 				// The second member finds it by a word in its summary, gets it, and starts a chat in the folder they got.
 				const found = await second.api<{ listings: { id: string }[] }>('GET', `/explore/listings?q=${word}`)
 				if (found.listings[0]?.id !== listingId) throw new Error(`searching "${word}" found ${found.listings.length} listings, not the pack`)
@@ -391,7 +397,7 @@ try {
 				const answers: Turn[] = []
 				for (const lane of chat.models) answers.push(await second.turn(chatId, lane.id, { trigger: 'submit-message', message }))
 				if (!/engineer/i.test(answers[0]!.text) || !/designer/i.test(answers[1]!.text)) throw new Error(`the round answered ${summary(answers[0]!)} and ${summary(answers[1]!)}`)
-				return `found by "${word}", got as ${made.characterIds.length} Characters and a folder; the round: ${summary(answers[0]!)}, then ${summary(answers[1]!)}`
+				return `a package made from the folder (2 Characters, a group), found by "${word}", got as ${made.characterIds.length} Characters and a folder; the round: ${summary(answers[0]!)}, then ${summary(answers[1]!)}`
 			}
 			finally {
 				if (made?.folderId) {
@@ -399,7 +405,7 @@ try {
 					await second.api('DELETE', `/folders/${made.folderId}`)
 				}
 				for (const id of made?.characterIds ?? []) await second.api('DELETE', `/characters/${id}`)
-				if (listingId) await api('DELETE', `/explore/listings/${listingId}`)
+				if (packageId) await api('DELETE', `/packages/${packageId}`)
 				await api('DELETE', `/folders/${folder.id}`)
 				for (const { id } of [engineer!, designer!]) await api('DELETE', `/characters/${id}`)
 			}
