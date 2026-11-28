@@ -10,6 +10,8 @@ export const userPreferencesSchema = z.object({
 	characterId: z.uuid().nullable().catch(null),
 	/** The voice read-aloud uses, per platform (a voice id that platform offers); unset or gone: the platform's default. */
 	voices: z.object({ openrouter: z.string().optional(), deepseek: z.string().optional() }).catch({}),
+	/** A paste longer than this many characters asks: into the prompt as text, or attached as a text file. 0 never asks. */
+	longPaste: z.number().int().min(0).max(1_000_000).catch(2000),
 })
 
 export type UserPreferences = z.infer<typeof userPreferencesSchema>

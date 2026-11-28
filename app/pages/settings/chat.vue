@@ -48,6 +48,13 @@ function playSample() {
 	if (readingId.value === 'sample') stop()
 	else read('sample', [{ type: 'text', text: SAMPLE }])
 }
+
+async function setLongPaste(longPaste: number | null) {
+	const before = me.value
+	if (!before || longPaste === null || longPaste === before.preferences.longPaste) return
+	queryCache.setQueryData(meQuery.key, { ...before, preferences: { ...before.preferences, longPaste } })
+	if (!await act('/api/v1/me/preferences', { method: 'PATCH', body: { longPaste }, success: 'Saved' })) queryCache.setQueryData(meQuery.key, before)
+}
 </script>
 
 <template>
@@ -82,6 +89,11 @@ function playSample() {
 						<UButton :label="readingId === 'sample' ? 'Stop' : 'Play a sample'" :icon="readingId === 'sample' ? 'i-lucide-square' : 'i-lucide-volume-2'" color="neutral" variant="subtle" @click="playSample" />
 					</div>
 					<USkeleton v-else-if="!speech" class="h-8 w-72" />
+				</UPageCard>
+
+				<UPageCard title="Long pastes" description="A paste longer than this asks whether it goes into the prompt as text or is attached as a text file. 0 never asks." variant="subtle">
+					<UInputNumber v-if="me" :model-value="me.preferences.longPaste" :min="0" :max="1000000" :step="500" class="w-full sm:w-48" aria-label="Characters" @update:model-value="setLongPaste" />
+					<USkeleton v-else class="h-8 w-48" />
 				</UPageCard>
 			</div>
 		</template>

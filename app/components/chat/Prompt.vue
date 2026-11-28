@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import type { ChatStatus } from 'ai'
 import { type Editor, Extension } from '@tiptap/core'
-import type { EditorMentionMenuItem, EditorSuggestionMenuItem } from '@nuxt/ui'
+import { Plugin } from '@tiptap/pm/state'
+import { LazyModalLongPaste } from '#components'
+import type { EditorMentionMenuItem, EditorSuggestionMenuItem, EditorToolbarItem } from '@nuxt/ui'
 import type { CatalogModelView } from '~/composables/useModels'
 import type { PromptUpload } from '~/composables/usePromptUploads'
 
@@ -84,10 +86,13 @@ function appendTranscript(text: string) {
 	input.value = input.value.trim() ? `${input.value.trimEnd()} ${text}` : text
 }
 
-// The prompt is an editor, for the "/" menu. What is sent is its plain text: its Markdown output escapes what was
-// typed (spike B). Text set from outside (cleared after sending, dictation, a suggested prompt) goes back in.
+// The prompt is an editor, for the "/" and "@" menus, in one of two modes, remembered per browser. Rich: formatting,
+// and what is sent is its Markdown (which escapes what is typed literally, spike B). Raw: what is sent is its plain
+// text, exactly as typed. Text set from outside (cleared after sending, dictation, a suggested prompt) goes back in.
+const mode = useCookie<'rich' | 'raw'>('prompt-mode', { default: () => 'rich', sameSite: 'lax' })
 let editor: Editor | undefined
-const textOf = (instance: Editor) => instance.getText({ blockSeparator: '\n' })
+// Rich mode's Markdown ends with the editor's trailing empty paragraph: trimmed.
+const textOf = (instance: Editor) => mode.value === 'rich' ? instance.getMarkdown().trimEnd() : instance.getText({ blockSeparator: '\n' })
 /** The entries named with "@", in order, each once. */
 function referencesOf(instance: Editor) {
 	const ids: string[] = []
@@ -97,20 +102,60 @@ function referencesOf(instance: Editor) {
 	return ids
 }
 const docOf = (text: string) => ({ type: 'doc', content: text.split('\n').map(line => ({ type: 'paragraph', content: line ? [{ type: 'text', text: line }] : [] })) })
+function setText(instance: Editor, text: string) {
+	if (mode.value === 'rich') instance.commands.setContent(text, { contentType: 'markdown' })
+	else instance.commands.setContent(docOf(text))
+}
 watch(input, (value) => {
-	if (editor && value !== textOf(editor)) editor.commands.setContent(docOf(value))
+	if (editor && value !== textOf(editor)) setText(editor, value)
 })
-// A phone keyboard has no Shift+Enter: there, Enter breaks the line and the send button sends.
+// A phone keyboard has no Shift+Enter: there, Enter breaks the line and the send button sends. In a list or a code
+// block Enter is the editor's (a new item, a new line); Mod+Enter sends from anywhere. In rich mode Shift+Enter starts
+// a paragraph, so "- " or "# " on the next line formats it; in raw mode it breaks the line.
 const touch = import.meta.client && window.matchMedia('(pointer: coarse)').matches
+// Lists and code blocks exist in rich mode only (asking a schema without them reads as true).
+const inBlock = () => mode.value === 'rich' && !!editor && (editor.isActive('listItem') || editor.isActive('codeBlock'))
+
+const overlay = useOverlay()
+const longPasteModal = overlay.create(LazyModalLongPaste)
+const { data: me } = useQuery(meQuery)
+let pastedFiles = 0
+/** "Paste as text" goes in as the paste would have (Markdown in rich mode); "Attach as a file" adds a `.txt` file. */
+async function askLongPaste(instance: Editor, text: string, html: string) {
+	const choice = await longPasteModal.open({ text }).result
+	if (choice === 'file') files.value = [...files.value, new File([text], `Pasted text ${++pastedFiles}.txt`, { type: 'text/plain' })]
+	if (choice !== 'text') return instance.commands.focus()
+	if (html) instance.view.pasteHTML(html)
+	else if (mode.value === 'rich' && !instance.isActive('codeBlock')) instance.commands.insertContent(text, { contentType: 'markdown' })
+	else instance.view.pasteText(text)
+	instance.commands.focus()
+}
 let extension: Extension | undefined
 function promptExtension(submit: () => void) {
 	extension ??= Extension.create({
 		name: 'chatPrompt',
 		priority: 1000,
-		addKeyboardShortcuts: () => ({ Enter: () => !touch && (submit(), true) }),
+		addKeyboardShortcuts: () => ({
+			'Enter': () => !touch && !inBlock() && (submit(), true),
+			'Shift-Enter': () => mode.value === 'rich' && !!editor && !inBlock() && editor.commands.splitBlock(),
+			'Mod-Enter': () => (submit(), true),
+		}),
+		// A paste past the member's limit (Settings › Chat) asks first; files and short text paste as usual.
+		addProseMirrorPlugins: () => [new Plugin({
+			props: {
+				handlePaste: (_view, event) => {
+					const data = event.clipboardData
+					const text = data?.getData('text/plain') ?? ''
+					const limit = me.value?.preferences.longPaste ?? 0
+					if (!editor || !data || data.files.length || !limit || text.length <= limit) return false
+					askLongPaste(editor, text, data.types.includes('vscode-editor-data') ? '' : data.getData('text/html'))
+					return true
+				},
+			},
+		})],
 		onCreate: ({ editor: created }) => {
 			editor = created
-			if (input.value) created.commands.setContent(docOf(input.value))
+			if (input.value) setText(created, input.value)
 		},
 		onUpdate: ({ editor: updated }) => {
 			input.value = textOf(updated)
@@ -119,6 +164,19 @@ function promptExtension(submit: () => void) {
 	})
 	return extension
 }
+
+// Formatting on a selection, in rich mode.
+const bubbleItems: EditorToolbarItem[][] = [[
+	{ kind: 'mark', mark: 'bold', icon: 'i-lucide-bold', tooltip: { text: 'Bold' } },
+	{ kind: 'mark', mark: 'italic', icon: 'i-lucide-italic', tooltip: { text: 'Italic' } },
+	{ kind: 'mark', mark: 'strike', icon: 'i-lucide-strikethrough', tooltip: { text: 'Strikethrough' } },
+	{ kind: 'mark', mark: 'code', icon: 'i-lucide-code', tooltip: { text: 'Code' } },
+], [
+	{ kind: 'bulletList', icon: 'i-lucide-list', tooltip: { text: 'Bullet list' } },
+	{ kind: 'orderedList', icon: 'i-lucide-list-ordered', tooltip: { text: 'Numbered list' } },
+	{ kind: 'blockquote', icon: 'i-lucide-text-quote', tooltip: { text: 'Quote' } },
+	{ kind: 'codeBlock', icon: 'i-lucide-square-code', tooltip: { text: 'Code block' } },
+]]
 
 // Each command is run by the parent; the menu removes the typed "/name" first.
 const commandItems = computed<EditorSuggestionMenuItem[]>(() => props.commands.map(({ kind, label, description, icon }) => ({ kind, label, description, icon })))
@@ -153,15 +211,19 @@ const menuOptions = { strategy: 'fixed', placement: 'top-start', offset: 8, flip
 	>
 		<template #body="{ submit, placeholder: hint, disabled: off }">
 			<UEditor
+				:key="mode"
 				v-slot="{ editor: instance }"
-				:starter-kit="false"
+				:starter-kit="mode === 'rich'"
+				:content-type="mode === 'rich' ? 'markdown' : undefined"
+				:mention="false"
 				:editable="!off"
 				:placeholder="hint"
 				:handlers="commandHandlers"
-				:extensions="[promptExtension(submit)]"
+				:extensions="mode === 'rich' ? [promptExtension(submit), MarkdownMention, MarkdownPaste] : [promptExtension(submit), MarkdownMention]"
 				class="w-full min-h-12 max-h-60 overflow-y-auto"
 				:ui="{ base: ['p-1.5! text-base', dictation !== 'idle' && '[&_.is-editor-empty]:before:italic'] }"
 			>
+				<UEditorToolbar v-if="mode === 'rich' && !off" :editor="instance" layout="bubble" :items="bubbleItems" :append-to="menuParent" :options="{ strategy: 'fixed', placement: 'top', offset: 8, flip: true, shift: { padding: 8 } }" />
 				<UEditorSuggestionMenu v-if="commandItems.length" :editor="instance" :items="commandItems" :append-to="menuParent" :options="menuOptions" />
 				<UEditorMentionMenu v-if="mentions.length" :editor="instance" :items="mentions" :limit="20" :append-to="menuParent" :options="menuOptions" />
 			</UEditor>
@@ -210,6 +272,15 @@ const menuOptions = { strategy: 'fixed', placement: 'top-start', offset: 8, flip
 			</div>
 
 			<div class="flex items-center gap-1 min-w-0">
+				<!-- Rich text or raw: the editor starts again in the other mode with what was written. -->
+				<UFieldGroup>
+					<UTooltip text="Rich text">
+						<UButton icon="i-lucide-type" size="sm" color="neutral" :variant="mode === 'rich' ? 'soft' : 'ghost'" aria-label="Rich text" :aria-pressed="mode === 'rich'" @click="mode = 'rich'" />
+					</UTooltip>
+					<UTooltip text="Raw: sent exactly as typed">
+						<UButton icon="i-lucide-code-xml" size="sm" color="neutral" :variant="mode === 'raw' ? 'soft' : 'ghost'" aria-label="Raw text" :aria-pressed="mode === 'raw'" @click="mode = 'raw'" />
+					</UTooltip>
+				</UFieldGroup>
 				<ChatDictateButton
 					v-if="canDictate"
 					v-model:state="dictation"
