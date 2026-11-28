@@ -1,6 +1,6 @@
 # Milestone 18: a rich prompt, long pastes, a full-screen prompt, notes in Markdown
 
-Status: 18.1 and 18.2 built (2026-11-27); 18.3 next. Follows `milestones-15-17-navigation-content-packages.md`. No migration: the one new preference lives in `user.preferences` (jsonb).
+Status: 18.1, 18.2 and 18.3 built (2026-11-27); 18.4 next. Follows `milestones-15-17-navigation-content-packages.md`. No migration: the one new preference lives in `user.preferences` (jsonb).
 
 Goal: the prompt bar writes rich text and sends Markdown, and the chat shows a member's messages formatted; a long paste asks whether it goes in as text or as a text attachment; the prompt can fill the panel; a library note can be edited as raw Markdown, takes pasted Markdown formatted, and is renamed from its title.
 
@@ -47,6 +47,11 @@ Built (18.2):
 - Preference `longPaste` (default 2,000, 0 never asks; `shared/utils/preferences.ts`, `PATCH /me/preferences`), the "Long pastes" card on Settings › Chat (`UInputNumber`, saved on Enter or leaving it). `ModalLongPaste` (the size, the first 1,200 characters, "Paste as text", "Attach as a file", "Cancel"). The prompt's extension has the paste handler, ahead of `MarkdownPaste`: plain text past the limit, no files, asks; "as text" pastes as the paste would have (HTML as HTML, Markdown in rich mode, lines in raw), "as a file" adds `Pasted text N.txt` (`text/plain`) to the prompt's files, which upload as any.
 
 Check in Chromium: a 2,601-character paste opened "Paste 2,601 characters" with its start; "Paste as text" made a heading and a list; again, "Attach as a file" added "Pasted text 1.txt" (TXT · 3KB), which uploaded and was removed again; the card took 1,500 with Enter and 0 on leaving the field ("Saved"); at 0 a 3,011-character paste went in without asking; the limit was put back to 2,000 and the test chat deleted.
+
+Built (18.3):
+- `chat/Prompt.vue`: a "Full screen" / "Exit full screen" button before the mode buttons; it focuses the editor. The prompt finds its `UDashboardPanel` from the editor's node (`[id*="-panel-"]`), measures it with `useElementBounding` and is `fixed` from `--ui-header-height` below its top to its bottom, opaque (`bg-default`), the editor growing to fill it (`flex-1`, no `max-h-60`). Sending ends it. The position is on a wrapper `div` (`display: contents` otherwise), and the page's class goes on to `UChatPrompt` (`inheritAttrs: false`, `v-bind="$attrs"`): `UChatPrompt` passes a `style` to its own textarea, which the editor replaces, so a style on it went nowhere.
+
+Check in Chromium (admin): on the new-chat page the prompt (704 × 100) became 964 × 764 at the panel's left edge, from the navbar's bottom (y 80) to the panel's (y 844), the editor 712 px tall and focused; at a 1000 × 700 window it followed (968 × 604); the button put it back as it was. Typed in full screen, Enter sent and the chat page opened with the prompt back to its size; there, under the navbar laid over the messages, full screen covered the panel the same way. The test chat was deleted.
 
 ## 5. Ceilings
 

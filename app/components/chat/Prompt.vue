@@ -193,10 +193,29 @@ const commandHandlers = computed(() => Object.fromEntries(props.commands.map(com
 // above the cursor, where the prompt leaves room, and below it when there is none.
 const menuParent = () => document.body
 const menuOptions = { strategy: 'fixed', placement: 'top-start', offset: 8, flip: true, shift: { padding: 8 } } as const
+
+// The page's class goes to the prompt; the wrapper only positions it in full screen.
+defineOptions({ inheritAttrs: false })
+
+// Full screen: the prompt covers its panel below the navbar, measured so it follows a resize; sending ends it.
+// `UChatPrompt` sends a `style` to its own textarea, which the editor replaces: the wrapper div carries it.
+const expanded = ref(false)
+const panel = computed(() => expanded.value ? editor?.view.dom.closest<HTMLElement>('[id*="-panel-"]') ?? null : null)
+const bounds = useElementBounding(panel)
+const expandedStyle = computed(() => panel.value
+	? { position: 'fixed' as const, top: `calc(${bounds.top.value}px + var(--ui-header-height))`, left: `${bounds.left.value}px`, width: `${bounds.width.value}px`, height: `calc(${bounds.height.value}px - var(--ui-header-height))` }
+	: undefined)
+function toggleExpanded() {
+	expanded.value = !expanded.value
+	nextTick(() => editor?.commands.focus())
+}
 </script>
 
 <template>
+	<!-- Laid out as if absent, except in full screen, where it is the fixed, opaque box the prompt fills. -->
+	<div :class="expanded ? 'z-30 flex flex-col bg-default' : 'contents'" :style="expandedStyle">
 	<UChatPrompt
+		v-bind="$attrs"
 		v-model="input"
 		v-model:files="files"
 		:accept="accept"
@@ -207,7 +226,8 @@ const menuOptions = { strategy: 'fixed', placement: 'top-start', offset: 8, flip
 		color="neutral"
 		variant="subtle"
 		:ui="{ base: ['px-1.5', dictation !== 'idle' && 'placeholder:italic'] }"
-		@submit="emit('submit', $event)"
+		:class="expanded && 'flex-1 min-h-0 rounded-none'"
+		@submit="expanded = false; emit('submit', $event)"
 	>
 		<template #body="{ submit, placeholder: hint, disabled: off }">
 			<UEditor
@@ -220,7 +240,8 @@ const menuOptions = { strategy: 'fixed', placement: 'top-start', offset: 8, flip
 				:placeholder="hint"
 				:handlers="commandHandlers"
 				:extensions="mode === 'rich' ? [promptExtension(submit), MarkdownMention, MarkdownPaste] : [promptExtension(submit), MarkdownMention]"
-				class="w-full min-h-12 max-h-60 overflow-y-auto"
+				class="w-full min-h-12 overflow-y-auto"
+				:class="expanded ? 'flex-1 min-h-0' : 'max-h-60'"
 				:ui="{ base: ['p-1.5! text-base', dictation !== 'idle' && '[&_.is-editor-empty]:before:italic'] }"
 			>
 				<UEditorToolbar v-if="mode === 'rich' && !off" :editor="instance" layout="bubble" :items="bubbleItems" :append-to="menuParent" :options="{ strategy: 'fixed', placement: 'top', offset: 8, flip: true, shift: { padding: 8 } }" />
@@ -272,6 +293,9 @@ const menuOptions = { strategy: 'fixed', placement: 'top-start', offset: 8, flip
 			</div>
 
 			<div class="flex items-center gap-1 min-w-0">
+				<UTooltip :text="expanded ? 'Exit full screen' : 'Full screen'">
+					<UButton :icon="expanded ? 'i-lucide-minimize-2' : 'i-lucide-maximize-2'" size="sm" color="neutral" variant="ghost" :aria-label="expanded ? 'Exit full screen' : 'Full screen'" :aria-pressed="expanded" @click="toggleExpanded" />
+				</UTooltip>
 				<!-- Rich text or raw: the editor starts again in the other mode with what was written. -->
 				<UFieldGroup>
 					<UTooltip text="Rich text">
@@ -299,4 +323,5 @@ const menuOptions = { strategy: 'fixed', placement: 'top-start', offset: 8, flip
 			</div>
 		</template>
 	</UChatPrompt>
+	</div>
 </template>
