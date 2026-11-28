@@ -1,6 +1,6 @@
 # Milestone 18: a rich prompt, long pastes, a full-screen prompt, notes in Markdown
 
-Status: 18.1, 18.2 and 18.3 built (2026-11-27); 18.4 next. Follows `milestones-15-17-navigation-content-packages.md`. No migration: the one new preference lives in `user.preferences` (jsonb).
+Status: milestone 18 built (2026-11-27): 18.1 to 18.4. Follows `milestones-15-17-navigation-content-packages.md`. No migration: the one new preference lives in `user.preferences` (jsonb).
 
 Goal: the prompt bar writes rich text and sends Markdown, and the chat shows a member's messages formatted; a long paste asks whether it goes in as text or as a text attachment; the prompt can fill the panel; a library note can be edited as raw Markdown, takes pasted Markdown formatted, and is renamed from its title.
 
@@ -52,6 +52,11 @@ Built (18.3):
 - `chat/Prompt.vue`: a "Full screen" / "Exit full screen" button before the mode buttons; it focuses the editor. The prompt finds its `UDashboardPanel` from the editor's node (`[id*="-panel-"]`), measures it with `useElementBounding` and is `fixed` from `--ui-header-height` below its top to its bottom, opaque (`bg-default`), the editor growing to fill it (`flex-1`, no `max-h-60`). Sending ends it. The position is on a wrapper `div` (`display: contents` otherwise), and the page's class goes on to `UChatPrompt` (`inheritAttrs: false`, `v-bind="$attrs"`): `UChatPrompt` passes a `style` to its own textarea, which the editor replaces, so a style on it went nowhere.
 
 Check in Chromium (admin): on the new-chat page the prompt (704 × 100) became 964 × 764 at the panel's left edge, from the navbar's bottom (y 80) to the panel's (y 844), the editor 712 px tall and focused; at a 1000 × 700 window it followed (968 × 604); the button put it back as it was. Typed in full screen, Enter sent and the chat page opened with the prompt back to its size; there, under the navbar laid over the messages, full screen covered the panel the same way. The test chat was deleted.
+
+Built (18.4):
+- `library/Entry.vue`: "Rich text" and "Raw Markdown" icon buttons beside the note's "Saved" (the mode in the `note-mode` cookie); raw is a `UTextarea` of the note's Markdown (monospace, read-only for viewers), saved like the editor's text; the rich editor has `MarkdownPaste`. The title renames in place on a double-click (a `UInput`, "Double-click to rename" as its hint): Enter or leaving the field saves, Esc puts the name back; like the tree's "Rename", the tree's copy changes at once and comes back if refused, and the entries are read again after, so the tree takes its order.
+
+Check in Chromium (admin, a throwaway library "Check 18.4" with the notes "Plan" and "Alpha"): "Plan" opened as a heading, a list and a paragraph; "Raw Markdown" showed `# Plan\n\n- one\n- **two**`, text typed there was saved (`Added in **raw**.`) and showed bold back in "Rich text"; "## Pasted / 1. first / 2. second" pasted as plain text became a heading and a numbered list and was saved as that Markdown. A double-click on the title opened the field on "Plan", focused; "Zeta plan" with Enter was stored, the title and the tree followed (Alpha, Zeta plan); "Nope" with Esc put "Zeta plan" back and stored nothing; "Plan B" saved on leaving the field. The library was deleted.
 
 ## 5. Ceilings
 
