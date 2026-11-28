@@ -14,6 +14,8 @@ const bodySchema = z.object({
 	characterId: z.uuid().nullable(),
 	/** The read-aloud voice per platform; `null` goes back to the platform's default. Other platforms' stay. */
 	voices: z.object({ openrouter: voice, deepseek: voice }).partial().strict(),
+	/** Characters past which a paste asks how it goes in; 0 never asks. */
+	longPaste: userPreferencesSchema.shape.longPaste.unwrap(),
 }).partial().strict()
 
 /** Changes the member's own preferences; absent fields stay as they are. Returns them all. */

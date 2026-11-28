@@ -4,6 +4,10 @@ import type { UIMessage } from 'ai'
 import { getTextFromMessage, isPartStreaming } from '@nuxt/ui/utils/ai'
 import type { ChartUIToolInvocation } from '#shared/utils/tools/chart'
 import type { MessageMetadata } from '#shared/utils/chat'
+import breaks from '@comark/vue/plugins/breaks'
+
+// A member's message is Markdown (rich prompt) or plain text (raw, and earlier messages): single line breaks stay.
+const USER_PLUGINS = [breaks()]
 
 const props = defineProps<{
 	message: UIMessage
@@ -91,9 +95,7 @@ const emit = defineEmits<{
 						@save="(msg, text, resend) => emit('save', msg, text, resend)"
 						@cancel="emit('cancelEdit')"
 					/>
-					<p v-else class="whitespace-pre-wrap">
-						{{ part.text }}
-					</p>
+					<ChatComark v-else :value="part.text" :streaming="false" :plugins="USER_PLUGINS" />
 				</template>
 			</template>
 		</template>

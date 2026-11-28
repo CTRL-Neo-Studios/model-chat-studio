@@ -57,6 +57,24 @@ onBeforeUnmount(() => {
 	}
 })
 const unsaved = computed(() => saving.value || (text.value !== undefined && text.value !== saved))
+// Rich text or the raw Markdown, remembered per browser.
+const noteMode = useCookie<'rich' | 'raw'>('note-mode', { default: () => 'rich', sameSite: 'lax' })
+
+// The name, renamed in place from the title, as the tree's "Rename" does; the tree's copy changes at once and comes
+// back if the server refuses, and is read again after, in its order.
+const renaming = ref<string | null>(null)
+function startRename() {
+	if (!props.readonly) renaming.value = props.entry.name
+}
+async function saveName() {
+	const name = renaming.value?.trim()
+	renaming.value = null
+	if (!name || name === props.entry.name) return
+	const before = queryCache.getQueryData(entriesKey.value)
+	queryCache.setQueryData(entriesKey.value, list => list?.map(item => item.id === props.entry.id ? { ...item, name } : item) ?? [])
+	if (await act(url.value, { method: 'PATCH', body: { name } })) await queryCache.invalidateQueries({ key: entriesKey.value, exact: true })
+	else if (before) queryCache.setQueryData(entriesKey.value, before)
+}
 
 // In a lorebook, a note's tags are its keywords, and its options are under "Advanced".
 const { data: library } = useQuery(() => libraryQuery(props.libraryId))
@@ -98,10 +116,33 @@ const size = computed(() => fileSize(props.entry.size ?? 0))
 <template>
 	<div class="flex flex-col min-h-full">
 		<div class="flex flex-wrap items-center gap-x-3 gap-y-2 px-6 py-3 border-b border-default">
-			<h2 class="font-semibold text-highlighted truncate">
+			<!-- Double-click to rename: Enter or leaving the field saves, Esc puts the name back. -->
+			<UInput
+				v-if="renaming !== null"
+				v-model="renaming"
+				autofocus
+				size="sm"
+				aria-label="Name"
+				class="min-w-48"
+				@keydown.enter.prevent="saveName"
+				@keydown.esc.prevent="renaming = null"
+				@blur="saveName"
+			/>
+			<h2 v-else class="font-semibold text-highlighted truncate" :title="readonly ? undefined : 'Double-click to rename'" @dblclick="startRename">
 				{{ entry.name }}
 			</h2>
-			<span v-if="entry.kind === 'note' && !readonly" class="text-xs text-muted">{{ unsaved ? 'Saving…' : 'Saved' }}</span>
+			<template v-if="entry.kind === 'note'">
+				<span v-if="!readonly" class="text-xs text-muted">{{ unsaved ? 'Saving…' : 'Saved' }}</span>
+				<!-- Rich text or the raw Markdown; both edit the same note. -->
+				<UFieldGroup>
+					<UTooltip text="Rich text">
+						<UButton icon="i-lucide-type" size="xs" color="neutral" :variant="noteMode === 'rich' ? 'soft' : 'ghost'" aria-label="Rich text" :aria-pressed="noteMode === 'rich'" @click="noteMode = 'rich'" />
+					</UTooltip>
+					<UTooltip text="Raw Markdown">
+						<UButton icon="i-lucide-code-xml" size="xs" color="neutral" :variant="noteMode === 'raw' ? 'soft' : 'ghost'" aria-label="Raw Markdown" :aria-pressed="noteMode === 'raw'" @click="noteMode = 'raw'" />
+					</UTooltip>
+				</UFieldGroup>
+			</template>
 			<span v-else-if="entry.kind === 'file'" class="text-xs text-muted">{{ size }}</span>
 			<UInputTags
 				:model-value="entry.tags"
@@ -125,18 +166,34 @@ const size = computed(() => fileSize(props.entry.size ?? 0))
 
 		<!-- The editor is the browser's; the server shows the placeholder, so an entry opened from a link hydrates cleanly. -->
 		<ClientOnly v-if="entry.kind === 'note'">
-			<UEditor
-				v-if="text !== undefined"
-				v-slot="{ editor }"
-				v-model="text"
-				content-type="markdown"
-				:editable="!readonly"
-				placeholder="Write the note…"
-				:ui="{ base: 'px-6 py-4 min-h-80' }"
-				class="w-full"
-			>
-				<UEditorToolbar v-if="!readonly" :editor="editor" :items="toolbar" class="border-b border-muted px-4 py-1.5 sticky top-0 z-10 bg-default overflow-x-auto" />
-			</UEditor>
+			<template v-if="text !== undefined">
+				<!-- Raw: the note's Markdown as it is stored. -->
+				<UTextarea
+					v-if="noteMode === 'raw'"
+					v-model="text"
+					autoresize
+					:rows="16"
+					variant="none"
+					:readonly="readonly"
+					placeholder="Write the note in Markdown…"
+					aria-label="The note's Markdown"
+					class="w-full"
+					:ui="{ base: 'px-6 py-4 min-h-80 font-mono text-sm' }"
+				/>
+				<UEditor
+					v-else
+					v-slot="{ editor }"
+					v-model="text"
+					content-type="markdown"
+					:editable="!readonly"
+					:extensions="[MarkdownPaste]"
+					placeholder="Write the note…"
+					:ui="{ base: 'px-6 py-4 min-h-80' }"
+					class="w-full"
+				>
+					<UEditorToolbar v-if="!readonly" :editor="editor" :items="toolbar" class="border-b border-muted px-4 py-1.5 sticky top-0 z-10 bg-default overflow-x-auto" />
+				</UEditor>
+			</template>
 			<div v-else class="flex flex-col gap-2 p-6" aria-busy="true" aria-label="Loading the note">
 				<USkeleton v-for="n in 4" :key="n" class="h-5 w-full" />
 			</div>
